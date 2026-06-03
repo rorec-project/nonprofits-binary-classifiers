@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-rules": {
+      "source": "netresearch/agent-rules-skill",
+      "sourceType": "github",
+      "skillPath": "skills/agent-rules/SKILL.md",
+      "computedHash": "a38b0007f3f9ba7f252d64030f8c976d7ac742f5dfa17ae8540c2a3c799d7e9f"
+    },
+    "create-docs": {
+      "source": "nuxt-content/docus",
+      "sourceType": "github",
+      "skillPath": "docs/skills/create-docs/SKILL.md",
+      "computedHash": "3c6d7d6f6084ff5ebbd59fe8b348f99bced0d303da45cd61069a0f6dac8199f6"
+    },
+    "docus-playground": {
+      "source": "nuxt-content/docus",
+      "sourceType": "github",
+      "skillPath": "playground/skills/docus-playground/SKILL.md",
+      "computedHash": "49783d3cd2f0d71b7e299e5e380b1f8e00fa3ea033cb5e6b589e5a146ce0083f"
+    },
+    "obsidian-bases": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-bases/SKILL.md",
+      "computedHash": "ed0a53502693e56c67575a9958daca9a3a1ac7ba483367f400b4cad9488bfb3c"
+    },
+    "obsidian-cli": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-cli/SKILL.md",
+      "computedHash": "f46ae626875f7e47c410c2ee93896c4526024ebe127719e8fb430261b5677edc"
+    },
+    "obsidian-markdown": {
+      "source": "kepano/obsidian-skills",
+      "sourceType": "github",
+      "skillPath": "skills/obsidian-markdown/SKILL.md",
+      "computedHash": "cacc9058a35ad3fd4985b4c31121bff8202f1337c39808c1326ded6a19a7915f"
+    },
+    "playwright-cli": {
+      "source": "microsoft/playwright-cli",
+      "sourceType": "github",
+      "skillPath": "skills/playwright-cli/SKILL.md",
+      "computedHash": "84495cfda62b6c012afc4cc34a0c35bfc7923ba35983b8c04ce4cace0f35a5d8"
+    },
+    "review-docs": {
+      "source": "nuxt-content/docus",
+      "sourceType": "github",
+      "skillPath": "docs/skills/review-docs/SKILL.md",
+      "computedHash": "016eca30a60e4d1ec38cf162753d47e52dbb543a931f77f8050d4bc4f6bc5e6b"
+    },
+    "slidev": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "skillPath": "skills/slidev/SKILL.md",
+      "computedHash": "4973bc1baf08fa1303f99ef3abce8ec3aedfb2637e4315de30a2421746b610e3"
+    }
+  }
+}

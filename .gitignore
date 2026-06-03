@@ -7,3 +7,11 @@ my_model
 my_model_prompt2my_model_prompt2/model.safetensors
 model_on_missions
 model_on_activities
+
+# Agents
+.opencode/*
+.agents/*
+.claude/*
+!.agents/architecture/*
+!.agents/docs/*
+!.agents/plans/*
