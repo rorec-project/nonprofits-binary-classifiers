@@ -12,6 +12,8 @@ model_on_activities
 .opencode/*
 .agents/*
 .claude/*
-!.agents/architecture/*
-!.agents/docs/*
-!.agents/plans/*
+!.agents/architecture
+!.agents/docs
+!.agents/notebooks
+!.agents/plans
+CLAUDE.md
