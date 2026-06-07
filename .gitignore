@@ -16,4 +16,5 @@ model_on_activities
 !.agents/docs
 !.agents/notebooks
 !.agents/plans
+!.agents/stubs
 CLAUDE.md

@@ -36,3 +36,14 @@ The **data entity** being classified (which text field/source feeds the pipeline
 - Feature branches (nesting allowed); PRs go hierarchically into `master`. PRs are usually handled manually.
 - An internal audit of known issues (class-weight mismatch, missing training seed, etc.) lives in `docs/audits/repo_auditing.md` — consult it before "fixing" apparent inconsistencies.
 - The `.claude/`, `.agents/`, and `.opencode/` directories are general agent/research scaffolding, not part of the classifier pipeline.
+
+## Architecture
+
+- [Pipeline map and canonical/legacy flow notes](.agents/architecture/pipeline.md)
+- [Full documentation](README.md)
+
+## Code Conventions
+
+- [Python standards](.agents/architecture/conventions/python-standards.md)
+- [R standards](.agents/architecture/conventions/r-standards.md)
+- [Commenting and documentation](.agents/architecture/conventions/comments.md)
