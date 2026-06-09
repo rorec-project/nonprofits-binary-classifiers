@@ -1,10 +1,15 @@
 """Load upstream missions data and join with BMF for NTEE major groups.
 
-When upstream parquet files are absent, this module can generate a temporary
-synthetic dataset (~1 000 rows) for smoke-testing the pipeline.
+A missing upstream parquet is a hard error unless ``data.allow_synthetic`` is
+explicitly enabled, in which case a temporary synthetic dataset (~1 000 rows)
+is generated for smoke-testing — loudly warned and stamped
+``data_source="synthetic"`` so a fake run can never masquerade as a real one
+(audit D3). Synthetic temp dirs are cleaned up at process exit.
 """
 
+import atexit
 import logging
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -19,6 +24,20 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 _TRUNCATION_THRESHOLD = 1000
+
+# Temp dirs created for synthetic data, cleaned up at process exit (audit D3:
+# the old "caller may delete" comment had no caller).
+_SYNTHETIC_DIRS: list[Path] = []
+
+
+def _cleanup_synthetic_dirs() -> None:
+    """Remove every synthetic temp dir created this process."""
+    for d in _SYNTHETIC_DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+    _SYNTHETIC_DIRS.clear()
+
+
+atexit.register(_cleanup_synthetic_dirs)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -42,16 +61,34 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
 
     Returns:
         DataFrame with columns ``EIN2``, ``mission_text``,
-        ``ntee_major_group``, ``is_truncated``, and ``NTEE_IRS``.
+        ``ntee_major_group``, ``is_truncated``, ``NTEE_IRS``, and
+        ``data_source`` (``"upstream"`` or ``"synthetic"``).
+
+    Raises:
+        FileNotFoundError: If an upstream parquet is missing and
+            ``data.allow_synthetic`` is ``False``.
     """
     paths = cfg.paths
     upstream_repo = Path(paths.upstream_repo).resolve()
     missions_path = upstream_repo / paths.missions_parquet
     bmf_path = upstream_repo / paths.bmf_parquet
 
+    synthetic = False
     if not missions_path.exists() or not bmf_path.exists():
+        if not cfg.data.allow_synthetic:
+            raise FileNotFoundError(
+                f"Upstream parquet not found (missions: {missions_path}; "
+                f"bmf: {bmf_path}). Provide the NonProfitData parquet, or set "
+                f"data.allow_synthetic: true in the config to generate "
+                f"synthetic smoke-test data."
+            )
+        logger.warning(
+            "[load] Upstream parquet missing — generating SYNTHETIC data. "
+            "This is NOT a real run; set data.allow_synthetic: false for "
+            "production."
+        )
         missions_path, bmf_path = _generate_synthetic_parquets(cfg)
-        logger.info("[load] Using synthetic data: %s", missions_path)
+        synthetic = True
 
     df_missions = pd.read_parquet(missions_path)
     df_bmf = pd.read_parquet(bmf_path)
@@ -82,7 +119,19 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
     # Rename field to a canonical name for downstream consistency
     df = df.rename(columns={field: "mission_text"})
 
-    return df[["EIN2", "mission_text", "ntee_major_group", "is_truncated", "NTEE_IRS"]]
+    # Stamp provenance so a synthetic build can never masquerade as a real one.
+    df["data_source"] = "synthetic" if synthetic else "upstream"
+
+    return df[
+        [
+            "EIN2",
+            "mission_text",
+            "ntee_major_group",
+            "is_truncated",
+            "NTEE_IRS",
+            "data_source",
+        ]
+    ]
 
 
 def _is_truncated(text: str, threshold: int = _TRUNCATION_THRESHOLD) -> bool:
@@ -109,7 +158,7 @@ def _generate_synthetic_parquets(
 
     Returns:
         Tuple of (missions_parquet_path, bmf_parquet_path). Both files live
-        in a temporary directory that the caller may delete after use.
+        in a temporary directory registered for cleanup at process exit.
     """
     rng = np.random.default_rng(seed=cfg.SEED)
     n = 1_000
@@ -294,6 +343,7 @@ def _generate_synthetic_parquets(
     )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="binary_classifier_synthetic_"))
+    _SYNTHETIC_DIRS.append(tmp_dir)
     missions_path = tmp_dir / "missions.parquet"
     bmf_path = tmp_dir / "bmf.parquet"
     df_missions.to_parquet(missions_path, index=False)

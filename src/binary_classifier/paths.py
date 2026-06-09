@@ -27,6 +27,30 @@ class PathRegistry:
         self.cfg: BinaryClassifierConfig = load_config(config_path)
         self._root: Path = Path(".").resolve()
 
+    @classmethod
+    def from_config(
+        cls,
+        cfg: BinaryClassifierConfig,
+        root: Path | str | None = None,
+    ) -> "PathRegistry":
+        """Build a registry from an in-memory config (no YAML on disk).
+
+        Useful for tests and programmatic use. ``root`` overrides the path
+        anchor (defaults to the current working directory).
+
+        Args:
+            cfg: A validated ``BinaryClassifierConfig`` instance.
+            root: Directory all relative paths are resolved against.
+
+        Returns:
+            A ``PathRegistry`` bound to ``cfg``.
+
+        """
+        registry = cls.__new__(cls)
+        registry.cfg = cfg
+        registry._root = Path(root if root is not None else ".").resolve()
+        return registry
+
     # ── Upstream inputs ──────────────────────────────────────────────────────
 
     @property
@@ -63,6 +87,16 @@ class PathRegistry:
         """Directory for persisted fine-tuned models."""
         return self._root / self.cfg.paths.models_dir
 
+    @property
+    def gold_dir(self) -> Path:
+        """Directory for committed, human-coded gold artifacts."""
+        return self._root / self.cfg.paths.gold_dir
+
+    @property
+    def silver_dir(self) -> Path:
+        """Directory for the cloud-symlinked machine-labelled silver pool."""
+        return self._root / self.cfg.paths.silver_dir
+
     # ── Manifests ────────────────────────────────────────────────────────────
 
     @property
@@ -90,6 +124,40 @@ class PathRegistry:
         """EIN2 manifest for the frozen test set."""
         return self.train_test_dir / "test_manifest.csv"
 
+    # ── Human-coding & slate artifacts ───────────────────────────────────────
+
+    @property
+    def gold_coding_template(self) -> Path:
+        """In-place human-coding template (EIN2, split, text, human_label)."""
+        return self.gold_dir / "gold_to_code.csv"
+
+    @property
+    def proposed_slate(self) -> Path:
+        """Machine-proposed (unconfirmed) slate from the bake-off (stage 02)."""
+        return self.results_dir / "proposed_slate.json"
+
+    @property
+    def production_slate(self) -> Path:
+        """Human-confirmed production slate (committed); gate G2 requires it."""
+        return self.gold_dir / "production_slate.json"
+
+    @property
+    def bakeoff_results(self) -> Path:
+        """Full per-candidate bake-off score bundle (stage 02)."""
+        return self.results_dir / "bakeoff_results.json"
+
+    # ── Label stores ─────────────────────────────────────────────────────────
+
+    @property
+    def annotation_store(self) -> Path:
+        """Long/tidy annotation store for the full silver run (stage 03)."""
+        return self.silver_dir / "annotation_store.csv"
+
+    @property
+    def bakeoff_store(self) -> Path:
+        """Long/tidy bake-off label store (stage 02)."""
+        return self.silver_dir / "bakeoff_labels.csv"
+
     # ── Convenience helpers ──────────────────────────────────────────────────
 
     def ensure_dirs(self) -> None:
@@ -99,5 +167,7 @@ class PathRegistry:
             self.train_test_dir,
             self.results_dir,
             self.models_dir,
+            self.gold_dir,
+            self.silver_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)

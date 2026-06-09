@@ -1,8 +1,16 @@
 """Orchestrator entrypoint that chains stages 01 through 04.
 
-Stages are thin wrappers around the ``src/binary_classifier/`` package.
-Each stage is executed in order and can be selectively enabled via the
-``--stages`` flag.
+Stages are thin wrappers around the ``src/binary_classifier/`` package. The
+orchestrator inserts the two human checkpoints that fail gracefully (clear
+message, non-zero exit, no wasted GPU/API work):
+
+* **G1 (labels)** is checked after stage 01 and before any model stage: the
+  human coding template must carry strict ``0/1`` labels for every requested
+  label-dependent stage (``prompt_dev``→02, ``validation``→04).
+* **G2 (slate)** is checked after stage 02 and before stage 03: a human must
+  have confirmed ``production_slate.json``. Running ``01,02,03,04`` with no
+  confirmed slate therefore executes 02 (producing the *proposed* slate) and
+  then stops gracefully before 03 — no annotation work is wasted.
 """
 
 import argparse
@@ -12,6 +20,7 @@ from pathlib import Path
 
 from binary_classifier.config import load_config
 from binary_classifier.paths import PathRegistry
+from binary_classifier.qc.preflight import validate_gates
 
 # ── Stage registry ───────────────────────────────────────────────────────────
 
@@ -22,13 +31,17 @@ _STAGE_MODULES = {
     "04": ("binary_classifier.qc.agreement", "run_quality_check"),
 }
 
+# Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
+_GATE_EXIT = 2
+
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
-        "(01 sample → 02 bake-off → 03 annotate → 04 QC).",
+        "(01 sample → 02 bake-off → 03 annotate → 04 QC) with two human gates.",
     )
     parser.add_argument(
         "--config",
@@ -48,6 +61,11 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Optional limit for stage 03 (smoke-test).",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Pass --force to stage 01 (overwrite the gold coding template).",
+    )
     return parser.parse_args()
 
 
@@ -59,17 +77,96 @@ def _run_stage(
     cfg,
     registry,
     annotate_limit: int | None,
+    force: bool,
 ) -> None:
     """Import and execute a single stage."""
     module_name, func_name = _STAGE_MODULES[stage_id]
-
     module = importlib.import_module(module_name)
     func = getattr(module, func_name)
 
-    if stage_id == "03" and annotate_limit is not None:
+    if stage_id == "01":
+        func(cfg, registry, force=force)
+    elif stage_id == "03" and annotate_limit is not None:
         func(cfg, registry, limit=annotate_limit)
     else:
         func(cfg, registry)
+
+
+def _report_gate(title: str, problems: list[str], hint: str | None = None) -> None:
+    """Print a gate failure to stderr."""
+    print(
+        f"\n✗ Gate {title} failed — stopping before any further work:", file=sys.stderr
+    )
+    for p in problems:
+        print(f"  - {p}", file=sys.stderr)
+    if hint:
+        print(f"\n  Next: {hint}", file=sys.stderr)
+
+
+# ── Orchestration core ───────────────────────────────────────────────────────
+
+
+def run_pipeline(
+    cfg,
+    registry,
+    requested: set[str],
+    annotate_limit: int | None = None,
+    force: bool = False,
+) -> None:
+    """Run the requested stages in order, enforcing the two human gates.
+
+    Exits the process with code 2 if a gate fails (graceful stop). Stage 01,
+    when requested, always runs first so the coding template exists for the G1
+    check.
+    """
+    # Stage 01 — produces manifests + the human coding template.
+    if "01" in requested:
+        print("Running stage 01 ...")
+        _run_stage("01", cfg, registry, annotate_limit, force)
+
+    # Gate G1 (labels) — before any model stage. Only the label gates are
+    # checked here (not G2), so stage 02 can still run to produce the proposed
+    # slate even when no confirmed slate exists yet.
+    label_stages = requested & {"02", "04"}
+    if label_stages:
+        problems = validate_gates(cfg, registry, label_stages)
+        if problems:
+            _report_gate(
+                "G1 (human labels)",
+                problems,
+                hint=(
+                    f"open {registry.gold_coding_template}, fill human_label "
+                    f"(0/1) for the listed split(s), then re-run."
+                ),
+            )
+            sys.exit(_GATE_EXIT)
+
+    # Stage 02 — bake-off; writes the *proposed* (unconfirmed) slate.
+    if "02" in requested:
+        print("Running stage 02 ...")
+        _run_stage("02", cfg, registry, annotate_limit, force)
+
+    # Gate G2 (confirmed slate) — after 02, before 03. No annotation work has
+    # been done yet, so stopping here wastes nothing.
+    if "03" in requested:
+        problems = validate_gates(cfg, registry, {"03"})
+        if problems:
+            _report_gate(
+                "G2 (confirmed production slate)",
+                problems,
+                hint=(
+                    f"review {registry.bakeoff_results}, copy "
+                    f"{registry.proposed_slate} to {registry.production_slate}, "
+                    f"set 'confirmed': true, then run --stages 03,04."
+                ),
+            )
+            sys.exit(_GATE_EXIT)
+
+    # Stages 03 + 04 — annotation and the blocking QC freeze.
+    for stage_id in ("03", "04"):
+        if stage_id in requested:
+            print(f"Running stage {stage_id} ...")
+            _run_stage(stage_id, cfg, registry, annotate_limit, force)
 
 
 # ── Main entrypoint ───────────────────────────────────────────────────────────
@@ -88,10 +185,7 @@ def main() -> None:
         print(f"Invalid stage(s): {invalid}", file=sys.stderr)
         sys.exit(1)
 
-    for stage_id in ("01", "02", "03", "04"):
-        if stage_id in requested:
-            print(f"Running stage {stage_id} ...")
-            _run_stage(stage_id, cfg, registry, args.annotate_limit)
+    run_pipeline(cfg, registry, requested, args.annotate_limit, args.force)
 
 
 if __name__ == "__main__":

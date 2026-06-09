@@ -21,10 +21,13 @@ class Annotator(ABC):
         prompt_id: Prompt version (e.g. ``v1``, ``v2``, ``v3``).
         prompt_text: The full prompt text (including instructions and JSON
             schema) that will be sent to the model.
-        temperature: Sampling temperature (0.0 for deterministic annotations).
+        temperature: Sampling temperature (0.0 for low-variance annotations).
         seed: Random seed for reproducibility.
         max_retries: Number of retries on transient failures.
         source_type: Origin of the label (defaults to ``llm_prompt``).
+        reasoning_effort: Optional reasoning-effort knob for GPT-5-class
+            models (e.g. ``minimal``). Stored on the instance; wiring it into
+            the API request is handled by T2.A (provider-specific).
 
     """
 
@@ -37,6 +40,7 @@ class Annotator(ABC):
         seed: int = 42,
         max_retries: int = 5,
         source_type: SourceType = SourceType.LLM_PROMPT,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.model_id: str = model_id
         self.prompt_id: str = prompt_id
@@ -45,6 +49,7 @@ class Annotator(ABC):
         self.seed: int = seed
         self.max_retries: int = max_retries
         self.source_type: SourceType = source_type
+        self.reasoning_effort: str | None = reasoning_effort
 
     # ── Abstract method ──────────────────────────────────────────────────
 

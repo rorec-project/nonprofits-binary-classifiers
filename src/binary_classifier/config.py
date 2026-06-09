@@ -6,7 +6,9 @@ config object so that paths, seeds, thresholds, and model slates are defined
 in a single source of truth.
 """
 
+import json
 from pathlib import Path
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -39,21 +41,106 @@ class PathsConfig(BaseModel):
     train_test_dir: Path = Field(default=Path("train_test_datasets"))
     results_dir: Path = Field(default=Path("results"))
     models_dir: Path = Field(default=Path("models"))
+    # Gold is committed (human-coded artifacts live here); silver is the
+    # large machine-labelled pool, symlinked to cloud storage. See AGENTS.md.
+    gold_dir: Path = Field(default=Path("data/processed/train_test_datasets/gold"))
+    silver_dir: Path = Field(default=Path("data/processed/train_test_datasets/silver"))
 
 
-class ModelSlateConfig(BaseModel):
-    """Models available for the annotation bake-off and production runs.
+class BakeoffCandidate(BaseModel):
+    """A single model in the bake-off slate, tagged by serving provider.
 
     Attributes:
-        closed_reference: A snapshot model from a closed API (e.g. OpenAI).
-        open_production: The primary open-weight model served via vLLM.
-        open_lightweight: A smaller open-weight control model.
+        id: Model identifier. For ``openai`` this is the API model/snapshot
+            (e.g. ``gpt-5-mini``); for ``vllm`` the HuggingFace id
+            (e.g. ``google/gemma-3-27b-it``).
+        provider: Serving backend — ``openai`` (closed API) or ``vllm``
+            (local open-weight endpoint). Routes annotator construction.
+        reasoning_effort: Optional reasoning-effort knob for GPT-5-class
+            models (e.g. ``minimal``). Forwarded to the annotator only when
+            set; ignored by providers that do not support it.
 
     """
 
-    closed_reference: str = "gpt-4o-mini"
-    open_production: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
-    open_lightweight: str = "google/gemma-4-31B-it"
+    id: str
+    provider: Literal["openai", "vllm"]
+    reasoning_effort: str | None = None
+
+
+def _default_bakeoff_candidates() -> list[BakeoffCandidate]:
+    """Seed slate: three closed OpenAI tiers + one open-weight Gemma arm.
+
+    OpenAI ids are floating aliases (placeholders); pin them to dated
+    snapshots before a production run. The Gemma arm requires the vLLM
+    server to be up during the bake-off; comment it out (in the YAML) for a
+    pure-OpenAI bake-off.
+    """
+    return [
+        BakeoffCandidate(id="gpt-4o-mini", provider="openai"),
+        BakeoffCandidate(
+            id="gpt-5-mini", provider="openai", reasoning_effort="minimal"
+        ),
+        BakeoffCandidate(
+            id="gpt-5-nano", provider="openai", reasoning_effort="minimal"
+        ),
+        BakeoffCandidate(id="google/gemma-3-27b-it", provider="vllm"),
+    ]
+
+
+class ModelSlateConfig(BaseModel):
+    """Config-driven model slate for the bake-off and production annotation.
+
+    Attributes:
+        bakeoff_candidates: The list of ``(id, provider, reasoning_effort?)``
+            candidates scored in stage 02. Each is tagged with its serving
+            provider so the annotator factory can route construction.
+        production: The default production model id. Stage 03 only runs what
+            the human confirms in ``production_slate.json`` (gate G2), so this
+            is a default/seed rather than a binding choice.
+
+    """
+
+    bakeoff_candidates: list[BakeoffCandidate] = Field(
+        default_factory=_default_bakeoff_candidates,
+    )
+    production: str = "gpt-5-mini"
+
+
+class Slate(BaseModel):
+    """A bake-off slate file (proposed or human-confirmed).
+
+    The same shape is written by stage 02 as the *proposed* slate
+    (``confirmed=False``) and copied/edited by the human into the
+    *production* slate (``confirmed=True``) that gate G2 requires.
+
+    Attributes:
+        confirmed: ``True`` only after a human has reviewed the scores and
+            promoted the slate. Stage 03 refuses to run an unconfirmed slate.
+        models: The authoritative model set stage 03 runs (each × the prompt
+            set). The human edits this list to control production.
+        selected: Per-(model, prompt) detail retained for review — which combos
+            cleared the agreement threshold and their scores. Not consumed by
+            stage 03; informational.
+
+    """
+
+    confirmed: bool = False
+    models: list[BakeoffCandidate] = Field(default_factory=list)
+    selected: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def load_slate(path: Path | str) -> Slate:
+    """Load and validate a slate JSON file.
+
+    Args:
+        path: Path to ``proposed_slate.json`` or ``production_slate.json``.
+
+    Returns:
+        A validated ``Slate`` instance.
+
+    """
+    raw = json.loads(Path(path).read_text())
+    return Slate.model_validate(raw)
 
 
 class QThresholdsConfig(BaseModel):
@@ -88,9 +175,10 @@ class SampleSizesConfig(BaseModel):
 class AnnotationConfig(BaseModel):
     """Hyperparameters for the LLM-as-primary labeler.
 
-    All temperature and seed values are fixed to ensure reproducible
-    annotations. Resume is keyed by (EIN2, source_id) rather than row count
-    to avoid the audit R-08 idempotency gap.
+    Temperature and seed are fixed to keep annotations low-variance /
+    best-effort reproducible (closed APIs do not guarantee determinism across
+    backend changes). Resume is keyed by (EIN2, source_id) rather than row
+    count to avoid the audit R-08 idempotency gap.
     """
 
     temperature: float = 0.0
@@ -98,6 +186,33 @@ class AnnotationConfig(BaseModel):
     checkpoint_every: int = 100
     guided_json: bool = True
     seed: int = 42
+
+
+class DataConfig(BaseModel):
+    """Data-loading behaviour.
+
+    Attributes:
+        allow_synthetic: When ``False`` (default), a missing upstream parquet
+            is a hard error. When ``True``, a synthetic dataset is generated
+            (with a loud warning and a ``data_source="synthetic"`` stamp) for
+            local smoke-testing only.
+
+    """
+
+    allow_synthetic: bool = False
+
+
+class QCConfig(BaseModel):
+    """Quality-control gate thresholds.
+
+    Attributes:
+        agreement_threshold: Minimum LLM-vs-human agreement on the validation
+            overlap required to freeze the silver labels. Below this the gate
+            blocks (raises / non-zero exit) and writes nothing.
+
+    """
+
+    agreement_threshold: float = 0.85
 
 
 class TrainingConfig(BaseModel):
@@ -135,6 +250,8 @@ class BinaryClassifierConfig(BaseModel):
         q_thresholds: Quality-score tiers for the Q rubric.
         sample_sizes: Target sizes for silver/gold/prompt-dev.
         annotation: LLM annotation hyperparameters.
+        data: Data-loading behaviour (synthetic opt-in).
+        qc: Quality-control gate thresholds.
         training: Fine-tuning hyperparameter stubs.
 
     """
@@ -148,6 +265,8 @@ class BinaryClassifierConfig(BaseModel):
     q_thresholds: QThresholdsConfig = Field(default_factory=QThresholdsConfig)
     sample_sizes: SampleSizesConfig = Field(default_factory=SampleSizesConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
+    data: DataConfig = Field(default_factory=DataConfig)
+    qc: QCConfig = Field(default_factory=QCConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
 
 

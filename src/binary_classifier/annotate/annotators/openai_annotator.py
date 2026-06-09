@@ -37,6 +37,7 @@ class OpenAIAnnotator(Annotator):
         seed: int = 42,
         max_retries: int = 5,
         api_key: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             model_id=model_id,
@@ -46,6 +47,7 @@ class OpenAIAnnotator(Annotator):
             seed=seed,
             max_retries=max_retries,
             source_type=SourceType.LLM_PROMPT,
+            reasoning_effort=reasoning_effort,
         )
         self.client: OpenAI = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),

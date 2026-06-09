@@ -33,29 +33,25 @@ def _parse_args() -> argparse.Namespace:
         help="Prompt text files to evaluate.",
     )
     parser.add_argument(
-        "--models",
-        nargs="+",
-        type=str,
-        default=None,
-        help="Override the model slate (defaults to config model_slate).",
-    )
-    parser.add_argument(
         "--human-labels",
         type=Path,
         default=None,
-        help="CSV of human labels for prompt-dev (EIN2, human_label, source_type).",
+        help="Coded human labels (defaults to the gold coding template; "
+        "the prompt_dev rows are used).",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("results/bakeoff_results.json"),
-        help="Path to write the bake-off results JSON.",
+        default=None,
+        help="Path to write the bake-off results JSON "
+        "(defaults to registry.bakeoff_results).",
     )
     parser.add_argument(
         "--store-path",
         type=Path,
-        default=Path("data/bakeoff_labels.csv"),
-        help="Path to write the long/tidy bake-off label store.",
+        default=None,
+        help="Path to write the long/tidy bake-off label store "
+        "(defaults to registry.bakeoff_store).",
     )
     parser.add_argument(
         "--limit",
@@ -74,7 +70,6 @@ def main() -> None:
         cfg,
         registry,
         prompt_paths=args.prompts,
-        model_ids=args.models,
         human_labels_path=args.human_labels,
         output_path=args.output,
         store_path=args.store_path,

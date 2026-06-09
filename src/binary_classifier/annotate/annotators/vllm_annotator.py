@@ -40,6 +40,7 @@ class VLLMAnnotator(Annotator):
         max_retries: int = 5,
         base_url: str = "http://127.0.0.1:8000/v1",
         api_key: str = "EMPTY",
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             model_id=model_id,
@@ -49,6 +50,7 @@ class VLLMAnnotator(Annotator):
             seed=seed,
             max_retries=max_retries,
             source_type=SourceType.LLM_PROMPT,
+            reasoning_effort=reasoning_effort,
         )
         self.client: OpenAI = OpenAI(
             base_url=base_url,

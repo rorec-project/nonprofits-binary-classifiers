@@ -33,17 +33,11 @@ def _parse_args() -> argparse.Namespace:
         help="Prompt text files to use.",
     )
     parser.add_argument(
-        "--models",
-        nargs="+",
-        type=str,
-        default=None,
-        help="Override the model slate (defaults to config model_slate).",
-    )
-    parser.add_argument(
         "--store-path",
         type=Path,
-        default=Path("data/annotation_store.csv"),
-        help="Path to the long/tidy label store.",
+        default=None,
+        help="Path to the long/tidy label store "
+        "(defaults to registry.annotation_store).",
     )
     parser.add_argument(
         "--limit",
@@ -79,7 +73,6 @@ def main() -> None:
         registry,
         limit=args.limit,
         prompt_paths=args.prompts,
-        model_ids=args.models,
         store_path=args.store_path,
         checkpoint_every=args.checkpoint_every,
         resume=not args.no_resume,

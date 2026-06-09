@@ -1,21 +1,35 @@
-"""Bake-off harness: model x prompt scoring on prompt-dev vs human labels.
+"""Bake-off harness: candidate x prompt scoring on prompt-dev vs human labels.
 
-The module exposes :func:`run_bakeoff`, which is the canonical entrypoint
-used by both ``scripts/02_bakeoff_prompts.py`` and ``run_pipeline.py``.
+The module exposes :func:`run_bakeoff`, the canonical entrypoint used by both
+``scripts/02_bakeoff_prompts.py`` and ``run_pipeline.py``. It scores every
+configured bake-off candidate (closed OpenAI tiers + an open-weight vLLM arm)
+on the coded prompt-dev split, writes the full score bundle, and proposes an
+**unconfirmed** slate. Promoting it to ``production_slate.json`` is the human's
+gate-G2 step (see :func:`run_annotation.resolve_production_specs`).
 """
 
 import json
 import logging
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
-from binary_classifier.annotate.annotators import OpenAIAnnotator, VLLMAnnotator
+from binary_classifier.annotate.annotators import Annotator
+from binary_classifier.annotate.annotators.factory import make_annotator
 from binary_classifier.annotate.schema import AnnotationStore
-from binary_classifier.config import BinaryClassifierConfig
+from binary_classifier.config import BakeoffCandidate, BinaryClassifierConfig
 from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PROMPT_PATHS: list[Path] = [
+    Path("src/binary_classifier/annotate/prompts/v1.txt"),
+    Path("src/binary_classifier/annotate/prompts/v2.txt"),
+    Path("src/binary_classifier/annotate/prompts/v3.txt"),
+]
+
+AnnotatorFactory = Callable[[BakeoffCandidate, str, str], Annotator]
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -25,154 +39,198 @@ def run_bakeoff(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
     prompt_paths: list[Path] | None = None,
-    model_ids: list[str] | None = None,
+    candidates: list[BakeoffCandidate] | None = None,
     human_labels_path: Path | None = None,
     output_path: Path | None = None,
     store_path: Path | None = None,
     limit: int | None = None,
+    annotator_factory: AnnotatorFactory | None = None,
 ) -> dict:
-    """Run the model x prompt bake-off on prompt-dev and score against human labels.
+    """Score the candidate x prompt matrix on prompt-dev against human labels.
 
     Args:
         cfg: Validated configuration object.
-        registry: Path registry with resolved manifest paths.
+        registry: Path registry with resolved manifest/artifact paths.
         prompt_paths: Prompt text files to evaluate. Defaults to v1, v2, v3.
-        model_ids: Override the model slate. Defaults to config model_slate.
-        human_labels_path: CSV of human labels (EIN2, human_label, source_type).
-        output_path: Where to write the bake-off results JSON.
-        store_path: Where to write the long/tidy bake-off label store.
+        candidates: Override the slate. Defaults to ``cfg.model_slate``.
+        human_labels_path: Coded human labels. Defaults to the gold coding
+            template (``EIN2, split, text, human_label``); the ``prompt_dev``
+            rows are used.
+        output_path: Where to write the full score bundle. Defaults to
+            ``registry.bakeoff_results``.
+        store_path: Long/tidy bake-off label store. Defaults to
+            ``registry.bakeoff_store``.
         limit: Limit prompt-dev records for a quick smoke test.
+        annotator_factory: Injected ``(spec, prompt_id, prompt_text) ->
+            Annotator`` (defaults to the config-driven factory). For tests.
 
     Returns:
-        Dict with per-model x prompt scores.
+        Dict with ``results`` (full bundle) and ``proposed_slate``.
+
+    Raises:
+        FileNotFoundError: If the human coding template is absent.
+        ValueError: If the template carries no coded prompt-dev labels.
 
     """
     if prompt_paths is None:
-        prompt_paths = [
-            Path("src/binary_classifier/annotate/prompts/v1.txt"),
-            Path("src/binary_classifier/annotate/prompts/v2.txt"),
-            Path("src/binary_classifier/annotate/prompts/v3.txt"),
-        ]
-
-    if model_ids is None:
-        model_ids = [
-            cfg.model_slate.closed_reference,
-            cfg.model_slate.open_production,
-            cfg.model_slate.open_lightweight,
-        ]
-
+        prompt_paths = list(_DEFAULT_PROMPT_PATHS)
+    if candidates is None:
+        candidates = cfg.model_slate.bakeoff_candidates
+    if human_labels_path is None:
+        human_labels_path = registry.gold_coding_template
     if output_path is None:
-        output_path = Path("results/bakeoff_results.json")
+        output_path = registry.bakeoff_results
     if store_path is None:
-        store_path = Path("data/bakeoff_labels.csv")
+        store_path = registry.bakeoff_store
+    if annotator_factory is None:
 
-    # Load prompt-dev data
-    prompt_dev = _load_prompt_dev(registry, limit)
-    if prompt_dev.empty:
-        logger.error("Prompt-dev manifest is empty or missing.")
-        return {"error": "empty prompt-dev"}
+        def annotator_factory(
+            spec: BakeoffCandidate,
+            prompt_id: str,
+            prompt_text: str,
+        ) -> Annotator:
+            return make_annotator(cfg, spec, prompt_id, prompt_text)
 
-    # Join text field from upstream if needed
-    if "text" not in prompt_dev.columns:
-        missions = pd.read_parquet(registry.missions_parquet)
-        prompt_dev = prompt_dev.merge(
-            missions[["EIN2", cfg.field]],
-            on="EIN2",
-            how="left",
-        )
-        prompt_dev = prompt_dev.rename(columns={cfg.field: "text"})
+    # Load coded prompt-dev rows (text + human_label) — raises if absent.
+    prompt_dev = _load_coded_prompt_dev(human_labels_path, limit)
+    human_df = prompt_dev[["EIN2", "human_label"]]
 
     store = AnnotationStore(store_path)
     results: list[dict] = []
+    threshold = cfg.qc.agreement_threshold
 
-    for model_id in model_ids:
+    for spec in candidates:
         for prompt_path in prompt_paths:
             prompt_id = prompt_path.stem
-            prompt_text = prompt_path.read_text()
-            source_id = f"{model_id}__{prompt_id}"
+            source_id = f"{spec.id}__{prompt_id}"
+            try:
+                prompt_text = prompt_path.read_text()
+                annotator = annotator_factory(spec, prompt_id, prompt_text)
+                batch = []
+                for _, row in prompt_dev.iterrows():
+                    if store.already_done(row["EIN2"], source_id):
+                        continue
+                    batch.append(annotator.annotate(row["text"], ein2=row["EIN2"]))
+                if batch:
+                    store.append_many(batch)
 
-            annotator = _make_annotator(cfg, model_id, prompt_id, prompt_text)
-
-            # Run on prompt-dev
-            batch = []
-            for _, row in prompt_dev.iterrows():
-                ein2 = row["EIN2"]
-                text = row["text"]
-                if store.already_done(ein2, source_id):
-                    continue
-                record = annotator.annotate(text, ein2=ein2)
-                batch.append(record)
-
-            if batch:
-                store.append_many(batch)
-
-            # Score
-            pred_df = store.to_frame()
-            pred_df = pred_df[pred_df["source_id"] == source_id][["EIN2", "label"]]
-
-            if human_labels_path and human_labels_path.exists():
-                human_df = pd.read_csv(human_labels_path)
-                human_df = human_df.rename(columns={"label": "human_label"})
+                pred_df = store.to_frame()
+                pred_df = pred_df[pred_df["source_id"] == source_id][["EIN2", "label"]]
                 scores = _score_vs_human(pred_df, human_df)
-            else:
-                scores = {"note": "no human labels provided — skipping scoring"}
+            except Exception as exc:
+                # A vLLM connection failure (server down) or a provider error
+                # degrades this one arm; the OpenAI arms still score.
+                logger.warning("Bake-off arm %s failed: %s", source_id, exc)
+                scores = {"error": str(exc)}
 
             results.append(
                 {
-                    "model_id": model_id,
+                    "model_id": spec.id,
+                    "provider": spec.provider,
+                    "reasoning_effort": spec.reasoning_effort,
                     "prompt_id": prompt_id,
                     "source_id": source_id,
                     "scores": scores,
                 }
             )
-            logger.info(
-                "Bake-off: %s | scores: %s",
-                source_id,
-                json.dumps(scores, indent=2),
-            )
+            logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
 
-    # Write results
+    proposed = _build_proposed_slate(results, threshold)
+
+    # Write the full bundle and the proposed (unconfirmed) slate. Do NOT write
+    # production_slate.json — that is the human's gate-G2 step.
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w") as f:
-        json.dump(results, f, indent=2)
+    output_path.write_text(json.dumps(results, indent=2))
     logger.info("Bake-off results written to %s", output_path)
 
-    return {"results": results, "output_path": str(output_path)}
+    registry.proposed_slate.parent.mkdir(parents=True, exist_ok=True)
+    registry.proposed_slate.write_text(json.dumps(proposed, indent=2))
+    logger.info("Proposed (unconfirmed) slate written to %s", registry.proposed_slate)
+
+    return {
+        "results": results,
+        "proposed_slate": proposed,
+        "bakeoff_results_path": str(output_path),
+        "proposed_slate_path": str(registry.proposed_slate),
+    }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _load_prompt_dev(registry: PathRegistry, limit: int | None) -> pd.DataFrame:
-    """Load the prompt-dev manifest and optionally truncate."""
-    manifest = pd.read_csv(registry.prompt_dev_manifest)
-    if limit:
-        manifest = manifest.head(limit)
-    return manifest
+def _load_coded_prompt_dev(human_labels_path: Path, limit: int | None) -> pd.DataFrame:
+    """Load coded prompt-dev rows from the gold coding template.
 
+    Args:
+        human_labels_path: Path to the ``gold_to_code.csv`` template.
+        limit: Optional head() truncation for a smoke test.
 
-def _make_annotator(
-    cfg: BinaryClassifierConfig,
-    model_id: str,
-    prompt_id: str,
-    prompt_text: str,
-):
-    """Instantiate the correct annotator for a model_id."""
-    if model_id.startswith("gpt"):
-        return OpenAIAnnotator(
-            model_id=model_id,
-            prompt_id=prompt_id,
-            prompt_text=prompt_text,
-            temperature=cfg.annotation.temperature,
-            seed=cfg.annotation.seed,
+    Returns:
+        DataFrame with ``EIN2``, ``text``, ``human_label`` for prompt-dev.
+
+    Raises:
+        FileNotFoundError: If the template is missing.
+        ValueError: If columns are missing or no prompt-dev labels are coded.
+
+    """
+    if not human_labels_path.exists():
+        raise FileNotFoundError(
+            f"No human coding template at {human_labels_path}. Run stage 01, "
+            f"then code human_label (0/1) for the prompt_dev rows before the "
+            f"bake-off."
         )
-    return VLLMAnnotator(
-        model_id=model_id,
-        prompt_id=prompt_id,
-        prompt_text=prompt_text,
-        temperature=cfg.annotation.temperature,
-        seed=cfg.annotation.seed,
-    )
+    df = pd.read_csv(human_labels_path)
+    required = {"EIN2", "split", "text", "human_label"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{human_labels_path} missing columns: {sorted(missing)}")
+
+    sub = df[df["split"] == "prompt_dev"].copy()
+    sub = sub.dropna(subset=["human_label"])
+    if sub.empty:
+        raise ValueError(
+            f"No coded prompt_dev rows in {human_labels_path}. Fill human_label "
+            f"(0/1) for the prompt_dev split before the bake-off."
+        )
+    if limit:
+        sub = sub.head(limit)
+    return sub
+
+
+def _build_proposed_slate(results: list[dict], threshold: float) -> dict:
+    """Build the unconfirmed proposed slate from scored results.
+
+    Selects every (model, prompt) combo whose accuracy clears ``threshold``;
+    if none clear, falls back to the single best-scoring combo.
+    """
+    scored = [
+        r
+        for r in results
+        if isinstance(r["scores"].get("accuracy"), (int, float))
+        and r["scores"].get("accuracy") is not None
+    ]
+    clearing = [r for r in scored if r["scores"]["accuracy"] >= threshold]
+    if clearing:
+        selected = clearing
+    elif scored:
+        selected = [max(scored, key=lambda r: r["scores"]["accuracy"])]
+    else:
+        selected = []
+
+    models: list[dict] = []
+    seen: set[str] = set()
+    for r in selected:
+        if r["model_id"] not in seen:
+            seen.add(r["model_id"])
+            models.append(
+                {
+                    "id": r["model_id"],
+                    "provider": r["provider"],
+                    "reasoning_effort": r["reasoning_effort"],
+                }
+            )
+
+    return {"confirmed": False, "models": models, "selected": selected}
 
 
 def _score_vs_human(
@@ -182,6 +240,8 @@ def _score_vs_human(
     """Compute agreement metrics between predictions and human labels.
 
     Returns a dict with accuracy, precision, recall, f1, and abstain rate.
+    The fuller imbalanced bundle (MCC, balanced accuracy, bootstrap CIs) is
+    Phase 2 (T2.1).
     """
     merged = pred_df.merge(human_df, on="EIN2", how="inner")
     if merged.empty:
@@ -200,10 +260,10 @@ def _score_vs_human(
             "abstain_rate": abstain_rate,
         }
 
-    tp = ((valid["label"] == 1.0) & (valid["human_label"] == 1.0)).sum()
-    fp = ((valid["label"] == 1.0) & (valid["human_label"] == 0.0)).sum()
-    fn = ((valid["label"] == 0.0) & (valid["human_label"] == 1.0)).sum()
-    tn = ((valid["label"] == 0.0) & (valid["human_label"] == 0.0)).sum()
+    tp = int(((valid["label"] == 1.0) & (valid["human_label"] == 1.0)).sum())
+    fp = int(((valid["label"] == 1.0) & (valid["human_label"] == 0.0)).sum())
+    fn = int(((valid["label"] == 0.0) & (valid["human_label"] == 1.0)).sum())
+    tn = int(((valid["label"] == 0.0) & (valid["human_label"] == 0.0)).sum())
 
     accuracy = (tp + tn) / len(valid)
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0

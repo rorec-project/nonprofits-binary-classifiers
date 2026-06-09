@@ -26,7 +26,11 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ipykernel>=7.2.0", "requests>=2.34.2"]
+dev = [
+    "ipykernel>=7.2.0",
+    "pytest>=9.0.3",
+    "requests>=2.34.2",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -35,9 +39,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/binary_classifier"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 88
-extend-exclude = [".agents", "archive"]
+extend-exclude = [".agents", "archive", "tests"]
 force-exclude = true
 
 [tool.ruff.lint]

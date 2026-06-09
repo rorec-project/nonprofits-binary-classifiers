@@ -20,11 +20,30 @@ paths:
   train_test_dir: train_test_datasets
   results_dir: results
   models_dir: models
+  # Gold is committed (human-coded artifacts); silver is the cloud-symlinked
+  # machine-labelled pool. Set these to match your local folder layout.
+  gold_dir: data/processed/train_test_datasets/gold
+  silver_dir: data/processed/train_test_datasets/silver
 
+# Config-driven slate: each candidate is tagged with its serving provider so
+# the annotator factory can route construction. OpenAI ids are floating
+# aliases (placeholders) — pin to dated snapshots before a production run.
+# The Gemma arm needs the vLLM server up during the bake-off; comment it out
+# for a pure-OpenAI bake-off. Stage 03 only runs the human-confirmed slate
+# (production_slate.json), so `production` below is just the default seed.
 model_slate:
-  closed_reference: gpt-4o-mini
-  open_production: Qwen/Qwen3-235B-A22B-Instruct-2507
-  open_lightweight: google/gemma-4-31B-it
+  bakeoff_candidates:
+    - id: gpt-4o-mini
+      provider: openai
+    - id: gpt-5-mini
+      provider: openai
+      reasoning_effort: minimal
+    - id: gpt-5-nano
+      provider: openai
+      reasoning_effort: minimal
+    - id: google/gemma-3-27b-it
+      provider: vllm
+  production: gpt-5-mini
 
 q_thresholds:
   HIGH: 5.0
@@ -42,6 +61,14 @@ annotation:
   checkpoint_every: 100
   guided_json: true
   seed: 42
+
+data:
+  # Hard-fail on a missing upstream parquet unless explicitly opted in.
+  allow_synthetic: false
+
+qc:
+  # Minimum LLM-vs-human validation agreement required to freeze silver labels.
+  agreement_threshold: 0.85
 
 training:
   learning_rate: 5.0e-5

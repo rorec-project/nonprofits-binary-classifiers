@@ -306,7 +306,11 @@ def split_human_sets(
     return prompt_dev, val, test
 
 
-def build_sample(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None:
+def build_sample(
+    cfg: "BinaryClassifierConfig",
+    registry: "PathRegistry",
+    force: bool = False,
+) -> None:
     """Build the silver pool, gold set, and human splits and write manifests.
 
     Steps:
@@ -321,10 +325,15 @@ def build_sample(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> Non
         6. Split gold into prompt-dev (~50), validation (~175), and frozen
            test (~175).
         7. Write manifest CSVs to the registry paths.
+        8. Emit the in-place human-coding template ``gold_to_code.csv`` (unless
+           it already exists and ``force`` is ``False`` — clobber protection
+           for human-entered labels).
 
     Args:
         cfg: Validated configuration object.
         registry: Path registry with resolved manifest paths.
+        force: Overwrite an existing gold coding template (discarding any
+            human-entered labels). Defaults to ``False``.
 
     Returns:
         None. Writes CSV manifests to ``registry`` paths.
@@ -382,7 +391,59 @@ def build_sample(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> Non
 
     gold_all = pd.concat([prompt_dev, validation, test])
     _write_manifest(gold_all, None, registry.gold_manifest)
+
+    _write_gold_coding_template(gold_all, registry, force=force)
     logger.info("Done.")
+
+
+def _write_gold_coding_template(
+    gold_all: pd.DataFrame,
+    registry: "PathRegistry",
+    force: bool = False,
+) -> None:
+    """Write the in-place human-coding template ``gold_to_code.csv``.
+
+    Columns: ``EIN2, split, text, human_label`` (the last blank for the human
+    to fill with strict ``0``/``1``). The text is carried inline so the human
+    can code without re-joining the upstream parquet.
+
+    Clobber protection: if the template already exists it is **not** rewritten
+    unless ``force`` is ``True`` — this preserves any human-entered labels.
+
+    Args:
+        gold_all: Concatenated prompt-dev + validation + test rows (with
+            ``mission_text`` and ``split`` columns).
+        registry: Path registry exposing ``gold_coding_template``.
+        force: Overwrite an existing template.
+
+    """
+    path = registry.gold_coding_template
+    if path.exists() and not force:
+        existing = pd.read_csv(path)
+        n_coded = (
+            int(existing["human_label"].notna().sum())
+            if "human_label" in existing.columns
+            else 0
+        )
+        logger.info(
+            "Gold coding template present at %s, %d coded — skipping "
+            "(use --force to regenerate).",
+            path,
+            n_coded,
+        )
+        return
+
+    template = pd.DataFrame(
+        {
+            "EIN2": gold_all["EIN2"].to_numpy(),
+            "split": gold_all["split"].to_numpy(),
+            "text": gold_all["mission_text"].to_numpy(),
+            "human_label": "",
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    template.to_csv(path, index=False)
+    logger.info("Wrote gold coding template (%d rows) to %s", len(template), path)
 
 
 def _write_manifest(

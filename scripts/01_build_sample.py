@@ -32,6 +32,12 @@ def _parse_args() -> argparse.Namespace:
         default=Path("config/religious_missions.yaml"),
         help="Path to the task configuration YAML file.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing gold coding template "
+        "(discards any human-entered labels).",
+    )
     return parser.parse_args()
 
 
@@ -44,7 +50,7 @@ def main() -> int:
     registry = PathRegistry(args.config)
 
     logger.info("[01] Building sample...")
-    build_sample(cfg, registry)
+    build_sample(cfg, registry, force=args.force)
     logger.info("[01] Sample built.")
 
     # Load manifests for assertions
