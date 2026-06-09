@@ -10,6 +10,9 @@ model_on_activities
 config/secrets.yaml
 __pycache__
 mise.toml
+mise.local.toml
+mise.*.toml
+.DS_Store
 
 # Agents
 .opencode/*
@@ -21,3 +24,6 @@ mise.toml
 !.agents/plans
 !.agents/stubs
 CLAUDE.md
+
+# Symlinks
+data
