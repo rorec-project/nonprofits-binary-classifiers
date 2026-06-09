@@ -1,6 +1,22 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "lsp": true,
+  "lsp": {
+    "air": {
+      "command": ["air", "language-server"],
+      "extensions": [".R", ".Rmd"]
+    },
+    "ruff": {
+      "command": ["ruff", "server"],
+      "extensions": [".py"]
+    },
+    "ty": {
+      "command": ["ty", "server"],
+      "extensions": [".py"]
+    },
+    "pyright": {
+      "disabled": true
+    }
+  },
   "mcp": {
     "grep_app": {
       "type": "remote",

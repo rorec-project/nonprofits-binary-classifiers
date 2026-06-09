@@ -1,0 +1,55 @@
+# Binary classifier configuration for the "religious vs. non-religious missions"
+# task. This is the first concrete task in the classification pipeline.
+#
+# Entity being classified: missions
+# Text field: LONGEST_MISSION
+# Label: religious (positive class = 1)
+
+SEED: 42
+
+entity: missions
+field: LONGEST_MISSION
+label_name: religious
+
+paths:
+  upstream_repo: ../NonProfitData
+  missions_parquet: data/processed/corpus/missions/missions_cross_section.parquet
+  bmf_parquet: data/processed/panel/core/bmf_unified_processed.parquet
+  output_dir: .
+  data_dir: data
+  train_test_dir: train_test_datasets
+  results_dir: results
+  models_dir: models
+
+model_slate:
+  closed_reference: gpt-4o-mini
+  open_production: Qwen/Qwen3-235B-A22B-Instruct-2507
+  open_lightweight: Qwen/Qwen3-32B
+
+q_thresholds:
+  HIGH: 5.0
+  MEDIUM: 3.0
+  LOW: 0.0
+
+sample_sizes:
+  silver: 20000
+  gold: 400
+  prompt_dev: 50
+
+annotation:
+  temperature: 0.0
+  max_retries: 5
+  checkpoint_every: 100
+  guided_json: true
+  seed: 42
+
+training:
+  learning_rate: 5.0e-5
+  batch_size: 16
+  epochs: 10
+  weight_decay: 0.01
+  metric_for_best_model: pr_auc
+  greater_is_better: true
+  early_stopping_patience: 4
+  save_total_limit: 2
+  fp16: true

@@ -16,16 +16,16 @@ All commits must follow **Conventional Commits** for clear history and automated
 
 ### Types
 
-| Type | Use For |
-|------|---------|
-| `feat` | New features |
-| `fix` | Bug fixes |
-| `refactor` | Code refactoring |
-| `docs` | Documentation |
-| `test` | Adding/updating tests |
-| `chore` | Build, dependencies, CI/CD |
-| `perf` | Performance improvements |
-| `style` | Code formatting |
+| Type       | Use For                    |
+| ---------- | -------------------------- |
+| `feat`     | New features               |
+| `fix`      | Bug fixes                  |
+| `refactor` | Code refactoring           |
+| `docs`     | Documentation              |
+| `test`     | Adding/updating tests      |
+| `chore`    | Build, dependencies, CI/CD |
+| `perf`     | Performance improvements   |
+| `style`    | Code formatting            |
 
 ### Subject Rules
 
@@ -55,33 +55,32 @@ Closes #45
 
 ## Branching Strategy
 
-**Main-only (trunk-based) workflow:**
+The integration branch is **`master`** (not `main`). Work happens on typed feature branches, and **nesting is allowed** (a sub-branch off another feature branch). PRs go **hierarchically into `master`** and are usually reviewed and merged **manually**.
 
-- **main** — Production-ready, stable code
-- Feature branches off main: `feature/short-description`
+- **`master`** — integration branch; stable, reviewed code
+- Feature branches: `feature/short-description`
 - Fix branches: `fix/short-description`
-- Refactor branches: `refactor/short-description`
+- Refactor branches: `refactor/short-description` (nesting allowed)
 
 ### Workflow
 
 ```bash
-# Create feature branch from main
-git checkout -b feature/laki-grievances-integration main
+# Branch off master (or off a parent feature branch when nesting)
+git checkout -b feature/learning-curve-sweep master
 
 # Commit with conventional commits
-git commit -m "feat(conflicts): integrate HISCOD geocoding"
+git commit -m "feat(training): add learning-curve sweep over silver N"
 
 # Push to remote
-git push origin feature/laki-grievances-integration
+git push origin feature/learning-curve-sweep
 
-# Create pull request against main
-# After review, merge into main
+# Open a PR into master (or into the parent branch); merge is handled manually
 ```
 
 ### Branch Naming
 
 - Use hyphens, lowercase
-- Descriptive: `feature/laki-grievances-integration`
+- Descriptive: `refactor/harmonize-pipeline`
 - Avoid: `feature/test`, `feature/fix1`
 
 ## Multi-File Commits
@@ -91,11 +90,11 @@ Group logically related changes:
 **Good:**
 
 ```bash
-git commit -m "refactor(spatial): extract aggregation function
+git commit -m "refactor(annotate): extract source_id builder
 
-src/functions/spatialFunctions.R — New aggregation_by_grid()
-src/scripts/laki/genSOcells.R — Use new function
-src/scripts/laki/genSOpolys.R — Use new function"
+src/binary_classifier/annotate/annotators/base.py — add _build_source_id()
+src/binary_classifier/annotate/bakeoff_prompts.py — use it
+src/binary_classifier/annotate/run_annotation.py — use it"
 ```
 
 **Avoid:**
@@ -114,10 +113,10 @@ src/scripts/laki/genSOpolys.R — Use new function"
 
 ```bash
 # Undo unstaged changes
-git checkout -- src/scripts/analysis.R
+git checkout -- scripts/run_pipeline.py
 
 # Undo staged changes
-git reset HEAD src/scripts/analysis.R
+git reset HEAD scripts/run_pipeline.py
 
 # Undo last commit (keep changes)
 git reset --soft HEAD~1
@@ -131,4 +130,4 @@ git reset --hard HEAD~1
 1. **Small and focused** — One logical change per commit
 2. **Atomic** — Each commit should work independently
 3. **Descriptive** — Read commit in 6 months, understand why
-4. **No debug code** — Don't commit `print()` or `browser()`
+4. **No debug code** — Don't commit `print()`/`breakpoint()`; use `logging` instead
