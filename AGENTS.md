@@ -40,9 +40,10 @@ Change task or knobs through **`config/*.yaml`** → pydantic `BinaryClassifierC
 
 ## Gotchas
 
+- **`data/` and `models/` are symlinks to cloud storage, not git-committed.** Both point to external directories (cloud-synced). They are gitignored. Pipeline outputs write to these symlinked locations; the symlinks themselves are local setup, not in the repo.
 - **Upstream `*.parquet` inputs are gitignored and absent locally.** They are produced by the sibling `NonProfitData` project, expected at `../NonProfitData`. Stages that read parquet can't run without it.
 - **Manifests in `train_test_datasets/` are `EIN2` lists + sampling metadata, not text/labels.** The text is re-joined from the upstream parquet by `EIN2`. Old flat CSVs sit in `train_test_datasets/legacy/`.
-- **`results/` and `models/` are gitignored and absent.**
+- **`results/` is gitignored and absent.**
 - **`EIN2` is the upstream join key — carry it through every artifact.**
 - **`archive/legacy-pipe/` is reference-only.** Don't run it, and don't "fix" it to match the new pipeline.
 
