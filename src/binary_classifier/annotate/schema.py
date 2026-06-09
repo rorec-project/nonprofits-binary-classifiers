@@ -3,7 +3,7 @@
 Defines the ``LabelRecord`` pydantic model that is the canonical output of every
 annotator, and the ``AnnotationStore`` helper that reads/writes the long/tidy
 label table. The schema is designed to be weak-supervision-ready: one row per
-(EIN2, source_id) so that multiple model×prompt labels can be aggregated later.
+(EIN2, source_id) so that multiple model x prompt labels can be aggregated later.
 """
 
 import json
@@ -113,6 +113,7 @@ class LabelRecord(BaseModel):
         Returns:
             ``1.0`` for religious, ``0.0`` for nonreligious, ``None`` for
             abstain (ambiguous_review or insufficient_information).
+
         """
         mapping = {
             BinaryLabel.RELIGIOUS: 1.0,

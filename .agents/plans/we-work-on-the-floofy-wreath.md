@@ -177,7 +177,7 @@ How the pipeline actually runs on the B200 node (from the UCloud docs — see [R
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-REPO_DIR="/work/BINARY-CLASSIFIER-MISSIONS"          # mounted Drive (or git clone here)
+REPO_DIR="/work/nonprofits-binary-classifiers"          # mounted Drive (or git clone here)
 export UV_CACHE_DIR="/work/.uv-cache"
 export UV_PYTHON_INSTALL_DIR="/work/.uv-python"
 command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH="$HOME/.local/bin:$PATH"; }

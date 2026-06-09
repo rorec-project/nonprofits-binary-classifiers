@@ -39,7 +39,7 @@ and keep **all** persistent data there:
 `uv` is pre-installed (v0.11.3). The system Python is 3.12, but `uv` self-manages Python 3.13 as required by `pyproject.toml`. The `utils/init.sh` script handles installation and syncing:
 
 ```bash
-cd /work/BINARY-CLASSIFIER-MISSIONS
+cd /work/nonprofits-binary-classifiers
 bash utils/init.sh
 ```
 

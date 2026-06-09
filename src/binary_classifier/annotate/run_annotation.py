@@ -1,6 +1,6 @@
 """Batch annotation runner with resume support.
 
-Runs the full model×prompt matrix over a dataset of (EIN2, text) records.
+Runs the full model x prompt matrix over a dataset of (EIN2, text) records.
 Resume is keyed by (EIN2, source_id) — fixes audit R-08. Checkpoints are
 written to the long/tidy store after every ``checkpoint_every`` records.
 
@@ -134,7 +134,7 @@ def run_annotation_matrix(
     resume: bool = True,
     canary_only: bool = False,
 ) -> AnnotationStore:
-    """Run the full model×prompt matrix over a dataframe.
+    """Run the full model x prompt matrix over a dataframe.
 
     Args:
         df: DataFrame with columns ``EIN2`` and ``text`` (the field to classify).
@@ -149,6 +149,7 @@ def run_annotation_matrix(
 
     Returns:
         The populated ``AnnotationStore``.
+
     """
     store = AnnotationStore(store_path)
 
@@ -165,7 +166,7 @@ def run_annotation_matrix(
                 [
                     (ein2, text, model_id, prompt_id)
                     for ein2, text in zip(df["EIN2"], df["text"])
-                ]
+                ],
             )
 
     if canary_only:

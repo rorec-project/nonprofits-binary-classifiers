@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="/work/BINARY-CLASSIFIER-MISSIONS"
+REPO_DIR="/work/nonprofits-binary-classifiers"
 export UV_CACHE_DIR="/work/.uv-cache"
 export UV_PYTHON_INSTALL_DIR="/work/.uv-python"
 

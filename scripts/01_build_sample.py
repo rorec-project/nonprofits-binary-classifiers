@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the silver pool, gold set, and human splits."
+        description="Build the silver pool, gold set, and human splits.",
     )
     parser.add_argument(
         "--config",

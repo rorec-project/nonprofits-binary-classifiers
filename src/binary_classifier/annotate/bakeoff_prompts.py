@@ -1,4 +1,4 @@
-"""Bake-off harness: model×prompt scoring on prompt-dev vs human labels.
+"""Bake-off harness: model x prompt scoring on prompt-dev vs human labels.
 
 The module exposes :func:`run_bakeoff`, which is the canonical entrypoint
 used by both ``scripts/02_bakeoff_prompts.py`` and ``run_pipeline.py``.

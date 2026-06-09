@@ -24,7 +24,7 @@ paths:
 model_slate:
   closed_reference: gpt-4o-mini
   open_production: Qwen/Qwen3-235B-A22B-Instruct-2507
-  open_lightweight: Qwen/Qwen3-32B
+  open_lightweight: google/gemma-4-31B-it
 
 q_thresholds:
   HIGH: 5.0

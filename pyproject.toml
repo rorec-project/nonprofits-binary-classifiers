@@ -1,5 +1,5 @@
 [project]
-name = "binary-classifier-missions"
+name = "nonprofits-binary-classifiers"
 version = "0.1.0"
 description = "Nonprofit Corpus Binary Classifiers"
 readme = "README.md"

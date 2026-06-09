@@ -45,8 +45,8 @@ config/
 
 ```bash
 # Clone the repository
-git clone https://github.com/carobs9/BINARY-CLASSIFIER-MISSIONS.git
-cd BINARY-CLASSIFIER-MISSIONS
+git clone https://github.com/rorec-project/nonprofits-binary-classifiers.git
+cd nonprofits-binary-classifiers
 
 # Install dependencies (uv manages Python 3.13 automatically)
 uv sync
