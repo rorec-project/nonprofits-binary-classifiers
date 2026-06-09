@@ -40,12 +40,6 @@ CANARY_EIN2: list[str] = [
     "00-0000005",
 ]
 
-# Default prompt variants (model × prompt matrix).
-_DEFAULT_PROMPT_PATHS: list[Path] = [
-    Path("src/binary_classifier/annotate/prompts/v1.txt"),
-    Path("src/binary_classifier/annotate/prompts/v2.txt"),
-    Path("src/binary_classifier/annotate/prompts/v3.txt"),
-]
 
 # Factory signature: (spec, prompt_id, prompt_text) -> Annotator.
 AnnotatorFactory = Callable[[BakeoffCandidate, str, str], Annotator]
@@ -111,7 +105,7 @@ def run_annotation(
     defaults to ``registry.annotation_store``.
     """
     if prompt_paths is None:
-        prompt_paths = list(_DEFAULT_PROMPT_PATHS)
+        prompt_paths = [registry.prompts_dir / f"{stem}.txt" for stem in ("v1", "v2", "v3")]
     if specs is None:
         specs = resolve_production_specs(registry)
     if store_path is None:

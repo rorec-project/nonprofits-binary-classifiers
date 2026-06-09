@@ -24,7 +24,7 @@ src/binary_classifier/
     run_annotation.py  # Batch labeling; resume by (EIN2, source_id)
     aggregate.py       # Majority vote + crowd-kit / cleanlab hooks
   qc/
-    agreement.py       # LLM-vs-human agreement + Krippendorff α
+    agreement.py       # LLM-vs-human agreement + full sklearn metric bundle
 scripts/
   01_build_sample.py   # Stage 2.1: construct silver (~20k) + gold (~400) + splits
   02_bakeoff_prompts.py # Stage 2.2: model×prompt bake-off on prompt-dev
