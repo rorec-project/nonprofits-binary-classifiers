@@ -2,16 +2,22 @@
 
 Uses the ``openai`` Python client with structured JSON output (guided JSON) to
 produce schema-valid ``LabelRecord`` objects. Temperature is fixed at 0 for
-deterministic annotation.
+best-effort reproducible annotation.
 """
 
 import json
 import os
+from typing import Literal, cast
 
 from openai import OpenAI
 
 from binary_classifier.annotate.annotators.base import Annotator
-from binary_classifier.annotate.schema import BinaryLabel, LabelRecord, SourceType
+from binary_classifier.annotate.schema import (
+    BinaryLabel,
+    LabelRecord,
+    SourceType,
+    build_json_schema,
+)
 
 
 class OpenAIAnnotator(Annotator):
@@ -21,10 +27,11 @@ class OpenAIAnnotator(Annotator):
         model_id: OpenAI model snapshot (e.g. ``gpt-4o-mini``).
         prompt_id: Prompt version tag.
         prompt_text: Full prompt text.
-        temperature: Fixed at 0.0 for deterministic output.
+        temperature: Fixed at 0.0 for best-effort reproducible output.
         seed: Random seed passed to the API.
         max_retries: Retries on rate-limit or transient errors.
         api_key: Optional explicit API key (falls back to ``OPENAI_API_KEY``).
+        reasoning_effort: Optional reasoning-effort knob for GPT-5-class models.
 
     """
 
@@ -68,6 +75,14 @@ class OpenAIAnnotator(Annotator):
         """
         for attempt in range(self.max_retries + 1):
             try:
+                reasoning_effort: (
+                    Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+                ) = None
+                if self.reasoning_effort is not None:
+                    reasoning_effort = cast(
+                        Literal["none", "minimal", "low", "medium", "high", "xhigh"],
+                        self.reasoning_effort,
+                    )
                 response = self.client.chat.completions.create(
                     model=self.model_id,
                     messages=[
@@ -76,13 +91,22 @@ class OpenAIAnnotator(Annotator):
                     ],
                     temperature=self.temperature,
                     seed=self.seed,
-                    response_format={"type": "json_object"},
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "label_record",
+                            "schema": build_json_schema(),
+                            "strict": True,
+                        },
+                    },
+                    reasoning_effort=reasoning_effort,
                 )
                 raw = response.choices[0].message.content
                 if raw is None:
                     return self._error_record(ein2, "empty_content")
                 parsed = self._parse_raw(raw, ein2)
                 parsed.raw_response = raw
+                parsed.system_fingerprint = response.system_fingerprint
                 return parsed
             except Exception as exc:
                 if attempt >= self.max_retries:

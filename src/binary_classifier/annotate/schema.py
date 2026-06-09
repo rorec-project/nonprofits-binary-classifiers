@@ -39,6 +39,56 @@ class BinaryLabel(str, Enum):
     INSUFFICIENT_INFORMATION = "insufficient_information"
 
 
+# ── JSON Schema builder ──────────────────────────────────────────────────────
+
+
+def build_json_schema() -> dict[str, Any]:
+    """Return a strict-compatible JSON Schema for LLM structured outputs.
+
+    Compatible with OpenAI ``json_schema`` (``strict``: true) and vLLM
+    ``guided_json``. All fields are in ``required``; nullable types use
+    ``anyOf`` with ``{"type": "null"}``.
+    """
+    string_null: dict[str, Any] = {
+        "anyOf": [{"type": "string"}, {"type": "null"}]
+    }
+    string_array_null: dict[str, Any] = {
+        "anyOf": [
+            {"type": "array", "items": {"type": "string"}},
+            {"type": "null"},
+        ]
+    }
+
+    return {
+        "type": "object",
+        "properties": {
+            "binary_label": {
+                "type": "string",
+                "enum": [
+                    BinaryLabel.RELIGIOUS.value,
+                    BinaryLabel.NONRELIGIOUS.value,
+                    BinaryLabel.AMBIGUOUS_REVIEW.value,
+                    BinaryLabel.INSUFFICIENT_INFORMATION.value,
+                ],
+            },
+            "confidence": {"type": "number"},
+            "domains_present": string_array_null,
+            "evidence_spans": string_array_null,
+            "boundary_notes": string_null,
+            "reason": string_null,
+        },
+        "required": [
+            "binary_label",
+            "confidence",
+            "domains_present",
+            "evidence_spans",
+            "boundary_notes",
+            "reason",
+        ],
+        "additionalProperties": False,
+    }
+
+
 # ── Pydantic model ───────────────────────────────────────────────────────────
 
 
@@ -99,6 +149,12 @@ class LabelRecord(BaseModel):
         description="Notes on edge cases or ambiguities.",
     )
 
+    # Optional system fingerprint from the provider response
+    system_fingerprint: str | None = Field(
+        None,
+        description="OpenAI system_fingerprint or equivalent provider trace.",
+    )
+
     # Raw LLM output
     raw_response: str | None = Field(
         None,
@@ -156,38 +212,55 @@ class LabelRecord(BaseModel):
             else None,
             "boundary_notes": self.boundary_notes,
             "binary_label": self.binary_label.value if self.binary_label else None,
+            "system_fingerprint": self.system_fingerprint,
         }
 
     @classmethod
     def from_flat_dict(cls, row: dict[str, Any]) -> "LabelRecord":
         """Rehydrate a ``LabelRecord`` from a flat CSV/Parquet row."""
+
+        def _clean(val: Any) -> Any:
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                return None
+            return val
+
         return cls(
             EIN2=row["EIN2"],
             source_id=row["source_id"],
             source_type=SourceType(row["source_type"]),
-            label=row.get("label"),
-            confidence=row.get("confidence"),
+            label=_clean(row.get("label")),
+            confidence=_clean(row.get("confidence")),
             model_id=row["model_id"],
             prompt_id=row["prompt_id"],
             temperature=row["temperature"],
-            seed=row.get("seed"),
+            seed=_clean(row.get("seed")),
             run_timestamp=(
                 datetime.fromisoformat(row["run_timestamp"])
                 if row.get("run_timestamp")
                 else datetime.now(timezone.utc)
             ),
-            raw_response=row.get("raw_response"),
-            reason=row.get("reason"),
-            domains_present=json.loads(row["domains_present"])
-            if row.get("domains_present")
-            else None,
-            evidence_spans=json.loads(row["evidence_spans"])
-            if row.get("evidence_spans")
-            else None,
-            boundary_notes=row.get("boundary_notes"),
-            binary_label=BinaryLabel(row["binary_label"])
-            if row.get("binary_label")
-            else None,
+            raw_response=_clean(row.get("raw_response")),
+            reason=_clean(row.get("reason")),
+            domains_present=(
+                json.loads(row["domains_present"])
+                if isinstance(row.get("domains_present"), str)
+                and row["domains_present"]
+                else None
+            ),
+            evidence_spans=(
+                json.loads(row["evidence_spans"])
+                if isinstance(row.get("evidence_spans"), str)
+                and row["evidence_spans"]
+                else None
+            ),
+            boundary_notes=_clean(row.get("boundary_notes")),
+            binary_label=(
+                BinaryLabel(row["binary_label"])
+                if isinstance(row.get("binary_label"), str)
+                and row["binary_label"]
+                else None
+            ),
+            system_fingerprint=_clean(row.get("system_fingerprint")),
         )
 
 
@@ -197,7 +270,8 @@ class LabelRecord(BaseModel):
 class AnnotationStore:
     """Read/write the long/tidy label store as CSV or Parquet.
 
-    The store is append-only. Resuming is done by checking the set of
+    The store is append-only for CSV (new rows are written directly without
+    loading the full file). Resuming is done by checking the set of
     (EIN2, source_id) pairs already present.
     """
 
@@ -219,6 +293,7 @@ class AnnotationStore:
         "evidence_spans",
         "boundary_notes",
         "binary_label",
+        "system_fingerprint",
     ]
 
     def __init__(self, path: Path) -> None:
@@ -230,6 +305,7 @@ class AnnotationStore:
         """
         self.path: Path = path
         self._df: pd.DataFrame | None = None
+        self._done_set: set[tuple[str, str]] | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -242,6 +318,11 @@ class AnnotationStore:
                 self._df = pd.read_parquet(self.path)
             else:
                 self._df = pd.read_csv(self.path)
+            # Reindex to canonical columns for backward compatibility
+            for col in self.COLUMNS:
+                if col not in self._df.columns:
+                    self._df[col] = None
+            self._df = self._df[self.COLUMNS]
         else:
             self._df = pd.DataFrame(columns=self.COLUMNS)
         return self._df
@@ -254,6 +335,20 @@ class AnnotationStore:
         else:
             df.to_csv(self.path, index=False)
 
+    def _build_done_set(self) -> set[tuple[str, str]]:
+        """Build a cached set of (EIN2, source_id) pairs from the store."""
+        if self._done_set is not None:
+            return self._done_set
+        if not self.path.exists():
+            self._done_set = set()
+            return self._done_set
+        if self.path.suffix == ".parquet":
+            df = pd.read_parquet(self.path, columns=["EIN2", "source_id"])
+        else:
+            df = pd.read_csv(self.path, usecols=["EIN2", "source_id"])
+        self._done_set = set(zip(df["EIN2"], df["source_id"]))
+        return self._done_set
+
     # ── Public API ───────────────────────────────────────────────────────
 
     def already_done(self, ein2: str, source_id: str) -> bool:
@@ -261,29 +356,49 @@ class AnnotationStore:
 
         This is the resume key — fixes audit R-08.
         """
-        df = self._load()
-        if df.empty:
-            return False
-        mask = (df["EIN2"] == ein2) & (df["source_id"] == source_id)
-        return bool(mask.any())
+        return (ein2, source_id) in self._build_done_set()
+
+    def done_pairs(self) -> set[tuple[str, str]]:
+        """Return a copy of the set of (EIN2, source_id) pairs already stored."""
+        return self._build_done_set().copy()
 
     def append(self, record: LabelRecord) -> None:
         """Append a single record to the store."""
-        df = self._load()
         row = record.to_flat_dict()
         row_df = pd.DataFrame([row], columns=self.COLUMNS)
-        self._df = pd.concat([df, row_df], ignore_index=True)
-        self._save()
+        if self.path.suffix == ".parquet":
+            df = self._load()
+            self._df = pd.concat([df, row_df], ignore_index=True)
+            self._save()
+        else:
+            if self.path.exists():
+                row_df.to_csv(self.path, mode="a", index=False, header=False)
+            else:
+                row_df.to_csv(self.path, index=False)
+            if self._df is not None:
+                self._df = pd.concat([self._df, row_df], ignore_index=True)
+        if self._done_set is not None:
+            self._done_set.add((row["EIN2"], row["source_id"]))
 
     def append_many(self, records: list[LabelRecord]) -> None:
         """Append a batch of records efficiently."""
         if not records:
             return
-        df = self._load()
         rows = [r.to_flat_dict() for r in records]
         rows_df = pd.DataFrame(rows, columns=self.COLUMNS)
-        self._df = pd.concat([df, rows_df], ignore_index=True)
-        self._save()
+        if self.path.suffix == ".parquet":
+            df = self._load()
+            self._df = pd.concat([df, rows_df], ignore_index=True)
+            self._save()
+        else:
+            if self.path.exists():
+                rows_df.to_csv(self.path, mode="a", index=False, header=False)
+            else:
+                rows_df.to_csv(self.path, index=False)
+            if self._df is not None:
+                self._df = pd.concat([self._df, rows_df], ignore_index=True)
+        if self._done_set is not None:
+            self._done_set.update((r["EIN2"], r["source_id"]) for r in rows)
 
     def to_frame(self) -> pd.DataFrame:
         """Return a copy of the full store as a pandas DataFrame."""

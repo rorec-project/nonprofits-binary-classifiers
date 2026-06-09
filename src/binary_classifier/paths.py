@@ -158,6 +158,11 @@ class PathRegistry:
         """Long/tidy bake-off label store (stage 02)."""
         return self.silver_dir / "bakeoff_labels.csv"
 
+    @property
+    def prompts_dir(self) -> Path:
+        """Directory containing built-in prompt text files."""
+        return self._root / "src" / "binary_classifier" / "annotate" / "prompts"
+
     # ── Convenience helpers ──────────────────────────────────────────────────
 
     def ensure_dirs(self) -> None:

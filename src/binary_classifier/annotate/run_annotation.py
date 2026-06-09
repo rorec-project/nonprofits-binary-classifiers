@@ -204,8 +204,7 @@ def run_annotation_matrix(
 
     # Resume filtering — source_id == f"{spec.id}__{prompt_id}".
     if resume:
-        existing = store.to_frame()
-        existing_pairs = set(zip(existing["EIN2"], existing["source_id"]))
+        existing_pairs = store.done_pairs()
         work_items = [
             (e, t, s, p)
             for e, t, s, p in work_items

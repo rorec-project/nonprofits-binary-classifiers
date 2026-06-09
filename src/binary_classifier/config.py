@@ -209,10 +209,15 @@ class QCConfig(BaseModel):
         agreement_threshold: Minimum LLM-vs-human agreement on the validation
             overlap required to freeze the silver labels. Below this the gate
             blocks (raises / non-zero exit) and writes nothing.
+        abstain_on_fabricated_positive: When ``True``, any positive label
+            (``binary_label == "religious"``) that carries a fabricated
+            evidence span is treated as an abstain (``binary_label = None``)
+            before aggregation.
 
     """
 
     agreement_threshold: float = 0.85
+    abstain_on_fabricated_positive: bool = False
 
 
 class TrainingConfig(BaseModel):

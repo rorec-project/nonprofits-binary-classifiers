@@ -23,11 +23,7 @@ from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PROMPT_PATHS: list[Path] = [
-    Path("src/binary_classifier/annotate/prompts/v1.txt"),
-    Path("src/binary_classifier/annotate/prompts/v2.txt"),
-    Path("src/binary_classifier/annotate/prompts/v3.txt"),
-]
+_DEFAULT_PROMPT_FILES: tuple[str, ...] = ("v1.txt", "v2.txt", "v3.txt")
 
 AnnotatorFactory = Callable[[BakeoffCandidate, str, str], Annotator]
 
@@ -73,7 +69,7 @@ def run_bakeoff(
 
     """
     if prompt_paths is None:
-        prompt_paths = list(_DEFAULT_PROMPT_PATHS)
+        prompt_paths = [registry.prompts_dir / f for f in _DEFAULT_PROMPT_FILES]
     if candidates is None:
         candidates = cfg.model_slate.bakeoff_candidates
     if human_labels_path is None:

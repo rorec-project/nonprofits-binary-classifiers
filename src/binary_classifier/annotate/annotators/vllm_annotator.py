@@ -10,7 +10,12 @@ import json
 from openai import OpenAI
 
 from binary_classifier.annotate.annotators.base import Annotator
-from binary_classifier.annotate.schema import BinaryLabel, LabelRecord, SourceType
+from binary_classifier.annotate.schema import (
+    BinaryLabel,
+    LabelRecord,
+    SourceType,
+    build_json_schema,
+)
 
 
 class VLLMAnnotator(Annotator):
@@ -22,7 +27,7 @@ class VLLMAnnotator(Annotator):
             loaded by the vLLM server.
         prompt_id: Prompt version tag.
         prompt_text: Full prompt text.
-        temperature: Fixed at 0.0.
+        temperature: Fixed at 0.0 for best-effort reproducible output.
         seed: Random seed.
         max_retries: Retries on connection errors.
         base_url: vLLM server URL (default ``http://127.0.0.1:8000/v1``).
@@ -81,31 +86,7 @@ class VLLMAnnotator(Annotator):
                     temperature=self.temperature,
                     seed=self.seed,
                     extra_body={
-                        "guided_json": {
-                            "type": "object",
-                            "properties": {
-                                "binary_label": {
-                                    "type": "string",
-                                    "enum": [
-                                        "religious",
-                                        "nonreligious",
-                                        "ambiguous_review",
-                                        "insufficient_information",
-                                    ],
-                                },
-                                "confidence": {"type": "number"},
-                                "domains_present": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "evidence_spans": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "boundary_notes": {"type": "string"},
-                            },
-                            "required": ["binary_label", "confidence"],
-                        },
+                        "guided_json": build_json_schema(),
                     },
                 )
                 raw = response.choices[0].message.content

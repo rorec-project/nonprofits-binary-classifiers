@@ -1,15 +1,33 @@
 """Quality control and agreement metrics for the annotation pipeline.
 
-Provides LLM-vs-human agreement scoring, Krippendorff alpha, and the ≥85%
-validation gate. Also handles versioning and freezing of the final label
-artifact.
+Provides LLM-vs-human agreement scoring and the ≥85% validation gate,
+plus a full sklearn metric bundle (confusion matrix, minority-class
+precision/recall/F1, MCC, balanced accuracy, Cohen's κ, PR-AUC when
+confidence scores exist, and bootstrap CIs). Also handles versioning and
+freezing of the final label artifact.
+
+.. note::
+    Cohen's κ is sensitive to class imbalance and prevalence (the
+    distribution of classes in the data). It should be interpreted
+    alongside the other metrics in the bundle, not as a standalone
+    gate.
 """
 
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
+from sklearn.metrics import (
+    average_precision_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    cohen_kappa_score,
+    f1_score,
+    matthews_corrcoef,
+    precision_recall_fscore_support,
+)
 
 from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.schema import AnnotationStore
@@ -34,7 +52,11 @@ def run_quality_check(
         1. Load the long/tidy annotation store.
         2. Aggregate per-EIN2 labels by majority vote (default).
         3. Compute LLM-vs-human agreement on the coded validation split.
-        4. Freeze the silver labels **only if** agreement meets the configured
+        4. Compute the full sklearn metric bundle (confusion matrix,
+           minority-class precision/recall/F1, MCC, balanced accuracy,
+           Cohen's κ, PR-AUC when confidence scores exist, and bootstrap
+           95% CIs for accuracy and minority F1).
+        5. Freeze the silver labels **only if** agreement meets the configured
            threshold; otherwise raise (write nothing).
 
     Args:
@@ -48,8 +70,10 @@ def run_quality_check(
             Defaults to ``train_test_datasets/silver_labels.csv``.
 
     Returns:
-        Dict with ``agreement``, ``n_total``, ``n_abstain``, ``n_valid``, and
-        ``frozen_path``.
+        Dict with ``agreement``, ``n_total``, ``n_abstain``, ``n_valid``,
+        ``confusion_matrix``, ``minority_class``, ``precision``, ``recall``,
+        ``f1``, ``mcc``, ``balanced_accuracy``, ``cohens_kappa``,
+        ``pr_auc`` (or ``None``), ``bootstrap_ci``, and ``frozen_path``.
 
     Raises:
         ValueError: If the store is empty, no validation labels overlap, or the
@@ -100,6 +124,10 @@ def run_quality_check(
     agree = int((valid["silver_label"] == valid["human_label"]).sum())
     agreement = agree / len(valid)
     threshold = cfg.qc.agreement_threshold
+
+    # Compute full metric bundle
+    metrics = _compute_metrics(valid)
+
     logger.info(
         "Validation agreement: %.1f%% (%d/%d); threshold %.0f%%",
         agreement * 100,
@@ -107,12 +135,43 @@ def run_quality_check(
         len(valid),
         threshold * 100,
     )
+    logger.info(
+        "Metrics — minority class %s: P=%.3f R=%.3f F1=%.3f | "
+        "MCC=%.3f | Balanced Acc=%.3f | Cohen's κ=%.3f%s",
+        metrics["minority_class"],
+        metrics["precision"],
+        metrics["recall"],
+        metrics["f1"],
+        metrics["mcc"],
+        metrics["balanced_accuracy"],
+        metrics["cohens_kappa"],
+        (
+            f" | PR-AUC={metrics['pr_auc']:.3f}"
+            if metrics["pr_auc"] is not None
+            else ""
+        ),
+    )
+    logger.info(
+        "Bootstrap 95%% CI — accuracy: [%.3f, %.3f]; minority F1: [%.3f, %.3f]",
+        metrics["bootstrap_ci"]["accuracy"]["lower"],
+        metrics["bootstrap_ci"]["accuracy"]["upper"],
+        metrics["bootstrap_ci"]["minority_f1"]["lower"],
+        metrics["bootstrap_ci"]["minority_f1"]["upper"],
+    )
 
     if agreement < threshold:
-        raise ValueError(
+        msg = (
             f"AGREEMENT GATE FAILED: {agreement:.1%} < {threshold:.0%}. "
-            f"Revise prompts and re-label; nothing was frozen."
+            f"Revise prompts and re-label; nothing was frozen.\n"
+            f"Metrics: minority_class={metrics['minority_class']}, "
+            f"P={metrics['precision']:.3f}, R={metrics['recall']:.3f}, "
+            f"F1={metrics['f1']:.3f}, MCC={metrics['mcc']:.3f}, "
+            f"balanced_acc={metrics['balanced_accuracy']:.3f}, "
+            f"cohens_kappa={metrics['cohens_kappa']:.3f}"
         )
+        if metrics["pr_auc"] is not None:
+            msg += f", pr_auc={metrics['pr_auc']:.3f}"
+        raise ValueError(msg)
 
     # Freeze (gate passed).
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +183,121 @@ def run_quality_check(
         "n_total": n_total,
         "n_abstain": n_abstain,
         "n_valid": len(valid),
+        "confusion_matrix": metrics["confusion_matrix"],
+        "minority_class": metrics["minority_class"],
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": metrics["f1"],
+        "mcc": metrics["mcc"],
+        "balanced_accuracy": metrics["balanced_accuracy"],
+        "cohens_kappa": metrics["cohens_kappa"],
+        "pr_auc": metrics["pr_auc"],
+        "bootstrap_ci": metrics["bootstrap_ci"],
         "frozen_path": str(output_path),
+    }
+
+
+def _compute_metrics(valid: pd.DataFrame) -> dict:
+    """Compute the full sklearn metric bundle on the validation overlap.
+
+    Args:
+        valid: DataFrame with ``silver_label`` and ``human_label`` columns.
+
+    Returns:
+        Dict with all computed metrics.
+    """
+    y_true = valid["human_label"].astype(int).values
+    y_pred = valid["silver_label"].astype(int).values
+
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+
+    # Determine minority class
+    counts = np.bincount(y_true)
+    minority_class = int(np.argmin(counts))
+
+    # Precision, recall, F1 for both classes; report minority explicitly
+    precisions, recalls, f1s, _ = precision_recall_fscore_support(
+        y_true, y_pred, labels=[0, 1], zero_division=0
+    )
+    precision = float(precisions[minority_class])
+    recall = float(recalls[minority_class])
+    f1 = float(f1s[minority_class])
+
+    mcc = float(matthews_corrcoef(y_true, y_pred))
+    balanced_acc = float(balanced_accuracy_score(y_true, y_pred))
+    kappa = float(cohen_kappa_score(y_true, y_pred))
+
+    # PR-AUC when confidence scores exist
+    pr_auc = None
+    if "silver_confidence" in valid.columns and valid["silver_confidence"].notna().any():
+        scores = valid["silver_confidence"].astype(float).values
+        mask = ~np.isnan(scores)
+        if mask.any():
+            pr_auc = float(average_precision_score(y_true[mask], scores[mask]))
+
+    # Bootstrap CI
+    bootstrap_ci = _bootstrap_ci(y_true, y_pred, minority_class)
+
+    return {
+        "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
+        "minority_class": minority_class,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "mcc": mcc,
+        "balanced_accuracy": balanced_acc,
+        "cohens_kappa": kappa,
+        "pr_auc": pr_auc,
+        "bootstrap_ci": bootstrap_ci,
+    }
+
+
+def _bootstrap_ci(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    minority_class: int,
+    n_resamples: int = 1000,
+    confidence_level: float = 0.95,
+) -> dict:
+    """Bootstrap confidence intervals for accuracy and minority-class F1.
+
+    Args:
+        y_true: Ground-truth labels.
+        y_pred: Predicted labels.
+        minority_class: The class to report F1 for.
+        n_resamples: Number of bootstrap resamples.
+        confidence_level: Confidence level (e.g. 0.95).
+
+    Returns:
+        Dict with ``accuracy`` and ``minority_f1`` each containing
+        ``lower`` and ``upper``.
+    """
+    rng = np.random.default_rng(seed=42)
+    n = len(y_true)
+    accs = np.empty(n_resamples, dtype=float)
+    f1s = np.empty(n_resamples, dtype=float)
+
+    for i in range(n_resamples):
+        idx = rng.integers(0, n, size=n)
+        accs[i] = float(np.mean(y_true[idx] == y_pred[idx]))
+        f1s[i] = f1_score(
+            y_true[idx], y_pred[idx], pos_label=minority_class, zero_division=0
+        )
+
+    alpha = 1 - confidence_level
+    lower_p = alpha / 2 * 100
+    upper_p = (1 - alpha / 2) * 100
+
+    return {
+        "accuracy": {
+            "lower": float(np.percentile(accs, lower_p)),
+            "upper": float(np.percentile(accs, upper_p)),
+        },
+        "minority_f1": {
+            "lower": float(np.percentile(f1s, lower_p)),
+            "upper": float(np.percentile(f1s, upper_p)),
+        },
     }
 
 

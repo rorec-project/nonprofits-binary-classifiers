@@ -41,6 +41,10 @@ Change task or knobs through **`config/*.yaml`** → pydantic `BinaryClassifierC
 ## Gotchas
 
 - **`data/` and `models/` are symlinks to cloud storage, not git-committed.** Both point to external directories (cloud-synced). They are gitignored. Pipeline outputs write to these symlinked locations; the symlinks themselves are local setup, not in the repo.
+- **Gold-committed / silver-symlinked layout.** `gold_dir` (configurable, default `data/processed/train_test_datasets/gold`) is committed: it holds `gold_to_code.csv` (the human-coding template) and `production_slate.json` (the human-confirmed model slate). `silver_dir` (default `data/processed/train_test_datasets/silver`) is the cloud-symlinked machine-labelled pool: it holds `annotation_store.csv` and `bakeoff_labels.csv`.
+- **Two human checkpoints gate the pipeline.**
+  - **G1 (labels gate)** — before stage 02 (bake-off) or stage 04 (QC), the pipeline validates that `gold_to_code.csv` has complete `0/1` human labels for every row in the required split (`prompt_dev` for 02, `validation` for 04). If labels are missing, blank, or non-`0/1`, the run exits gracefully (no GPU work wasted).
+  - **G2 (slate gate)** — before stage 03 (full annotation), the pipeline requires a human-confirmed `production_slate.json` in `gold_dir`. If stages 02+03 are requested together and no confirmed slate exists, stage 02 runs (produces `proposed_slate.json`), then the pipeline exits gracefully before stage 03.
 - **Upstream `*.parquet` inputs are gitignored and absent locally.** They are produced by the sibling `NonProfitData` project, expected at `../NonProfitData`. Stages that read parquet can't run without it.
 - **Manifests in `train_test_datasets/` are `EIN2` lists + sampling metadata, not text/labels.** The text is re-joined from the upstream parquet by `EIN2`. Old flat CSVs sit in `train_test_datasets/legacy/`.
 - **`results/` is gitignored and absent.**
