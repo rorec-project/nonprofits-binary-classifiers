@@ -19,32 +19,28 @@ from pydantic import BaseModel, Field
 class PathsConfig(BaseModel):
     """Input/output directory paths.
 
+    Follows the cookiecutter-data-science convention: ``raw/`` for
+    immutable upstream inputs, ``interim/`` for intermediate pipeline
+    artifacts (cloud-symlinked), ``processed/`` for final ready-to-train
+    datasets, and ``models/`` for persisted trained models.
+
     Attributes:
-        upstream_repo: Path to the upstream NonProfitData repository.
-        missions_parquet: Name of the missions cross-section parquet file.
-        bmf_parquet: Name of the BMF unified processed parquet file.
-        output_dir: Directory for intermediate and final artifacts.
-        data_dir: Sub-directory for labelled CSVs and raw outputs.
-        train_test_dir: Sub-directory for train/test splits.
-        results_dir: Sub-directory for evaluation metrics and plots.
-        models_dir: Sub-directory for persisted fine-tuned models.
+        raw_dir: Directory for upstream parquet files (e.g.
+            ``missions_cross_section.parquet``, ``bmf_unified_processed.parquet``).
+        interim_dir: Cloud-symlinked directory for intermediate pipeline
+            outputs (manifests, bake-off scores, annotation stores).
+        processed_dir: Directory for final datasets. The ``gold/``
+            sub-directory is git-committed (human-coded labels and the
+            production slate); ``silver_labels.csv`` is gitignored.
+        models_dir: Directory for persisted fine-tuned model artifacts
+            (future roadmap).
 
     """
 
-    upstream_repo: Path = Field(default=Path("../NonProfitData"))
-    missions_parquet: str = (
-        "data/processed/corpus/missions/missions_cross_section.parquet"
-    )
-    bmf_parquet: str = "data/processed/panel/core/bmf_unified_processed.parquet"
-    output_dir: Path = Field(default=Path("."))
-    data_dir: Path = Field(default=Path("data"))
-    train_test_dir: Path = Field(default=Path("train_test_datasets"))
-    results_dir: Path = Field(default=Path("results"))
-    models_dir: Path = Field(default=Path("models"))
-    # Gold is committed (human-coded artifacts live here); silver is the
-    # large machine-labelled pool, symlinked to cloud storage. See AGENTS.md.
-    gold_dir: Path = Field(default=Path("data/processed/train_test_datasets/gold"))
-    silver_dir: Path = Field(default=Path("data/processed/train_test_datasets/silver"))
+    raw_dir: Path = Field(default=Path("data/raw"))
+    interim_dir: Path = Field(default=Path("data/interim"))
+    processed_dir: Path = Field(default=Path("data/processed"))
+    models_dir: Path = Field(default=Path("data/models"))
 
 
 class BakeoffCandidate(BaseModel):
@@ -159,17 +155,25 @@ class QThresholdsConfig(BaseModel):
 
 
 class SampleSizesConfig(BaseModel):
-    """Target sizes for the silver pool, gold set, and prompt-dev split.
+    """Target sizes for the silver pool, gold set, and human splits.
 
     The silver pool is over-provisioned so that the learning-curve sweep in
     point 3 can empirically find the optimal training N. The gold set is kept
-    small (~400) because it is hand-coded by a human engineer; the frozen test
-    is reported with bootstrap confidence intervals.
+    small because it is hand-coded by a human engineer; the monitor slice is an
+    incremental holdout, so ``gold`` includes it instead of shrinking
+    validation/test.
     """
 
     silver: int = 20_000
-    gold: int = 400
+    gold: int = 450
     prompt_dev: int = 50
+    monitor: int = Field(
+        default=50,
+        description=(
+            "Held-out drift-monitor slice drawn from gold in addition to "
+            "prompt_dev/validation/test, so gold must be bumped by this size."
+        ),
+    )
 
 
 class AnnotationConfig(BaseModel):
@@ -206,9 +210,14 @@ class QCConfig(BaseModel):
     """Quality-control gate thresholds.
 
     Attributes:
-        agreement_threshold: Minimum LLM-vs-human agreement on the validation
-            overlap required to freeze the silver labels. Below this the gate
-            blocks (raises / non-zero exit) and writes nothing.
+        agreement_threshold: Legacy raw LLM-vs-human agreement benchmark on the
+            validation overlap. This is logged for continuity, but the blocking
+            freeze gate now uses chance-corrected agreement and minority-F1 CI.
+        kappa_threshold: Minimum Cohen's κ required to freeze silver labels.
+            The default of 0.70 matches the old ≈0.85 raw-agreement operating
+            point on the roughly balanced validation gate set.
+        f1_ci_floor: Minimum lower bound of the bootstrap 95% confidence
+            interval for minority-class F1 required to freeze silver labels.
         abstain_on_fabricated_positive: When ``True``, any positive label
             (``binary_label == "religious"``) that carries a fabricated
             evidence span is treated as an abstain (``binary_label = None``)
@@ -217,6 +226,8 @@ class QCConfig(BaseModel):
     """
 
     agreement_threshold: float = 0.85
+    kappa_threshold: float = 0.70
+    f1_ci_floor: float = 0.70
     abstain_on_fabricated_positive: bool = False
 
 

@@ -7,7 +7,6 @@ intentionally thin: one ``annotate(text)`` method that is provider-agnostic.
 
 import time
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from binary_classifier.annotate.schema import LabelRecord, SourceType
 
@@ -28,6 +27,8 @@ class Annotator(ABC):
         reasoning_effort: Optional reasoning-effort knob for GPT-5-class
             models (e.g. ``minimal``). Stored on the instance; wiring it into
             the API request is handled by T2.A (provider-specific).
+        guided_json: Whether provider calls should request schema-constrained
+            JSON decoding. Disabling it leaves JSON compliance to the prompt.
 
     """
 
@@ -41,7 +42,14 @@ class Annotator(ABC):
         max_retries: int = 5,
         source_type: SourceType = SourceType.LLM_PROMPT,
         reasoning_effort: str | None = None,
+        guided_json: bool = True,
     ) -> None:
+        """Store provider-neutral annotation settings for downstream calls.
+
+        The base class keeps runtime knobs in one place so OpenAI and vLLM
+        annotators apply the same prompt, seed, retry, and structured-decoding
+        choices during bake-off and production annotation.
+        """
         self.model_id: str = model_id
         self.prompt_id: str = prompt_id
         self.prompt_text: str = prompt_text
@@ -50,6 +58,7 @@ class Annotator(ABC):
         self.max_retries: int = max_retries
         self.source_type: SourceType = source_type
         self.reasoning_effort: str | None = reasoning_effort
+        self.guided_json: bool = guided_json
 
     # ── Abstract method ──────────────────────────────────────────────────
 
@@ -76,7 +85,3 @@ class Annotator(ABC):
     def _retry_sleep(self, attempt: int) -> None:
         """Exponential backoff between retries."""
         time.sleep(min(2**attempt, 60))
-
-    def _read_prompt_file(self, path: Path) -> str:
-        """Read a prompt text file from disk."""
-        return path.read_text()

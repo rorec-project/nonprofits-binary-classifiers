@@ -428,7 +428,9 @@ def compute_quality_score(text: str) -> float:
     ``Q`` is a weighted sum of structural features (length, purpose verb,
     beneficiary, activity, specificity, clause count) minus penalties for
     boilerplate, vague templates, or extreme brevity. Max theoretical
-    score is 6.0; tiers are HIGH ≥5.0, MEDIUM 3.0-4.5, LOW <3.0.
+    score is 6.0; default tiers are HIGH ≥5.0, MEDIUM [3.0, 5.0),
+    LOW <3.0. The separate 4.5-<5.0 band is only the positive-protective
+    rescue enrichment sub-rule, not the MEDIUM tier upper bound.
 
     Args:
         text: Raw mission text (will be lower-cased internally).

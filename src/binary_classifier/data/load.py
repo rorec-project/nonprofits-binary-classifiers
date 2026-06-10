@@ -69,9 +69,9 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
             ``data.allow_synthetic`` is ``False``.
     """
     paths = cfg.paths
-    upstream_repo = Path(paths.upstream_repo).resolve()
-    missions_path = upstream_repo / paths.missions_parquet
-    bmf_path = upstream_repo / paths.bmf_parquet
+    raw_dir = Path(paths.raw_dir).resolve()
+    missions_path = raw_dir / "missions_cross_section.parquet"
+    bmf_path = raw_dir / "bmf_unified_processed.parquet"
 
     synthetic = False
     if not missions_path.exists() or not bmf_path.exists():

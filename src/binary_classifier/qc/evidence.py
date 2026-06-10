@@ -7,6 +7,7 @@ labels that carry them can be downgraded to abstain before aggregation.
 
 import json
 import logging
+
 import pandas as pd
 
 from binary_classifier.annotate.schema import BinaryLabel
@@ -30,6 +31,7 @@ def verify_evidence_spans(registry: PathRegistry, store_df: pd.DataFrame) -> dic
     Raises:
         FileNotFoundError: If the missions parquet is missing.
         ValueError: If the missions parquet lacks required columns.
+
     """
     missions_path = registry.missions_parquet
     if not missions_path.exists():
@@ -106,6 +108,7 @@ def abstain_fabricated_positives(
 
     Returns:
         Modified DataFrame (copy).
+
     """
     df = store_df.copy()
     fabricated_set = {(e, s) for e, s, _ in fabricated_records}

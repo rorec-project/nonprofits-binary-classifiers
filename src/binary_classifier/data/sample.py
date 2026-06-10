@@ -7,7 +7,7 @@ for fat strata (B/P), and positive enrichment to ~30-40 % per stratum.
 
 The gold set deliberately retains boundary cases (saint-named secular,
 spiritual-not-religious, generic ministry, faith-heritage) and is carved into
-prompt-dev, validation, and frozen-test splits.
+prompt-dev, validation, frozen-test, and monitor splits.
 
 """
 
@@ -52,6 +52,7 @@ def build_silver_pool(
     df: pd.DataFrame,
     target_size: int,
     seed: int,
+    thresholds: QThresholdsConfig,
     floor_groups: set[str] | None = None,
     cap_groups: set[str] | None = None,
     floor_size: int = _FLOOR_SIZE,
@@ -65,12 +66,17 @@ def build_silver_pool(
     strata and caps for fat strata. Within each stratum, positive missions
     (religious-lexicon hit or rescued) are enriched to approximately
     ``target_positive_share``.
+    ``inclusion_prob`` is stored at the stratum × enrichment-cell level because
+    positives and negatives are sampled at different rates; downstream design
+    weights must invert that cell probability rather than a stratum marginal.
 
     Args:
         df: DataFrame with columns ``EIN2``, ``mission_text``,
             ``ntee_major_group``, and ``Q``.
         target_size: Total rows desired in the silver pool.
         seed: Random seed for reproducibility.
+        thresholds: Configured ``Q`` tier thresholds; passed explicitly so the
+            sampling frame matches the YAML rather than hidden defaults.
         floor_groups: Strata that receive a floor.
         cap_groups: Strata that receive a cap.
         floor_size: Minimum rows per floor group.
@@ -88,7 +94,6 @@ def build_silver_pool(
     if cap_groups is None:
         cap_groups = _CAP_GROUPS
 
-    thresholds = QThresholdsConfig()
     df = df.copy()
     df["tier"] = df["Q"].apply(lambda q: assign_tier(q, thresholds))
 
@@ -144,21 +149,22 @@ def build_silver_pool(
             n_pos_target = len(pos_df)
             n_neg_target = min(n_target - n_pos_target, len(neg_df))
 
+        pos_inclusion_prob = _cell_inclusion_prob(pos_df, n_pos_target)
+        neg_inclusion_prob = _cell_inclusion_prob(neg_df, n_neg_target)
+
         sampled_pos = (
-            pos_df.sample(n=n_pos_target, random_state=rng)
+            pos_df.sample(n=n_pos_target, random_state=rng).copy()
             if n_pos_target > 0
-            else pos_df.iloc[0:0]
+            else pos_df.iloc[0:0].copy()
         )
         sampled_neg = (
-            neg_df.sample(n=n_neg_target, random_state=rng)
+            neg_df.sample(n=n_neg_target, random_state=rng).copy()
             if n_neg_target > 0
-            else neg_df.iloc[0:0]
+            else neg_df.iloc[0:0].copy()
         )
+        sampled_pos["inclusion_prob"] = pos_inclusion_prob
+        sampled_neg["inclusion_prob"] = neg_inclusion_prob
         stratum_sample = pd.concat([sampled_pos, sampled_neg], ignore_index=True)
-
-        # Inclusion probability = n_target / pool_size for this stratum
-        inclusion_prob = n_target / max(len(stratum_df), 1)
-        stratum_sample["inclusion_prob"] = inclusion_prob
         sampled_rows.append(stratum_sample)
 
     silver = pd.concat(sampled_rows, ignore_index=True)
@@ -170,27 +176,31 @@ def build_gold_set(
     df: pd.DataFrame,
     target_size: int,
     seed: int,
+    thresholds: QThresholdsConfig,
 ) -> pd.DataFrame:
-    """Construct the gold set (~400) from HIGH+MEDIUM missions.
+    """Construct the configured gold set from HIGH+MEDIUM missions.
 
     The gold set is deliberately diverse: each stratum receives a mix of
     clear positives, clear negatives, and boundary cases (saint-named
     secular, spiritual-not-religious, generic ministry, faith-heritage).
     Boundary cases are heuristically flagged so that they are intentionally
     retained for human coding.
+    ``inclusion_prob`` records the quota-cell draw rate for audit diagnostics;
+    gold boundary-quota weights are diagnostic, not for population estimation.
 
     Args:
         df: DataFrame with columns ``EIN2``, ``mission_text``,
             ``ntee_major_group``, and ``Q``.
         target_size: Total rows desired in the gold set.
         seed: Random seed for reproducibility.
+        thresholds: Configured ``Q`` tier thresholds; passed explicitly so the
+            human-coding frame follows the same YAML boundary as stage 01.
 
     Returns:
         Sampled DataFrame with columns ``tier``, ``inclusion_prob``,
         and ``is_positive_enriched``.
 
     """
-    thresholds = QThresholdsConfig()
     df = df.copy()
     df["tier"] = df["Q"].apply(lambda q: assign_tier(q, thresholds))
     pool = df[df["tier"].isin(["HIGH", "MEDIUM"])].copy()
@@ -231,23 +241,23 @@ def build_gold_set(
         n_clear_neg = max(1, math.floor(n_target * 0.25))
         n_other = n_target - n_boundary - n_clear_pos - n_clear_neg
 
-        # Draw from each category
+        # Draw from each category. Gold's boundary-quota weights are diagnostic
+        # only, not for population estimation, because this set deliberately
+        # over-represents ambiguous cases for human review.
         pos_df = stratum_df[stratum_df["is_positive_enriched"]]
         neg_df = stratum_df[~stratum_df["is_positive_enriched"]]
         bnd_df = stratum_df[stratum_df["boundary_type"] != "none"]
         other_df = stratum_df[stratum_df["boundary_type"] == "none"]
 
         draws: list[pd.DataFrame] = []
-        draws.append(_safe_sample(pos_df, n_clear_pos, rng))
-        draws.append(_safe_sample(neg_df, n_clear_neg, rng))
-        draws.append(_safe_sample(bnd_df, n_boundary, rng))
-        draws.append(_safe_sample(other_df, n_other, rng))
+        draws.append(_safe_sample_with_inclusion_prob(pos_df, n_clear_pos, rng))
+        draws.append(_safe_sample_with_inclusion_prob(neg_df, n_clear_neg, rng))
+        draws.append(_safe_sample_with_inclusion_prob(bnd_df, n_boundary, rng))
+        draws.append(_safe_sample_with_inclusion_prob(other_df, n_other, rng))
 
         stratum_sample = pd.concat(draws, ignore_index=True).drop_duplicates(
             subset=["EIN2"], keep="first"
         )
-        inclusion_prob = n_target / max(len(stratum_df), 1)
-        stratum_sample["inclusion_prob"] = inclusion_prob
         sampled_rows.append(stratum_sample)
 
     gold = pd.concat(sampled_rows, ignore_index=True)
@@ -258,41 +268,42 @@ def build_gold_set(
 def split_human_sets(
     gold_df: pd.DataFrame,
     prompt_dev_size: int,
+    monitor_size: int,
     seed: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split the gold set into prompt-dev, validation, and frozen test.
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split the gold set into prompt-dev, validation, test, and monitor.
 
-    The prompt-dev split is drawn first (fixed size), then the remainder
-    is divided evenly between validation and frozen test. All splits are
-    stratified by ``ntee_major_group`` to preserve sector coverage.
+    The prompt-dev split is drawn first (fixed size), then the monitor split is
+    drawn as an incremental held-out slice for drift checks. The remaining rows
+    are divided evenly between validation and frozen test so bumping ``gold`` by
+    ``monitor_size`` preserves the validation/test sizes. Prompt-dev and monitor
+    are stratified by ``ntee_major_group`` to preserve sector coverage.
+
+    Adding a monitor split changes deterministic split tags. If an existing
+    coding template is protected from clobbering, regenerate it before human
+    coding or after any re-split so manifests and labels stay aligned.
 
     Args:
         gold_df: The gold-set DataFrame.
         prompt_dev_size: Number of rows for prompt-dev.
+        monitor_size: Number of rows reserved for drift-monitor canaries.
         seed: Random seed.
 
     Returns:
-        Tuple of (prompt_dev, validation, test) DataFrames.
+        Tuple of (prompt_dev, validation, test, monitor) DataFrames.
 
     """
     rng = np.random.default_rng(seed=seed)
     df = gold_df.copy()
-    n_groups = df["ntee_major_group"].nunique()
-    per_group = prompt_dev_size // n_groups
-    extra = prompt_dev_size % n_groups
 
-    # Stratified prompt-dev sample — deterministic proportional allocation
-    prompt_dev_parts: list[pd.DataFrame] = []
-    groups = sorted(df["ntee_major_group"].unique())
-    for i, grp in enumerate(groups):
-        g = df[df["ntee_major_group"] == grp]
-        n_sample = per_group + (1 if i < extra else 0)
-        n_sample = min(n_sample, len(g))
-        if n_sample > 0:
-            prompt_dev_parts.append(g.sample(n=n_sample, random_state=rng))
-    prompt_dev = pd.concat(prompt_dev_parts, ignore_index=True)
+    prompt_dev = _sample_stratified_by_group(df, prompt_dev_size, rng)
 
     remaining = df[~df["EIN2"].isin(prompt_dev["EIN2"])].copy()
+
+    # Draw monitor before validation/test because it is an incremental gold
+    # holdout, not a fourth-way shrink of the human validation/test frame.
+    monitor = _sample_stratified_by_group(remaining, monitor_size, rng)
+    remaining = remaining[~remaining["EIN2"].isin(monitor["EIN2"])].copy()
 
     # Split remaining evenly between validation and test
     n_val = len(remaining) // 2
@@ -302,8 +313,9 @@ def split_human_sets(
     prompt_dev["split"] = "prompt_dev"
     val["split"] = "validation"
     test["split"] = "test"
+    monitor["split"] = "monitor"
 
-    return prompt_dev, val, test
+    return prompt_dev, val, test, monitor
 
 
 def build_sample(
@@ -321,13 +333,18 @@ def build_sample(
         4. Build the silver pool (~20 k) stratified across 26 NTEE major
            groups with proportional allocation, floors for thin strata,
            caps for fat strata, and positive enrichment to ~30--40 %.
-        5. Build the gold set (~400) deliberately retaining boundary cases.
-        6. Split gold into prompt-dev (~50), validation (~175), and frozen
-           test (~175).
+        5. Build the gold set deliberately retaining boundary cases plus the
+           incremental monitor slice.
+        6. Split gold into prompt-dev (~50), monitor (~50), validation (~175),
+           and frozen test (~175).
         7. Write manifest CSVs to the registry paths.
         8. Emit the in-place human-coding template ``gold_to_code.csv`` (unless
            it already exists and ``force`` is ``False`` — clobber protection
            for human-entered labels).
+
+    Re-split caveat: adding the monitor slice changes split tags. If a protected
+    coding template already exists, regenerate it before coding or after any
+    re-split so the manifests and template do not disagree.
 
     Args:
         cfg: Validated configuration object.
@@ -363,6 +380,7 @@ def build_sample(
         df,
         target_size=cfg.sample_sizes.silver,
         seed=cfg.SEED,
+        thresholds=cfg.q_thresholds,
     )
 
     logger.info(
@@ -373,12 +391,14 @@ def build_sample(
         df,
         target_size=cfg.sample_sizes.gold,
         seed=cfg.SEED,
+        thresholds=cfg.q_thresholds,
     )
 
     logger.info("Splitting gold into human sets...")
-    prompt_dev, validation, test = split_human_sets(
+    prompt_dev, validation, test, monitor = split_human_sets(
         gold,
         prompt_dev_size=cfg.sample_sizes.prompt_dev,
+        monitor_size=cfg.sample_sizes.monitor,
         seed=cfg.SEED,
     )
 
@@ -388,10 +408,14 @@ def build_sample(
     _write_split_manifest(prompt_dev, "prompt_dev", registry)
     _write_split_manifest(validation, "validation", registry)
     _write_split_manifest(test, "test", registry)
+    _write_split_manifest(monitor, "monitor", registry)
 
-    gold_all = pd.concat([prompt_dev, validation, test])
+    gold_all = pd.concat([prompt_dev, validation, test, monitor], ignore_index=True)
     _write_manifest(gold_all, None, registry.gold_manifest)
 
+    # Clobber protection can preserve an already-coded template even after a
+    # monitor re-split changes manifests, so humans should regenerate before
+    # coding or intentionally use --force after changing split geometry.
     _write_gold_coding_template(gold_all, registry, force=force)
     logger.info("Done.")
 
@@ -411,8 +435,8 @@ def _write_gold_coding_template(
     unless ``force`` is ``True`` — this preserves any human-entered labels.
 
     Args:
-        gold_all: Concatenated prompt-dev + validation + test rows (with
-            ``mission_text`` and ``split`` columns).
+        gold_all: Concatenated prompt-dev + validation + test + monitor rows
+            (with ``mission_text`` and ``split`` columns).
         registry: Path registry exposing ``gold_coding_template``.
         force: Overwrite an existing template.
 
@@ -481,6 +505,39 @@ def _write_split_manifest(
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
+
+
+def _sample_stratified_by_group(
+    df: pd.DataFrame,
+    target_size: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """Draw a fixed human split while preserving NTEE sector coverage.
+
+    Prompt-dev and monitor need deterministic, disjoint sub-slices that touch
+    as many NTEE major groups as the target size allows. This helper keeps the
+    allocation logic identical for both slices before validation/test consume
+    the remainder.
+    """
+    if target_size <= 0 or df.empty:
+        return df.iloc[0:0].copy()
+
+    groups = sorted(df["ntee_major_group"].unique())
+    n_groups = len(groups)
+    per_group = target_size // n_groups
+    extra = target_size % n_groups
+
+    parts: list[pd.DataFrame] = []
+    for i, grp in enumerate(groups):
+        g = df[df["ntee_major_group"] == grp]
+        n_sample = per_group + (1 if i < extra else 0)
+        n_sample = min(n_sample, len(g))
+        if n_sample > 0:
+            parts.append(g.sample(n=n_sample, random_state=rng))
+
+    if not parts:
+        return df.iloc[0:0].copy()
+    return pd.concat(parts, ignore_index=True)
 
 
 def _allocate_stratum_targets(
@@ -591,3 +648,34 @@ def _safe_sample(df: pd.DataFrame, n: int, rng: np.random.Generator) -> pd.DataF
     if n <= 0:
         return df.iloc[0:0]
     return df.sample(n=n, random_state=rng)
+
+
+def _safe_sample_with_inclusion_prob(
+    df: pd.DataFrame,
+    n: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """Sample a quota cell and attach its realized inclusion probability.
+
+    Gold uses positive, negative, boundary, and filler quota cells to stress-test
+    human coding and prompt selection. The manifest therefore needs the draw
+    rate for the cell that selected the row, not a stratum-wide marginal rate.
+    """
+    sample = _safe_sample(df, n, rng).copy()
+    sample["inclusion_prob"] = _cell_inclusion_prob(df, n)
+    return sample
+
+
+def _cell_inclusion_prob(df: pd.DataFrame, n_target: int) -> float:
+    """Return the realized per-cell sampling probability.
+
+    Positive enrichment and boundary quotas sample cells within a stratum at
+    different rates. Persisting that cell-level probability lets downstream
+    estimators invert the manifest value when a design weight is appropriate.
+    """
+    if df.empty or n_target <= 0:
+        return 0.0
+
+    # design weight = 1/π, per-cell inclusion probability;
+    # Horvitz & Thompson 1952
+    return min(n_target, len(df)) / len(df)

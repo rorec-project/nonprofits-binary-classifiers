@@ -1,6 +1,10 @@
 """Thin CLI wrapper for Stage 2.3: full annotation run.
 
 Calls :func:`binary_classifier.annotate.run_annotation.run_annotation`.
+
+The ``--canary`` mode is monitoring-only: it annotates the held-out monitor
+slice for drift/unbiased-agreement checks, leaves the stage-04 freeze gate and
+frozen test set untouched, and must not be used for prompt tuning.
 """
 
 import argparse
@@ -48,7 +52,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--canary",
         action="store_true",
-        help="Run only the canary EIN2 set (drift detection).",
+        help=(
+            "Run only the held-out monitor canary for drift/unbiased-agreement "
+            "monitoring. It is excluded from the freeze gate; do not tune "
+            "prompts on it; the test set is untouched."
+        ),
     )
     parser.add_argument(
         "--no-resume",

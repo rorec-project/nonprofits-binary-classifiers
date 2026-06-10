@@ -157,6 +157,42 @@ def test_openai_annotator_no_reasoning_effort_when_none() -> None:
     assert call_args.get("reasoning_effort") is None
 
 
+def test_openai_annotator_guided_json_false_omits_response_format() -> None:
+    """guided_json=False keeps OpenAI in prompt-only JSON mode.
+
+    The parser still validates the returned JSON, but the API request must not
+    ask the provider for strict schema-constrained decoding when the config flag
+    is disabled.
+    """
+    mock_client = MagicMock()
+    mock_response = _make_mock_openai_response(
+        {
+            "binary_label": "nonreligious",
+            "confidence": 0.8,
+            "domains_present": None,
+            "evidence_spans": None,
+            "boundary_notes": None,
+            "reason": "No religious language.",
+        }
+    )
+    mock_client.chat.completions.create.return_value = mock_response
+
+    annotator = OpenAIAnnotator(
+        model_id="gpt-4o-mini",
+        prompt_id="v1",
+        prompt_text="Classify.",
+        api_key="test",
+        guided_json=False,
+    )
+    annotator.client = mock_client
+
+    record = annotator.annotate("We help animals.", ein2="00-2")
+
+    assert record.binary_label == BinaryLabel.NONRELIGIOUS
+    call_args = mock_client.chat.completions.create.call_args.kwargs
+    assert "response_format" not in call_args
+
+
 # ── vLLM annotator tests ─────────────────────────────────────────────────────
 
 
@@ -191,6 +227,43 @@ def test_vllm_annotator_uses_shared_schema_no_inline_dict() -> None:
     assert "extra_body" in call_args
     guided = call_args["extra_body"]["guided_json"]
     assert guided == build_json_schema()
+
+
+def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
+    """guided_json=False keeps vLLM in prompt-only JSON mode.
+
+    The OpenAI-compatible vLLM endpoint receives no ``extra_body`` guided JSON
+    schema, proving the config flag can disable provider-side constrained
+    decoding while leaving downstream parsing unchanged.
+    """
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = json.dumps(
+        {
+            "binary_label": "nonreligious",
+            "confidence": 0.85,
+            "domains_present": None,
+            "evidence_spans": None,
+            "boundary_notes": None,
+            "reason": "test",
+        }
+    )
+    mock_client.chat.completions.create.return_value = mock_response
+
+    annotator = VLLMAnnotator(
+        model_id="gemma-3-27b-it",
+        prompt_id="v1",
+        prompt_text="Classify.",
+        guided_json=False,
+    )
+    annotator.client = mock_client
+
+    record = annotator.annotate("test text", ein2="00-3")
+
+    assert record.binary_label == BinaryLabel.NONRELIGIOUS
+    call_args = mock_client.chat.completions.create.call_args.kwargs
+    assert "extra_body" not in call_args
 
 
 # ── AnnotationStore tests ────────────────────────────────────────────────────

@@ -13,8 +13,16 @@ from binary_classifier.paths import PathRegistry
 
 @pytest.fixture
 def tiny_config() -> BinaryClassifierConfig:
-    """A minimal default config (constructed without a YAML on disk)."""
-    return BinaryClassifierConfig()
+    """A minimal config for tiny synthetic fixtures.
+
+    The production default enforces a minority-F1 CI floor, but many legacy unit
+    fixtures use two validation rows where the nonparametric bootstrap lower
+    bound is intentionally zero. T9-specific tests opt back into the floor with
+    larger fixtures so routine plumbing tests can stay small.
+    """
+    cfg = BinaryClassifierConfig()
+    cfg.qc.f1_ci_floor = 0.0
+    return cfg
 
 
 @pytest.fixture

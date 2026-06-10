@@ -1,8 +1,9 @@
 """vLLM / local OpenAI-compatible endpoint annotator.
 
 Calls a local vLLM server at ``http://127.0.0.1:8000/v1`` using the OpenAI
-client library. Expects the server to be started with guided JSON support
-(e.g. ``--guided-decoding-backend outlines`` or ``xgrammar``).
+client library. When guided JSON is enabled, expects the server to be started
+with guided JSON support (e.g. ``--guided-decoding-backend outlines`` or
+``xgrammar``).
 """
 
 import json
@@ -32,6 +33,7 @@ class VLLMAnnotator(Annotator):
         max_retries: Retries on connection errors.
         base_url: vLLM server URL (default ``http://127.0.0.1:8000/v1``).
         api_key: Dummy key for OpenAI-compatible clients (default ``EMPTY``).
+        guided_json: Whether to ask vLLM for schema-constrained decoding.
 
     """
 
@@ -46,7 +48,14 @@ class VLLMAnnotator(Annotator):
         base_url: str = "http://127.0.0.1:8000/v1",
         api_key: str = "EMPTY",
         reasoning_effort: str | None = None,
+        guided_json: bool = True,
     ) -> None:
+        """Initialize the local endpoint client and decoding controls.
+
+        ``guided_json`` mirrors the annotation config flag so experiments can
+        explicitly compare constrained decoding against prompt-only JSON output
+        without changing the parsing contract downstream.
+        """
         super().__init__(
             model_id=model_id,
             prompt_id=prompt_id,
@@ -56,6 +65,7 @@ class VLLMAnnotator(Annotator):
             max_retries=max_retries,
             source_type=SourceType.LLM_PROMPT,
             reasoning_effort=reasoning_effort,
+            guided_json=guided_json,
         )
         self.client: OpenAI = OpenAI(
             base_url=base_url,
@@ -67,6 +77,10 @@ class VLLMAnnotator(Annotator):
     def annotate(self, text: str, ein2: str = "") -> LabelRecord:
         """Call the local vLLM endpoint and return a parsed ``LabelRecord``.
 
+        The guided JSON flag only changes provider-side decoding. Parsing still
+        validates the raw response so disabled structured decoding becomes an
+        abstain/error record if the model ignores the JSON instruction.
+
         Args:
             text: Mission text to classify.
             ein2: IRS identifier for the record.
@@ -77,18 +91,31 @@ class VLLMAnnotator(Annotator):
         """
         for attempt in range(self.max_retries + 1):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_id,
-                    messages=[
-                        {"role": "system", "content": self.prompt_text},
-                        {"role": "user", "content": text},
-                    ],
-                    temperature=self.temperature,
-                    seed=self.seed,
-                    extra_body={
-                        "guided_json": build_json_schema(),
-                    },
-                )
+                # cfg.annotation.guided_json controls vLLM's constrained
+                # decoder request; false leaves only prompt-level JSON guidance.
+                if self.guided_json:
+                    response = self.client.chat.completions.create(
+                        model=self.model_id,
+                        messages=[
+                            {"role": "system", "content": self.prompt_text},
+                            {"role": "user", "content": text},
+                        ],
+                        temperature=self.temperature,
+                        seed=self.seed,
+                        extra_body={
+                            "guided_json": build_json_schema(),
+                        },
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=self.model_id,
+                        messages=[
+                            {"role": "system", "content": self.prompt_text},
+                            {"role": "user", "content": text},
+                        ],
+                        temperature=self.temperature,
+                        seed=self.seed,
+                    )
                 raw = response.choices[0].message.content
                 if raw is None:
                     return self._error_record(ein2, "empty_content")

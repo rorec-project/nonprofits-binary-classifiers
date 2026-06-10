@@ -10,15 +10,19 @@ The module can be imported and used programmatically, or invoked via
 ``scripts/03_annotate.py``.
 """
 
+import hashlib
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import pandas as pd
 
+from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.annotators import Annotator
 from binary_classifier.annotate.annotators.factory import make_annotator
-from binary_classifier.annotate.schema import AnnotationStore
+from binary_classifier.annotate.schema import AnnotationStore, LabelRecord
 from binary_classifier.config import BakeoffCandidate, load_slate
 
 if TYPE_CHECKING:
@@ -30,15 +34,40 @@ logger = logging.getLogger(__name__)
 
 # ── Canary set ───────────────────────────────────────────────────────────────
 
-# Small fixed EIN2 list used for drift detection. Re-run whenever model IDs
-# change to detect closed-model drift.
-CANARY_EIN2: list[str] = [
-    "00-0000001",  # synthetic placeholder — replace with real canary EIN2s
-    "00-0000002",
-    "00-0000003",
-    "00-0000004",
-    "00-0000005",
-]
+
+CANARY_AUDIT_FILENAME = "canary_drift_audit.jsonl"
+
+
+def load_canary_ein2s(registry: "PathRegistry") -> set[str]:
+    """Load the monitor-slice EIN2s that define the canary audit set.
+
+    Stage 01 writes the held-out monitor manifest beside the other interim
+    manifests. Stage 03 uses that real monitor slice for canary/drift checks so
+    the synthetic placeholder list cannot accidentally tune prompts on toy rows
+    or touch the frozen test set.
+
+    Args:
+        registry: Path registry that resolves ``monitor_manifest``.
+
+    Returns:
+        Set of monitor ``EIN2`` identifiers as strings.
+
+    Raises:
+        FileNotFoundError: If stage 01 has not produced the monitor manifest.
+        ValueError: If the manifest does not expose the required ``EIN2``
+            column.
+    """
+    path = registry.monitor_manifest
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No monitor manifest at {path}. run stage 01 first; monitor "
+            "manifest lives under the cloud-symlinked interim tree."
+        )
+
+    monitor = pd.read_csv(path)
+    if "EIN2" not in monitor.columns:
+        raise ValueError(f"{path} missing required EIN2 column.")
+    return set(monitor["EIN2"].dropna().astype(str))
 
 
 # Factory signature: (spec, prompt_id, prompt_text) -> Annotator.
@@ -98,14 +127,25 @@ def run_annotation(
     resume: bool = True,
     canary_only: bool = False,
 ) -> AnnotationStore:
-    """Run the production matrix over the silver pool (pipeline entrypoint).
+    """Run the production matrix over silver plus gold rows.
 
     This is the canonical function called by ``scripts/run_pipeline.py``. The
     model set defaults to the human-confirmed production slate; the store path
-    defaults to ``registry.annotation_store``.
+    defaults to ``registry.annotation_store``. Gold rows are included because
+    the stage-04 validation gate and the monitor canary both compare LLM labels
+    against human-coded gold rows; annotating silver alone can leave those joins
+    empty on realistic independent draws.
+
+    When ``canary_only`` is true, the run is monitoring-only: it loads the
+    held-out monitor manifest, leaves the freeze gate and frozen test set
+    untouched, and must not be used for prompt tuning. The matrix runner owns
+    the final filter so direct programmatic calls get the same hard-fail
+    behaviour when the monitor slice does not overlap the annotation pool.
     """
     if prompt_paths is None:
-        prompt_paths = [registry.prompts_dir / f"{stem}.txt" for stem in ("v1", "v2", "v3")]
+        prompt_paths = [
+            registry.prompts_dir / f"{stem}.txt" for stem in ("v1", "v2", "v3")
+        ]
     if specs is None:
         specs = resolve_production_specs(registry)
     if store_path is None:
@@ -113,24 +153,36 @@ def run_annotation(
     if checkpoint_every is None:
         checkpoint_every = cfg.annotation.checkpoint_every
 
-    # Load silver pool
+    # Load the annotation pool from the union of silver and gold manifests.
     silver_manifest = pd.read_csv(registry.silver_manifest)
-    if silver_manifest.empty:
-        logger.error("Silver manifest is empty or missing.")
+    gold_manifest = pd.read_csv(registry.gold_manifest)
+
+    # Validation and monitor rows live in gold, not necessarily silver. The QC
+    # gate and canary therefore need the EIN2 union before text is joined.
+    annotation_manifest = (
+        pd.concat(
+            [silver_manifest[["EIN2"]], gold_manifest[["EIN2"]]],
+            ignore_index=True,
+        )
+        .drop_duplicates(subset=["EIN2"])
+        .reset_index(drop=True)
+    )
+    if annotation_manifest.empty:
+        logger.error("Annotation manifest is empty or missing.")
         return AnnotationStore(store_path)
 
     # Join text field from upstream
-    if "text" not in silver_manifest.columns:
+    if "text" not in annotation_manifest.columns:
         missions = pd.read_parquet(registry.missions_parquet)
-        silver_manifest = silver_manifest.merge(
+        annotation_manifest = annotation_manifest.merge(
             missions[["EIN2", cfg.field]],
             on="EIN2",
             how="left",
         )
-        silver_manifest = silver_manifest.rename(columns={cfg.field: "text"})
+        annotation_manifest = annotation_manifest.rename(columns={cfg.field: "text"})
 
     if limit:
-        silver_manifest = silver_manifest.head(limit)
+        annotation_manifest = annotation_manifest.head(limit)
 
     def annotator_factory(
         spec: BakeoffCandidate,
@@ -140,7 +192,7 @@ def run_annotation(
         return make_annotator(cfg, spec, prompt_id, prompt_text)
 
     return run_annotation_matrix(
-        df=silver_manifest,
+        df=annotation_manifest,
         specs=specs,
         prompt_paths=prompt_paths,
         store_path=store_path,
@@ -148,6 +200,8 @@ def run_annotation(
         checkpoint_every=checkpoint_every,
         resume=resume,
         canary_only=canary_only,
+        cfg=cfg,
+        registry=registry,
     )
 
 
@@ -160,8 +214,14 @@ def run_annotation_matrix(
     checkpoint_every: int = 100,
     resume: bool = True,
     canary_only: bool = False,
+    cfg: "BinaryClassifierConfig | None" = None,
+    registry: "PathRegistry | None" = None,
 ) -> AnnotationStore:
     """Run the full model x prompt matrix over a dataframe.
+
+    The optional canary mode is a monitor-only drift run sourced from the
+    held-out monitor manifest. It is excluded from the stage-04 freeze gate,
+    should never drive prompt tuning, and does not touch the frozen test set.
 
     Args:
         df: DataFrame with columns ``EIN2`` and ``text`` (the field to classify).
@@ -172,7 +232,11 @@ def run_annotation_matrix(
             Annotator``. Injected for testability.
         checkpoint_every: Flush to disk every N records.
         resume: If ``True``, skip (EIN2, source_id) pairs already in the store.
-        canary_only: If ``True``, run only the canary EIN2 set.
+        canary_only: If ``True``, run only monitor-manifest canary rows and
+            append a drift audit record.
+        cfg: Configuration needed for canary fingerprint metadata.
+        registry: Path registry needed to load the monitor manifest and write
+            the canary audit history.
 
     Returns:
         The populated ``AnnotationStore``.
@@ -183,6 +247,37 @@ def run_annotation_matrix(
     # Load prompt texts (keyed by file stem = the real prompt_id).
     prompt_texts: dict[str, str] = {p.stem: p.read_text() for p in prompt_paths}
 
+    canary_ein2s: set[str] | None = None
+    canary_pool_ein2s: set[str] | None = None
+    if canary_only:
+        if cfg is None or registry is None:
+            raise ValueError(
+                "canary_only requires cfg and registry so stage 03 can load "
+                "the held-out monitor manifest and record drift metadata."
+            )
+
+        canary_ein2s = load_canary_ein2s(registry)
+        pool_ein2s = set(df["EIN2"].dropna().astype(str))
+        canary_pool_ein2s = canary_ein2s & pool_ein2s
+        if not canary_pool_ein2s:
+            raise ValueError(
+                "Canary monitor EIN2s do not overlap the annotation pool; "
+                "run stage 01 and stage 03 on the same manifests before "
+                "requesting --canary."
+            )
+        if canary_pool_ein2s != canary_ein2s:
+            logger.warning(
+                "Canary monitor manifest has %d EIN2s but only %d are in the "
+                "annotation pool",
+                len(canary_ein2s),
+                len(canary_pool_ein2s),
+            )
+
+        # The canary is a held-out monitor slice, not validation or test. Keep
+        # this filter inside the matrix runner so all stage-03 entrypoints share
+        # the same no-silent-no-op guard.
+        df = df[df["EIN2"].astype(str).isin(canary_pool_ein2s)].copy()
+
     # Build the full work matrix: (ein2, text, spec, prompt_id).
     work_items: list[tuple[str, str, BakeoffCandidate, str]] = []
     for spec in specs:
@@ -191,10 +286,6 @@ def run_annotation_matrix(
                 (ein2, text, spec, prompt_id)
                 for ein2, text in zip(df["EIN2"], df["text"])
             )
-
-    if canary_only:
-        canary_set = set(CANARY_EIN2)
-        work_items = [w for w in work_items if w[0] in canary_set]
 
     # Resume filtering — source_id == f"{spec.id}__{prompt_id}".
     if resume:
@@ -212,10 +303,12 @@ def run_annotation_matrix(
 
     # Batch execution
     batch: list = []
+    run_records: list[LabelRecord] = []
     for idx, (ein2, text, spec, prompt_id) in enumerate(work_items):
         annotator = annotator_factory(spec, prompt_id, prompt_texts[prompt_id])
         record = annotator.annotate(text, ein2=ein2)
         batch.append(record)
+        run_records.append(record)
 
         if (idx + 1) % checkpoint_every == 0:
             store.append_many(batch)
@@ -231,4 +324,336 @@ def run_annotation_matrix(
         store.append_many(batch)
         logger.info("Final flush — wrote %d records", len(batch))
 
+    if canary_only and cfg is not None and registry is not None:
+        _record_canary_audit(
+            cfg=cfg,
+            registry=registry,
+            specs=specs,
+            prompt_ids=list(prompt_texts),
+            canary_ein2s=canary_ein2s or set(),
+            canary_pool_ein2s=canary_pool_ein2s or set(),
+            run_records=run_records,
+            store=store,
+        )
+
     return store
+
+
+def _record_canary_audit(
+    cfg: "BinaryClassifierConfig",
+    registry: "PathRegistry",
+    specs: list[BakeoffCandidate],
+    prompt_ids: list[str],
+    canary_ein2s: set[str],
+    canary_pool_ein2s: set[str],
+    run_records: list[LabelRecord],
+    store: AnnotationStore,
+) -> None:
+    """Append canary drift metadata for the current monitor-only run.
+
+    The audit file records the monitor-set hash, model fingerprint, aggregate
+    canary predictions, and a κ/α comparison against the first run with the same
+    monitor-set hash. Keeping this sidecar local to stage 03 avoids changing the
+    long/tidy label schema while still making provider/model-snapshot drift
+    visible to the human reviewer.
+    """
+    audit_path = registry.interim_dir / CANARY_AUDIT_FILENAME
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+
+    current_df = _canary_records_frame(
+        run_records=run_records,
+        store=store,
+        canary_pool_ein2s=canary_pool_ein2s,
+        specs=specs,
+        prompt_ids=prompt_ids,
+    )
+    predictions = _aggregate_canary_predictions(current_df, canary_pool_ein2s)
+    canary_set_hash = _hash_ein2s(canary_pool_ein2s)
+    baseline = _load_baseline_canary_audit(audit_path, canary_set_hash)
+    change_test = _compare_canary_to_baseline(baseline, predictions)
+
+    # The canary history is a monitor for model-snapshot/provider drift and
+    # model×prompt variance, not a prompt-selection target. See SILICON
+    # (arXiv:2412.14461), Variance-Aware protocol (arXiv:2601.02370), and
+    # "LLM Hacking" model×prompt variance (arXiv:2509.08825).
+    audit_record = {
+        "run_timestamp": datetime.now(timezone.utc).isoformat(),
+        "canary_set_hash": canary_set_hash,
+        "canary_set_version": f"sha256:{canary_set_hash[:12]}",
+        "monitor_manifest": str(registry.monitor_manifest),
+        "monitor_manifest_n": len(canary_ein2s),
+        "canary_pool_n": len(canary_pool_ein2s),
+        "records_written": len(run_records),
+        "model_fingerprints": _model_fingerprints(
+            cfg=cfg,
+            specs=specs,
+            prompt_ids=prompt_ids,
+            records_df=current_df,
+        ),
+        "predictions": predictions,
+        "kappa_alpha_change_test": change_test,
+    }
+
+    with audit_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(audit_record, sort_keys=True) + "\n")
+
+    if change_test.get("changed"):
+        logger.warning(
+            "Canary labels changed vs baseline: kappa=%.3f alpha=%.3f (%d/%d changed)",
+            change_test["cohens_kappa"],
+            change_test["krippendorff_alpha"],
+            change_test["n_changed"],
+            change_test["n_common"],
+        )
+
+
+def _canary_records_frame(
+    run_records: list[LabelRecord],
+    store: AnnotationStore,
+    canary_pool_ein2s: set[str],
+    specs: list[BakeoffCandidate],
+    prompt_ids: list[str],
+) -> pd.DataFrame:
+    """Return the label rows that represent the current canary run.
+
+    A normal canary invocation writes fresh rows and those records are the clean
+    run snapshot. If resume skipped all work, fall back to the existing store for
+    the requested model×prompt sources so a no-op rerun still records the active
+    canary baseline instead of writing an empty audit row.
+    """
+    if run_records:
+        df = pd.DataFrame([record.to_flat_dict() for record in run_records])
+    else:
+        df = store.to_frame()
+
+    if df.empty:
+        return df
+
+    expected_sources = {
+        f"{spec.id}__{prompt_id}" for spec in specs for prompt_id in prompt_ids
+    }
+    keep = df["EIN2"].astype(str).isin(canary_pool_ein2s)
+    keep &= df["source_id"].astype(str).isin(expected_sources)
+    return df.loc[keep].copy()
+
+
+def _aggregate_canary_predictions(
+    df: pd.DataFrame,
+    canary_pool_ein2s: set[str],
+) -> list[dict[str, Any]]:
+    """Aggregate current canary labels into JSON-serializable predictions.
+
+    Majority vote matches the stage-04 default, but the monitor slice remains a
+    drift audit set only: these predictions are persisted for over-time
+    comparison and are not frozen into ``silver_labels.csv``.
+    """
+    if df.empty:
+        return []
+
+    aggregated = aggregate_labels(df, method="majority")
+    if aggregated.empty:
+        return []
+
+    aggregated = aggregated[
+        aggregated["EIN2"].astype(str).isin(canary_pool_ein2s)
+    ].copy()
+    aggregated["EIN2"] = aggregated["EIN2"].astype(str)
+    aggregated = aggregated.sort_values("EIN2")
+
+    predictions: list[dict[str, Any]] = []
+    for row in aggregated.to_dict("records"):
+        label = row.get("silver_label")
+        predictions.append(
+            {
+                "EIN2": row["EIN2"],
+                "silver_label": None if pd.isna(label) else int(label),
+                "num_votes": int(row["num_votes"]),
+                "num_abstain": int(row["num_abstain"]),
+                "agreement": None
+                if pd.isna(row["agreement"])
+                else float(row["agreement"]),
+                "tie": bool(row["tie"]),
+            }
+        )
+    return predictions
+
+
+def _model_fingerprints(
+    cfg: "BinaryClassifierConfig",
+    specs: list[BakeoffCandidate],
+    prompt_ids: list[str],
+    records_df: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """Build model×prompt fingerprints for a canary audit record.
+
+    The production slate should use pinned snapshot IDs. Recording that ID with
+    provider, seed, temperature, and any provider system fingerprint makes later
+    canary changes attributable to either prompt/model changes or closed-backend
+    drift.
+    """
+    fingerprints: list[dict[str, Any]] = []
+    for spec in specs:
+        for prompt_id in prompt_ids:
+            source_id = f"{spec.id}__{prompt_id}"
+            source_rows = records_df
+            if not records_df.empty:
+                source_rows = records_df[
+                    records_df["source_id"].astype(str) == source_id
+                ]
+            system_fingerprints = []
+            if not source_rows.empty and "system_fingerprint" in source_rows.columns:
+                system_fingerprints = sorted(
+                    source_rows["system_fingerprint"].dropna().astype(str).unique()
+                )
+            fingerprints.append(
+                {
+                    "source_id": source_id,
+                    "provider": spec.provider,
+                    "pinned_snapshot_id": spec.id,
+                    "prompt_id": prompt_id,
+                    "seed": cfg.annotation.seed,
+                    "temperature": cfg.annotation.temperature,
+                    "system_fingerprints": system_fingerprints,
+                }
+            )
+    return fingerprints
+
+
+def _hash_ein2s(ein2s: set[str]) -> str:
+    """Return a stable SHA-256 hash for the canary audit set.
+
+    Sorting before hashing makes the monitor-set version independent of CSV row
+    order, which is important when comparing canary runs across rerenders of the
+    stage-01 manifests.
+    """
+    payload = "\n".join(sorted(ein2s)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _load_baseline_canary_audit(
+    audit_path: Path,
+    canary_set_hash: str,
+) -> dict[str, Any] | None:
+    """Load the first canary audit row for this monitor-set hash.
+
+    The first run is the baseline because the monitor slice is held out and
+    should remain untouched by prompt tuning; subsequent runs are drift checks
+    against that fixed reference.
+    """
+    if not audit_path.exists():
+        return None
+
+    with audit_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("canary_set_hash") == canary_set_hash and row.get("predictions"):
+                return row
+    return None
+
+
+def _compare_canary_to_baseline(
+    baseline: dict[str, Any] | None,
+    predictions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare current canary labels with the baseline using κ and α.
+
+    Cohen's κ and Krippendorff's α are chance-corrected agreement diagnostics;
+    here they are an over-time change test rather than a freeze gate (Landis &
+    Koch 1977; Krippendorff's α).
+    """
+    if baseline is None:
+        return {
+            "status": "baseline",
+            "changed": False,
+            "n_common": 0,
+            "n_changed": 0,
+            "cohens_kappa": None,
+            "krippendorff_alpha": None,
+        }
+
+    baseline_labels = _prediction_label_map(baseline.get("predictions", []))
+    current_labels = _prediction_label_map(predictions)
+    common = sorted(set(baseline_labels) & set(current_labels))
+    if not common:
+        return {
+            "status": "insufficient_overlap",
+            "baseline_run_timestamp": baseline.get("run_timestamp"),
+            "changed": False,
+            "n_common": 0,
+            "n_changed": 0,
+            "cohens_kappa": None,
+            "krippendorff_alpha": None,
+        }
+
+    y_base = [baseline_labels[ein2] for ein2 in common]
+    y_current = [current_labels[ein2] for ein2 in common]
+    n_changed = sum(1 for before, after in zip(y_base, y_current) if before != after)
+    return {
+        "status": "compared",
+        "baseline_run_timestamp": baseline.get("run_timestamp"),
+        "changed": n_changed > 0,
+        "n_common": len(common),
+        "n_changed": n_changed,
+        "cohens_kappa": _cohens_kappa(y_base, y_current),
+        "krippendorff_alpha": _krippendorff_alpha_nominal_two_raters(
+            y_base,
+            y_current,
+        ),
+    }
+
+
+def _prediction_label_map(predictions: list[dict[str, Any]]) -> dict[str, int]:
+    """Map non-abstaining canary predictions by EIN2 for drift comparison.
+
+    Abstains/ties are excluded because κ/α require concrete categorical labels;
+    their counts remain visible in the persisted prediction rows.
+    """
+    labels: dict[str, int] = {}
+    for row in predictions:
+        label = row.get("silver_label")
+        if label is None:
+            continue
+        labels[str(row["EIN2"])] = int(label)
+    return labels
+
+
+def _cohens_kappa(y_a: list[int], y_b: list[int]) -> float:
+    """Compute Cohen's κ for two aligned canary label vectors.
+
+    The local implementation avoids sklearn's undefined-value warning when all
+    labels fall in one class, a common outcome for tiny monitor fixtures.
+    """
+    labels = sorted(set(y_a) | set(y_b))
+    observed = sum(1 for a, b in zip(y_a, y_b) if a == b) / len(y_a)
+    expected = 0.0
+    for label in labels:
+        p_a = sum(1 for value in y_a if value == label) / len(y_a)
+        p_b = sum(1 for value in y_b if value == label) / len(y_b)
+        expected += p_a * p_b
+    if expected == 1.0:
+        return 1.0 if observed == 1.0 else 0.0
+    return float((observed - expected) / (1 - expected))
+
+
+def _krippendorff_alpha_nominal_two_raters(
+    y_a: list[int],
+    y_b: list[int],
+) -> float:
+    """Compute nominal Krippendorff's α for two canary label vectors.
+
+    For two complete raters, observed disagreement is the share of changed
+    canary labels; expected disagreement comes from the pooled label
+    distribution across both runs.
+    """
+    observed_disagreement = sum(1 for a, b in zip(y_a, y_b) if a != b) / len(y_a)
+    pooled = y_a + y_b
+    labels = set(pooled)
+    expected_agreement = sum(
+        (pooled.count(label) / len(pooled)) ** 2 for label in labels
+    )
+    expected_disagreement = 1 - expected_agreement
+    if expected_disagreement == 0.0:
+        return 1.0 if observed_disagreement == 0.0 else 0.0
+    return float(1 - observed_disagreement / expected_disagreement)

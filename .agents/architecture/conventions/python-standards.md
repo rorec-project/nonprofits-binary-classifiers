@@ -34,10 +34,10 @@ from pathlib import Path
 
 # Correct
 config_path = Path("config/religious_missions.yaml")
-silver_manifest = Path("train_test_datasets/silver_manifest.csv")
+silver_manifest = Path("data/interim/manifests/silver_manifest.csv")
 
 # Wrong
-silver_manifest = "train_test_datasets/" + "silver_manifest.csv"
+silver_manifest = "data/interim/manifests/" + "silver_manifest.csv"
 ```
 
 ## Documentation

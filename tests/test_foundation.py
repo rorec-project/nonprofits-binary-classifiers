@@ -17,7 +17,7 @@ _REAL_CONFIG = Path("config/religious_missions.yaml")
 
 
 def test_real_yaml_loads_with_slate_list() -> None:
-    """The shipped YAML validates into the new config-driven slate schema."""
+    """The shipped YAML validates slate choices, monitor sizing, and QC gates."""
     cfg = load_config(_REAL_CONFIG)
     candidates = cfg.model_slate.bakeoff_candidates
     assert isinstance(candidates, list)
@@ -31,13 +31,21 @@ def test_real_yaml_loads_with_slate_list() -> None:
     assert by_id["gpt-5-mini"].reasoning_effort == "minimal"
     assert by_id["gpt-4o-mini"].reasoning_effort is None
     assert isinstance(cfg.model_slate.production, str)
+    assert cfg.sample_sizes.gold == 450
+    assert cfg.sample_sizes.monitor == 50
+    assert cfg.qc.kappa_threshold == 0.70
+    assert cfg.qc.f1_ci_floor == 0.70
 
 
 def test_new_config_sections_have_defaults() -> None:
-    """data.allow_synthetic and qc.agreement_threshold default sanely."""
+    """data.allow_synthetic, QC gates, and monitor sizes default sanely."""
     cfg = BinaryClassifierConfig()
     assert cfg.data.allow_synthetic is False
     assert cfg.qc.agreement_threshold == 0.85
+    assert cfg.qc.kappa_threshold == 0.70
+    assert cfg.qc.f1_ci_floor == 0.70
+    assert cfg.sample_sizes.gold == 450
+    assert cfg.sample_sizes.monitor == 50
 
 
 def test_invalid_provider_rejected() -> None:
@@ -53,8 +61,10 @@ def test_registry_exposes_new_paths(tiny_registry: PathRegistry, tmp_path) -> No
     """Every new property is a Path under the configured root."""
     new_props = [
         "gold_dir",
-        "silver_dir",
+        "interim_dir",
+        "processed_dir",
         "gold_coding_template",
+        "monitor_manifest",
         "proposed_slate",
         "production_slate",
         "bakeoff_results",
@@ -69,14 +79,17 @@ def test_registry_exposes_new_paths(tiny_registry: PathRegistry, tmp_path) -> No
     # Artifacts land under the right parent dirs.
     assert tiny_registry.gold_coding_template.parent == tiny_registry.gold_dir
     assert tiny_registry.production_slate.parent == tiny_registry.gold_dir
-    assert tiny_registry.annotation_store.parent == tiny_registry.silver_dir
-    assert tiny_registry.proposed_slate.parent == tiny_registry.results_dir
+    assert tiny_registry.annotation_store.parent == tiny_registry.interim_dir
+    assert tiny_registry.proposed_slate.parent == tiny_registry.bakeoff_dir
+    assert tiny_registry.monitor_manifest.parent == (
+        tiny_registry.interim_dir / "manifests"
+    )
 
 
-def test_ensure_dirs_creates_gold_and_silver(tiny_registry: PathRegistry) -> None:
+def test_ensure_dirs_creates_gold_and_interim(tiny_registry: PathRegistry) -> None:
     """ensure_dirs (already called by the fixture) makes gold/silver dirs."""
     assert tiny_registry.gold_dir.is_dir()
-    assert tiny_registry.silver_dir.is_dir()
+    assert tiny_registry.interim_dir.is_dir()
 
 
 # ── Annotator factory ──────────────────────────────────────────────────────
@@ -113,3 +126,22 @@ def test_factory_routes_vllm(tiny_config: BinaryClassifierConfig) -> None:
     annotator = make_annotator(tiny_config, spec, "v3", "prompt text")
     assert isinstance(annotator, VLLMAnnotator)
     assert annotator.prompt_id == "v3"
+
+
+def test_factory_forwards_guided_json_false_to_provider_annotators(
+    tiny_config: BinaryClassifierConfig,
+    monkeypatch,
+) -> None:
+    """Factory forwards guided_json so config can disable provider decoding."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    tiny_config.annotation.guided_json = False
+
+    openai_spec = BakeoffCandidate(id="gpt-4o-mini", provider="openai")
+    openai_annotator = make_annotator(tiny_config, openai_spec, "v1", "prompt text")
+    assert isinstance(openai_annotator, OpenAIAnnotator)
+    assert openai_annotator.guided_json is False
+
+    vllm_spec = BakeoffCandidate(id="google/gemma-3-27b-it", provider="vllm")
+    vllm_annotator = make_annotator(tiny_config, vllm_spec, "v1", "prompt text")
+    assert isinstance(vllm_annotator, VLLMAnnotator)
+    assert vllm_annotator.guided_json is False

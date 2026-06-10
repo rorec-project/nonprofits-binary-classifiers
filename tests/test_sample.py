@@ -1,14 +1,22 @@
-"""Tests for T1.1: gold coding template emit + clobber protection."""
+"""Tests for stage-01 sampling, gold coding, and monitor manifests."""
 
 import pandas as pd
+import pytest
 
 from binary_classifier.config import (
     BinaryClassifierConfig,
     DataConfig,
     PathsConfig,
+    QThresholdsConfig,
     SampleSizesConfig,
 )
-from binary_classifier.data.sample import _write_gold_coding_template, build_sample
+from binary_classifier.data.sample import (
+    _write_gold_coding_template,
+    build_gold_set,
+    build_sample,
+    build_silver_pool,
+    split_human_sets,
+)
 from binary_classifier.paths import PathRegistry
 
 _TEMPLATE_COLS = ["EIN2", "split", "text", "human_label"]
@@ -22,6 +30,82 @@ def _gold_all() -> pd.DataFrame:
             "mission_text": ["a church", "a charity", "a bank"],
         }
     )
+
+
+def _human_split_frame(n_rows: int) -> pd.DataFrame:
+    """Build a balanced gold-like frame for deterministic split-size tests.
+
+    The rows cycle across four NTEE groups so prompt-dev and monitor can be
+    carved stratified while leaving exactly comparable validation/test
+    remainders.
+    """
+    groups = ["A", "B", "C", "D"]
+    return pd.DataFrame(
+        {
+            "EIN2": [f"EIN-{i:03d}" for i in range(n_rows)],
+            "mission_text": [f"mission text {i}" for i in range(n_rows)],
+            "ntee_major_group": [groups[i % len(groups)] for i in range(n_rows)],
+            "tier": "HIGH",
+            "inclusion_prob": 1.0,
+            "is_positive_enriched": [i % 2 == 0 for i in range(n_rows)],
+        }
+    )
+
+
+def _one_stratum_enrichment_frame() -> pd.DataFrame:
+    """Build a fixture where positive and negative draw rates diverge.
+
+    The single NTEE stratum has four religious-lexicon positives and sixteen
+    secular negatives, so enriched sampling must write different per-cell
+    inclusion probabilities rather than one ``10 / 20`` stratum marginal.
+    """
+    positive_rows = [
+        {
+            "EIN2": f"POS-{i:03d}",
+            "mission_text": f"church worship services for families {i}",
+            "ntee_major_group": "A",
+            "Q": 5.5,
+        }
+        for i in range(4)
+    ]
+    negative_rows = [
+        {
+            "EIN2": f"NEG-{i:03d}",
+            "mission_text": f"provide arts classes for families {i}",
+            "ntee_major_group": "A",
+            "Q": 5.5,
+        }
+        for i in range(16)
+    ]
+    return pd.DataFrame(positive_rows + negative_rows)
+
+
+def _threshold_boundary_frame() -> pd.DataFrame:
+    """Build rows that move tiers under a non-default Q threshold config.
+
+    The Q=4.0 row is MEDIUM under defaults but LOW when MEDIUM is raised to
+    4.5; the Q=5.2 row is HIGH under defaults but MEDIUM when HIGH is raised
+    to 5.5. That makes ignored config thresholds visible in sampling outputs.
+    """
+    return pd.DataFrame(
+        {
+            "EIN2": ["LOWISH-ROW", "MID-ROW", "HIGHISH-ROW"],
+            "mission_text": [
+                "provide arts classes for families lowish",
+                "provide arts classes for families medium",
+                "provide arts classes for families highish",
+            ],
+            "ntee_major_group": ["A", "A", "A"],
+            "Q": [4.0, 4.8, 5.2],
+        }
+    )
+
+
+def _single_value(series: pd.Series) -> float:
+    """Return the sole value when a test expects one probability per cell."""
+    values = series.drop_duplicates().tolist()
+    assert len(values) == 1
+    return values[0]
 
 
 def test_fresh_write_blank_4col_template(tiny_registry) -> None:
@@ -55,11 +139,184 @@ def test_force_regenerates_blank(tiny_registry) -> None:
     assert after["human_label"].isna().all()
 
 
-def test_build_sample_emits_template_from_synthetic(tmp_path) -> None:
+def test_split_human_sets_monitor_disjoint_from_other_splits() -> None:
+    """The held-out monitor slice must not leak into coding/eval splits."""
+    prompt_dev, validation, test, monitor = split_human_sets(
+        _human_split_frame(80),
+        prompt_dev_size=12,
+        monitor_size=8,
+        seed=42,
+    )
+
+    monitor_ein2 = set(monitor["EIN2"])
+    assert len(monitor) == 8
+    assert set(monitor["split"]) == {"monitor"}
+    assert monitor_ein2.isdisjoint(prompt_dev["EIN2"])
+    assert monitor_ein2.isdisjoint(validation["EIN2"])
+    assert monitor_ein2.isdisjoint(test["EIN2"])
+
+
+def test_monitor_increment_preserves_validation_and_test_sizes() -> None:
+    """Adding monitor rows to gold should not shrink validation/test."""
+    _, base_validation, base_test, base_monitor = split_human_sets(
+        _human_split_frame(60),
+        prompt_dev_size=12,
+        monitor_size=0,
+        seed=42,
+    )
+    _, validation, test, monitor = split_human_sets(
+        _human_split_frame(68),
+        prompt_dev_size=12,
+        monitor_size=8,
+        seed=42,
+    )
+
+    assert base_monitor.empty
+    assert len(monitor) == 8
+    assert len(validation) == len(base_validation) == 24
+    assert len(test) == len(base_test) == 24
+
+
+def test_silver_inclusion_prob_uses_positive_negative_cell_rates() -> None:
+    """Silver weights use the pos/neg cell rate, not the stratum marginal."""
+    silver = build_silver_pool(
+        _one_stratum_enrichment_frame(),
+        target_size=10,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+        floor_groups=set(),
+        cap_groups=set(),
+    )
+
+    positives = silver[silver["is_positive_enriched"]]
+    negatives = silver[~silver["is_positive_enriched"]]
+
+    assert len(positives) == 3
+    assert len(negatives) == 7
+    assert _single_value(positives["inclusion_prob"]) == pytest.approx(3 / 4)
+    assert _single_value(negatives["inclusion_prob"]) == pytest.approx(7 / 16)
+    assert _single_value(positives["inclusion_prob"]) != _single_value(
+        negatives["inclusion_prob"]
+    )
+    assert set(silver["inclusion_prob"]) != {10 / 20}
+
+
+def test_gold_inclusion_prob_uses_quota_cell_rates() -> None:
+    """Gold weights use quota-cell rates rather than one stratum marginal."""
+    gold = build_gold_set(
+        _one_stratum_enrichment_frame(),
+        target_size=104,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+    )
+
+    positives = gold[gold["is_positive_enriched"]]
+    negatives = gold[~gold["is_positive_enriched"]]
+
+    assert len(positives) == 1
+    assert len(negatives) == 1
+    assert _single_value(positives["inclusion_prob"]) == pytest.approx(1 / 4)
+    assert _single_value(negatives["inclusion_prob"]) == pytest.approx(1 / 16)
+    assert _single_value(positives["inclusion_prob"]) != _single_value(
+        negatives["inclusion_prob"]
+    )
+    assert set(gold["inclusion_prob"]) != {4 / 20}
+
+
+def test_build_silver_pool_uses_configured_q_thresholds() -> None:
+    """Silver sampling must use caller thresholds, not hidden defaults."""
+    thresholds = QThresholdsConfig(HIGH=5.5, MEDIUM=4.5)
+
+    default_silver = build_silver_pool(
+        _threshold_boundary_frame(),
+        target_size=10,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+        floor_groups=set(),
+        cap_groups=set(),
+    )
+    custom_silver = build_silver_pool(
+        _threshold_boundary_frame(),
+        target_size=10,
+        seed=42,
+        thresholds=thresholds,
+        floor_groups=set(),
+        cap_groups=set(),
+    )
+
+    tiers_by_ein = custom_silver.set_index("EIN2")["tier"].to_dict()
+    assert "LOWISH-ROW" in set(default_silver["EIN2"])
+    assert set(custom_silver["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
+    assert tiers_by_ein["HIGHISH-ROW"] == "MEDIUM"
+
+
+def test_build_gold_set_uses_configured_q_thresholds() -> None:
+    """Gold sampling must use caller thresholds for the human-coding frame."""
+    thresholds = QThresholdsConfig(HIGH=5.5, MEDIUM=4.5)
+
+    default_gold = build_gold_set(
+        _threshold_boundary_frame(),
+        target_size=520,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+    )
+    custom_gold = build_gold_set(
+        _threshold_boundary_frame(),
+        target_size=520,
+        seed=42,
+        thresholds=thresholds,
+    )
+
+    tiers_by_ein = custom_gold.set_index("EIN2")["tier"].to_dict()
+    assert "LOWISH-ROW" in set(default_gold["EIN2"])
+    assert set(custom_gold["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
+    assert tiers_by_ein["HIGHISH-ROW"] == "MEDIUM"
+
+
+def test_build_sample_threads_configured_q_thresholds(monkeypatch, tmp_path) -> None:
+    """Stage 01 must pass ``cfg.q_thresholds`` into both sampling builders."""
+    thresholds = QThresholdsConfig(HIGH=5.5, MEDIUM=4.5)
+    frame = _threshold_boundary_frame()
+    q_by_text = dict(zip(frame["mission_text"], frame["Q"], strict=True))
     cfg = BinaryClassifierConfig(
-        paths=PathsConfig(upstream_repo=tmp_path),
+        q_thresholds=thresholds,
         data=DataConfig(allow_synthetic=True),
-        sample_sizes=SampleSizesConfig(silver=200, gold=60, prompt_dev=10),
+        sample_sizes=SampleSizesConfig(
+            silver=10,
+            gold=520,
+            prompt_dev=0,
+            monitor=0,
+        ),
+    )
+    registry = PathRegistry.from_config(cfg, root=tmp_path)
+
+    monkeypatch.setattr(
+        "binary_classifier.data.sample.load_missions",
+        lambda cfg: frame.drop(columns=["Q"]),
+    )
+    monkeypatch.setattr(
+        "binary_classifier.data.sample.compute_quality_score",
+        lambda text: q_by_text[text],
+    )
+
+    build_sample(cfg, registry)
+
+    silver = pd.read_csv(registry.silver_manifest)
+    gold = pd.read_csv(registry.gold_manifest)
+    silver_tiers = silver.set_index("EIN2")["tier"].to_dict()
+    gold_tiers = gold.set_index("EIN2")["tier"].to_dict()
+
+    assert set(silver["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
+    assert set(gold["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
+    assert silver_tiers["HIGHISH-ROW"] == "MEDIUM"
+    assert gold_tiers["HIGHISH-ROW"] == "MEDIUM"
+
+
+def test_build_sample_emits_template_from_synthetic(tmp_path) -> None:
+    """Synthetic stage 01 writes gold coding and monitor manifests."""
+    cfg = BinaryClassifierConfig(
+        data=DataConfig(allow_synthetic=True),
+        sample_sizes=SampleSizesConfig(silver=200, gold=68, prompt_dev=10, monitor=8),
     )
     registry = PathRegistry.from_config(cfg, root=tmp_path)
     build_sample(cfg, registry)
@@ -68,3 +325,9 @@ def test_build_sample_emits_template_from_synthetic(tmp_path) -> None:
     assert list(df.columns) == _TEMPLATE_COLS
     assert df["human_label"].isna().all()
     assert len(df) > 0
+    assert "monitor" in set(df["split"])
+
+    assert registry.monitor_manifest.exists()
+    monitor = pd.read_csv(registry.monitor_manifest)
+    assert "EIN2" in monitor.columns
+    assert set(monitor["split"]) == {"monitor"}

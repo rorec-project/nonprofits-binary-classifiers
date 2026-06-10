@@ -1,8 +1,8 @@
 # Binary Classification of Religious vs. Non-Religious Nonprofit Missions
 
-A reproducible, config-driven binary text classifier for US nonprofit missions. The pipeline labels short text records as religious (`1`) vs. non-religious (`0`) using LLM-as-primary annotation, aggregates noisy labels across a multi-model × multi-prompt ensemble, and fine-tunes modern encoder models on the resulting silver dataset. Designed for extensibility beyond the religious task to pregnancy centers, education, international aid, and other nonprofit sectors.
+A reproducible, config-driven binary text classifier for US nonprofit missions. The pipeline labels short text records as religious (`1`) vs. non-religious (`0`) using LLM-as-primary annotation, aggregates noisy labels across a multi-model × multi-prompt ensemble, and is designed to fine-tune modern encoder models on the resulting silver dataset in a later stage. Designed for extensibility beyond the religious task to pregnancy centers, education, international aid, and other nonprofit sectors.
 
-> **Status:** Re-engineering in progress (points 1–2 of the roadmap). The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
+> **Status:** Stages 01–04 are implemented: sampling, bake-off, annotation, and QC/freeze. Training, evaluation, inference-at-scale, and visualization remain roadmap work. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
 
 ## Architecture
 
@@ -22,18 +22,31 @@ src/binary_classifier/
       openai_annotator.py
       vllm_annotator.py
     run_annotation.py  # Batch labeling; resume by (EIN2, source_id)
-    aggregate.py       # Majority vote + crowd-kit / cleanlab hooks
+    aggregate.py       # Majority vote default; other aggregation arms are gated
   qc/
-    agreement.py       # LLM-vs-human agreement + full sklearn metric bundle
+    agreement.py       # Validation gate: κ/α reporting + minority-F1 CI floor
 scripts/
-  01_build_sample.py   # Stage 2.1: construct silver (~20k) + gold (~400) + splits
-  02_bakeoff_prompts.py # Stage 2.2: model×prompt bake-off on prompt-dev
-  03_annotate.py       # Stage 2.3: full model×prompt matrix labeling run
-  04_quality_check.py  # Stage 2.4: aggregation + QC gate (≥85% agreement)
+  01_build_sample.py   # Stage 01: construct silver + gold + prompt/validation/test/monitor manifests
+  02_bakeoff_prompts.py # Stage 02: model×prompt bake-off on prompt-dev
+  03_annotate.py       # Stage 03: full model×prompt matrix labeling over silver ∪ gold
+  04_quality_check.py  # Stage 04: QC gate + freeze silver-only labels
   run_pipeline.py      # Orchestrator: chains 01→04
 config/
   religious_missions.yaml   # First task config (entity=missions, field=LONGEST_MISSION)
 ```
+
+## Data layout
+
+The pipeline follows the cookiecutter-data-science layout (`raw/` → `interim/` → `processed/` → `models/`; cookiecutter-data-science, drivendata):
+
+- `data/raw/` — immutable upstream parquet inputs. Not committed.
+- `data/interim/` — manifests, bake-off outputs, and annotation stores. Not committed.
+- `data/processed/` — final artifacts. `data/processed/gold/` is the committed pointer layer (`gold_to_code.csv`, `production_slate.json`); `silver_labels.csv` is not committed.
+- `data/models/` — future fine-tuned checkpoints. Not committed.
+
+Today, local/cloud symlinks stand in for DVC for every heavy, non-committed location (`raw/`, `interim/`, `processed/silver_labels.csv`, `models/`). The committed pointers are the small gold artifacts in `data/processed/gold/`.
+
+> **Future DVC migration:** when the project adopts DVC, add the real upstream parquet files with `dvc add data/raw/*.parquet` and configure a `dvc remote` (DVC docs: `add`, cache link types, remotes, external data). Avoid stacking ad-hoc intermediate directory symlinks on top of DVC-managed paths because DVC manages its own cache links.
 
 ## Environment
 
@@ -54,6 +67,19 @@ uv sync
 # Set secrets (OpenAI API key needed for the closed-reference annotator)
 echo "OPENAI_API_KEY=your_key_here" > .env
 ```
+
+## Local data setup
+
+Create the real local directories before your first non-synthetic run:
+
+```bash
+mkdir -p data/raw data/interim data/models data/processed/gold
+```
+
+- `PathRegistry.ensure_dirs()` creates output directories such as `data/interim/`, `data/models/`, and `data/processed/gold/`, but it does **not** create `data/raw/` for you.
+- Stage 01 hard-fails if `data/raw/missions_cross_section.parquet` or `data/raw/bmf_unified_processed.parquet` is missing, unless you set `data.allow_synthetic: true` for smoke tests.
+- Move any existing committed gold artifacts into `data/processed/gold/` before running the human checkpoints.
+- If your heavy silver artifacts still live behind the old processed-tree cloud symlink, re-point that local symlink so manifests, bake-off outputs, and annotation stores live under `data/interim/` instead. Moving gold alone does not move the large silver-side artifacts.
 
 ## Operator Guide: Two-Checkpoint Pipeline Loop
 
@@ -79,10 +105,12 @@ uv run python scripts/run_pipeline.py --stages 01
 
 This writes:
 
-- Silver `EIN2` manifests to the configured silver directory.
-- `gold_to_code.csv` to the configured gold directory (default `data/processed/train_test_datasets/gold/gold_to_code.csv`).
+- Silver `EIN2` manifests to `data/interim/manifests/`.
+- `gold_to_code.csv` to `data/processed/gold/gold_to_code.csv`.
 
-Open `gold_to_code.csv`. It contains four columns: `EIN2`, `split`, `text`, `human_label`. Fill **every** `human_label` cell with a strict `0` or `1`. Do not leave blanks and do not use other values. Commit the file.
+Open `gold_to_code.csv`. It contains four columns: `EIN2`, `split`, `text`, `human_label`. Fill **every** `human_label` cell with a strict `0` or `1`. Do not leave blanks and do not use other values. Commit the file. The template now includes `prompt_dev`, `validation`, `test`, and `monitor` rows.
+
+> **Re-split caveat:** if you re-run stage 01 before coding starts, the gold split tags can reshuffle. Re-split before anyone codes, or regenerate the coding template from the new manifests before continuing.
 
 > **Gate 1 (G1 — labels gate):** The pipeline will refuse to run stages 02 or 04 if any `human_label` is missing, blank, or non-`0/1`. It exits gracefully with a clear message so no GPU work is wasted.
 
@@ -113,8 +141,8 @@ uv run python scripts/run_pipeline.py --stages 02
 
 This scores every configured `bakeoff_candidate` × `prompt` against the human-coded `prompt_dev` split. It writes:
 
-- `results/bakeoff_results.json` — scores for every candidate.
-- `results/proposed_slate.json` — an auto-picked, **unconfirmed** slate (`"confirmed": false`).
+- `data/interim/bakeoff/bakeoff_results.json` — scores for every candidate.
+- `data/interim/bakeoff/proposed_slate.json` — an auto-picked, **unconfirmed** slate (`"confirmed": false`).
 
 Review the scores in `bakeoff_results.json`.
 
@@ -123,7 +151,7 @@ Review the scores in `bakeoff_results.json`.
 Copy `proposed_slate.json` into the gold directory as `production_slate.json`:
 
 ```bash
-cp results/proposed_slate.json data/processed/train_test_datasets/gold/production_slate.json
+cp data/interim/bakeoff/proposed_slate.json data/processed/gold/production_slate.json
 ```
 
 Edit it to contain the exact model IDs you want in production, and set:
@@ -144,12 +172,12 @@ With the slate confirmed, run:
 uv run python scripts/run_pipeline.py --stages 03,04
 ```
 
-- **Stage 03** labels the full silver pool using only the models confirmed in `production_slate.json`. It writes `annotation_store.csv` (resumable by `(EIN2, source_id)`).
-- **Stage 04** aggregates the labels and measures agreement against the human-coded `validation` split.
+- **Stage 03** labels the full silver pool plus the gold holdouts used by QC/canary checks, using only the models confirmed in `production_slate.json`. It writes `annotation_store.csv` (resumable by `(EIN2, source_id)`).
+- **Stage 04** aggregates the labels, measures agreement against the human-coded `validation` split, and writes a frozen `silver_labels.csv` that excludes every gold `EIN2` from the training pool.
 
 > **Gate 1 (G1, again):** Stage 04 also checks that every `validation` row in `gold_to_code.csv` has a valid `0/1` label.
 
-If agreement is below the configured threshold (default 0.85), the QC gate **blocks** — it exits non-zero, prints guidance to revise prompts and re-label, and does **not** write a frozen output. If agreement is above the threshold, the silver set is frozen and versioned.
+If the QC gate misses the configured chance-corrected agreement threshold or the minority-class F1 confidence-floor threshold, it **blocks** — it exits non-zero, prints guidance to revise prompts and re-label, and does **not** write a frozen output. Raw agreement is still logged for continuity, but the freeze decision is driven by κ/α reporting plus the minority-F1 CI floor (Landis & Koch 1977; SILICON, arXiv:2412.14461; Variance-Aware protocol, arXiv:2601.02370).
 
 ### Step 6 — Enabling the open-weight model for production
 
@@ -178,9 +206,22 @@ uv run python scripts/run_pipeline.py --stages 01,02,03,04
 
 - **Entity-agnostic:** `entity` and `field` are config parameters, not hard-coded.
 - **Reproducibility:** one global `SEED`; every stochastic step is seeded.
-- **Weak-supervision-ready:** the long/tidy label store is designed for crowd-kit (Dawid-Skene) and cleanlab (CROWDLAB) as drop-in comparison arms.
-- **Rule layer:** LOW-quality / bare-label missions are handled by a high-precision rule layer at inference, not dropped (protects prevalence).
+- **Weak-supervision-ready:** the long/tidy label store keeps model×prompt votes so future aggregation arms can be evaluated against the human holdout before adoption.
+- **Rule layer:** LOW-quality / bare-label missions are handled by a high-precision rule layer at inference, not dropped.
 - **EIN2 everywhere:** the upstream join key is carried through every artifact.
+
+## Sampling frame vs. population
+
+The current sampling frame is the HIGH+MEDIUM quality strata only: `Q >= 3.0`. LOW-quality records are excluded from stage-01 sampling and are handled later by the rule layer at inference. That means the sampled frame is **not** the full nonprofit population. Any population-share claim over all nonprofits must fold LOW back in explicitly using the rule-layer label rate multiplied by the LOW-count mass.
+
+This framing is deliberate: the current pipeline optimizes annotation and QC on text that is informative enough for LLM review, while keeping a clear hook for the later all-nonprofits prevalence estimator.
+
+## Roadmap (not built yet)
+
+- **Population share over all nonprofits:** add a representative anchor sample drawn at the real prior over the full frame, including LOW-quality rows, then combine it with the rule-layer LOW mass. Primary estimator: PPI++ (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks (Saerens, Latinne & Decaestecker 2002; QuaPy) and per-NTEE-stratum calibration where prior-shift assumptions are fragile.
+- **Fine-tuning stage:** default encoder target is DeBERTa-v3-base; ModernBERT remains a throughput-driven comparison arm only if large-scale inference speed becomes binding. Planned upgrades include soft-label or confidence-weighted training, label smoothing, and `bf16` on Blackwell B200 hardware (DeBERTa-v3 vs ModernBERT controlled study arXiv:2504.08716; NVIDIA).
+- **Evaluation stage:** keep minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, and bootstrap intervals, then add decision-curve / net-benefit analysis plus ECE calibration reporting (Vickers & Elkin 2006).
+- **Weak-supervision upgrades:** uncertainty-weighted aggregation and classifier-assisted evidence-checking remain gated roadmap arms; they should only be adopted if they beat the current majority-vote baseline on the human held-out data.
 
 ## UCloud runtime
 
@@ -204,17 +245,6 @@ See `pyproject.toml` for the full list. Key additions vs. the legacy stack:
 - `openai`, `vllm` — LLM annotation (closed API + open-weight serving)
 - `python-dotenv` — secret loading (replaces the misnamed `dotenv` package)
 
-## License
-
-This project is part of research on economics of religion and nonprofit classification.
-
 ## Author
 
-carobs9
-
-## Acknowledgments
-
-- Domain knowledge from economics of religion scholarship
-- Encoder models from Hugging Face Transformers
-- Open-source annotation stack (vLLM, crowd-kit, cleanlab)
-- UCloud / DeiC Interactive HPC for GPU compute
+carobs9, chickymonkeys

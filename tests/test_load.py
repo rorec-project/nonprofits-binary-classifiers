@@ -8,9 +8,9 @@ from binary_classifier.config import BinaryClassifierConfig, DataConfig, PathsCo
 
 
 def _cfg(tmp_path, allow_synthetic: bool) -> BinaryClassifierConfig:
-    # upstream_repo points at an empty dir → the parquet paths do not exist.
+    # raw_dir points at an empty dir → the parquet files do not exist.
     return BinaryClassifierConfig(
-        paths=PathsConfig(upstream_repo=tmp_path),
+        paths=PathsConfig(raw_dir=tmp_path),
         data=DataConfig(allow_synthetic=allow_synthetic),
     )
 

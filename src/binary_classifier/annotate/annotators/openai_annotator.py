@@ -1,8 +1,8 @@
 """OpenAI API annotator.
 
-Uses the ``openai`` Python client with structured JSON output (guided JSON) to
-produce schema-valid ``LabelRecord`` objects. Temperature is fixed at 0 for
-best-effort reproducible annotation.
+Uses the ``openai`` Python client with optional structured JSON output (guided
+JSON) to produce schema-valid ``LabelRecord`` objects. Temperature is fixed at 0
+for best-effort reproducible annotation.
 """
 
 import json
@@ -32,6 +32,7 @@ class OpenAIAnnotator(Annotator):
         max_retries: Retries on rate-limit or transient errors.
         api_key: Optional explicit API key (falls back to ``OPENAI_API_KEY``).
         reasoning_effort: Optional reasoning-effort knob for GPT-5-class models.
+        guided_json: Whether to ask OpenAI for strict schema-constrained output.
 
     """
 
@@ -45,7 +46,14 @@ class OpenAIAnnotator(Annotator):
         max_retries: int = 5,
         api_key: str | None = None,
         reasoning_effort: str | None = None,
+        guided_json: bool = True,
     ) -> None:
+        """Initialize the API client and annotation decoding controls.
+
+        ``guided_json`` mirrors the annotation config flag so the same parser can
+        evaluate strict schema-mode output and prompt-only JSON output under a
+        single downstream record schema.
+        """
         super().__init__(
             model_id=model_id,
             prompt_id=prompt_id,
@@ -55,6 +63,7 @@ class OpenAIAnnotator(Annotator):
             max_retries=max_retries,
             source_type=SourceType.LLM_PROMPT,
             reasoning_effort=reasoning_effort,
+            guided_json=guided_json,
         )
         self.client: OpenAI = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
@@ -64,6 +73,10 @@ class OpenAIAnnotator(Annotator):
 
     def annotate(self, text: str, ein2: str = "") -> LabelRecord:
         """Call the OpenAI API and return a parsed ``LabelRecord``.
+
+        The guided JSON flag only changes provider-side structured output. Raw
+        parsing remains unchanged so malformed prompt-only responses become
+        downstream abstain/error records instead of silent labels.
 
         Args:
             text: Mission text to classify.
@@ -83,24 +96,38 @@ class OpenAIAnnotator(Annotator):
                         Literal["none", "minimal", "low", "medium", "high", "xhigh"],
                         self.reasoning_effort,
                     )
-                response = self.client.chat.completions.create(
-                    model=self.model_id,
-                    messages=[
-                        {"role": "system", "content": self.prompt_text},
-                        {"role": "user", "content": text},
-                    ],
-                    temperature=self.temperature,
-                    seed=self.seed,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "label_record",
-                            "schema": build_json_schema(),
-                            "strict": True,
+                # cfg.annotation.guided_json controls OpenAI strict schema mode;
+                # false leaves only prompt-level JSON guidance.
+                if self.guided_json:
+                    response = self.client.chat.completions.create(
+                        model=self.model_id,
+                        messages=[
+                            {"role": "system", "content": self.prompt_text},
+                            {"role": "user", "content": text},
+                        ],
+                        temperature=self.temperature,
+                        seed=self.seed,
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "label_record",
+                                "schema": build_json_schema(),
+                                "strict": True,
+                            },
                         },
-                    },
-                    reasoning_effort=reasoning_effort,
-                )
+                        reasoning_effort=reasoning_effort,
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=self.model_id,
+                        messages=[
+                            {"role": "system", "content": self.prompt_text},
+                            {"role": "user", "content": text},
+                        ],
+                        temperature=self.temperature,
+                        seed=self.seed,
+                        reasoning_effort=reasoning_effort,
+                    )
                 raw = response.choices[0].message.content
                 if raw is None:
                     return self._error_record(ein2, "empty_content")

@@ -27,7 +27,9 @@ def make_annotator(
     Routing is by ``spec.provider``: ``openai`` → :class:`OpenAIAnnotator`,
     ``vllm`` → :class:`VLLMAnnotator`. ``reasoning_effort`` is forwarded only
     when set on the spec, so providers/models that do not support it are never
-    passed an unexpected value.
+    passed an unexpected value. ``guided_json`` is forwarded from the global
+    annotation config so bake-off and production runs honor the same
+    structured-decoding switch.
 
     Args:
         cfg: Validated configuration object (supplies temperature/seed/retries).
@@ -49,6 +51,8 @@ def make_annotator(
         extra["reasoning_effort"] = spec.reasoning_effort
 
     if spec.provider == "openai":
+        # The guided-json switch is a global annotation knob, not a per-model
+        # slate choice, so every provider construction path must receive it.
         return OpenAIAnnotator(
             model_id=spec.id,
             prompt_id=prompt_id,
@@ -56,10 +60,13 @@ def make_annotator(
             temperature=cfg.annotation.temperature,
             seed=cfg.annotation.seed,
             max_retries=cfg.annotation.max_retries,
+            guided_json=cfg.annotation.guided_json,
             **extra,
         )
 
     if spec.provider == "vllm":
+        # The guided-json switch is a global annotation knob, not a per-model
+        # slate choice, so every provider construction path must receive it.
         return VLLMAnnotator(
             model_id=spec.id,
             prompt_id=prompt_id,
@@ -67,6 +74,7 @@ def make_annotator(
             temperature=cfg.annotation.temperature,
             seed=cfg.annotation.seed,
             max_retries=cfg.annotation.max_retries,
+            guided_json=cfg.annotation.guided_json,
             **extra,
         )
 

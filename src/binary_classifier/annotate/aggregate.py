@@ -1,19 +1,17 @@
 """Label aggregation and denoising.
 
-Provides majority-vote aggregation as the default silver-label builder, plus
-drop-in hooks for ``crowd-kit`` (Dawid-Skene) and ``cleanlab`` (CROWDLAB) as
-comparison arms. The long/tidy store is the natural input for all three
-methods.
+Provides majority-vote aggregation as the default silver-label builder. The
+Dawid-Skene and CROWDLAB dispatch arms are intentionally quarantined until they
+are validated for this pipeline: Dawid-Skene (Dawid & Skene 1979) is not yet
+verified for correlated LLM ensembles, and CROWDLAB needs classifier
+``pred_probs`` from a later fine-tuning stage (Goh, Mueller et al. 2022;
+cleanlab multiannotator docs).
 """
 
-import logging
 from typing import Callable
 
 import numpy as np
 import pandas as pd
-
-logger = logging.getLogger(__name__)
-
 
 # ── Majority vote ────────────────────────────────────────────────────────────
 
@@ -89,64 +87,52 @@ def aggregate_dawid_skene(
     n_iter: int = 100,
     tol: float = 1e-5,
 ) -> pd.DataFrame:
-    """Dawid-Skene label aggregation via ``crowd-kit``.
+    """Quarantined Dawid-Skene comparison arm.
+
+    Dawid-Skene estimates worker reliability by EM (Dawid & Skene 1979), but
+    this pipeline's model-by-prompt annotators are correlated LLM ensemble
+    members rather than independent human coders. Majority vote remains the
+    default until this arm is validated for that dependence structure.
 
     Args:
         df: Long/tidy dataframe with columns ``EIN2``, ``source_id``,
             ``label`` (0/1 numeric, NaN = abstain).
-        n_iter: Maximum EM iterations.
-        tol: Convergence tolerance.
+        n_iter: Reserved for the future EM implementation.
+        tol: Reserved for the future EM implementation.
 
     Returns:
-        Wide dataframe with one row per EIN2 and columns:
-        ``silver_label``, ``ds_prob``, ``ds_reliability``.
+        This function currently raises instead of returning labels.
 
     """
-    try:
-        from crowdkit.aggregation import DawidSkene
-    except ImportError:
-        logger.exception("crowd-kit not installed; skipping Dawid-Skene")
-        return pd.DataFrame()
-
-    # Drop abstains
-    clean = df.dropna(subset=["label"]).copy()
-    clean["label"] = clean["label"].astype(int)
-
-    ds = DawidSkene(n_iter=n_iter, tol=tol)
-    aggregated = ds.fit_predict(clean)
-    reliabilities = ds.fit_predict_proba(clean)
-
-    out = aggregated.reset_index()
-    out.columns = ["EIN2", "silver_label"]
-    out["ds_prob"] = reliabilities.max(axis=1).values
-    return out
+    raise NotImplementedError(
+        "Dawid-Skene is quarantined: unverified for correlated LLM ensembles; "
+        "majority vote is the default."
+    )
 
 
 def aggregate_crowdlab(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """CROWDLAB consensus + noise detection via ``cleanlab``.
+    """Quarantined CROWDLAB comparison arm.
 
-    .. note::
-        This is a **stub**. CROWDLAB requires ``pred_probs`` (model
-        predicted-class probabilities) which are not yet wired into the
-        pipeline. Call this only after a baseline model produces
-        per-EIN2 probabilities.
+    CROWDLAB combines multiple annotators with classifier ``pred_probs`` to
+    estimate consensus and label quality (Goh, Mueller et al. 2022; cleanlab
+    multiannotator docs). This pipeline has not reached the fine-tuning stage
+    that will produce those probabilities, so selecting this method must fail
+    explicitly rather than silently returning an empty result.
 
     Args:
         df: Long/tidy dataframe with columns ``EIN2``, ``source_id``,
             ``label`` (0/1 numeric, NaN = abstain).
 
     Returns:
-        Wide dataframe with one row per EIN2 and columns:
-        ``silver_label``, ``crowdlab_consensus``, ``quality_score``.
+        This function currently raises instead of returning labels.
 
     """
-    logger.warning(
-        "aggregate_crowdlab is a stub — pred_probs are not yet wired. "
-        "Returning empty DataFrame."
+    raise NotImplementedError(
+        "CROWDLAB is quarantined: requires pred_probs from a trained "
+        "classifier (fine-tuning stage), not yet available."
     )
-    return pd.DataFrame()
 
 
 # ── Unified aggregator ─────────────────────────────────────────────────────
@@ -157,6 +143,10 @@ def aggregate_labels(
     method: str = "majority",
 ) -> pd.DataFrame:
     """Dispatch to the requested aggregation method.
+
+    The dormant Dawid-Skene and CROWDLAB arms remain in this dispatch table so
+    experimental selection raises an explicit quarantine error instead of
+    silently producing empty labels. Majority vote is the production default.
 
     Args:
         df: Long/tidy label dataframe.

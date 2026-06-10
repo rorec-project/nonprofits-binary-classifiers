@@ -11,7 +11,7 @@ Act as a **pragmatic ML research engineer**. You care about reproducibility (see
 Config-driven binary text classifier that labels short US-nonprofit records as religious (`1`) vs non-religious (`0`). It is **entity-agnostic**: the religious × missions task is the first of several planned (activities, pregnancy centers, education, …), selected by config — never hard-coded.
 
 - **Approach — LLM-as-primary weak supervision:** a model × prompt ensemble (a closed-API reference model + open-weight models served via vLLM) labels a large silver pool; the labels are aggregated into silver labels. A small hand-coded **gold** set drives prompt selection, validation, and a frozen test. Encoder fine-tuning is the next roadmap stage.
-- **Status:** re-engineering points 1–2 done (sampling + annotation + QC). Training, evaluation, inference-at-scale, and visualization (points 3–6) are **not yet built**. The legacy flat-script + notebook pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
+- **Status:** stages 01–04 are built (sampling, bake-off, annotation, QC/freeze). Training, evaluation, inference-at-scale, and visualization are **not yet built**. The legacy flat-script + notebook pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
 
 ## Environment
 
@@ -40,14 +40,17 @@ Change task or knobs through **`config/*.yaml`** → pydantic `BinaryClassifierC
 
 ## Gotchas
 
-- **`data/` and `models/` are symlinks to cloud storage, not git-committed.** Both point to external directories (cloud-synced). They are gitignored. Pipeline outputs write to these symlinked locations; the symlinks themselves are local setup, not in the repo.
-- **Gold-committed / silver-symlinked layout.** `gold_dir` (configurable, default `data/processed/train_test_datasets/gold`) is committed: it holds `gold_to_code.csv` (the human-coding template) and `production_slate.json` (the human-confirmed model slate). `silver_dir` (default `data/processed/train_test_datasets/silver`) is the cloud-symlinked machine-labelled pool: it holds `annotation_store.csv` and `bakeoff_labels.csv`.
+- **`data/` is a real repo directory, not one giant symlink.** The intended layout is cookiecutter-style `data/raw`, `data/interim`, `data/processed`, `data/models`. In local setups, only the heavy non-committed locations may be cloud-backed symlinks.
+- **Cloud symlinks currently stand in for DVC.** Treat `raw/`, `interim/`, `processed/silver_labels.csv`, and `models/` as local/cloud-managed storage. The small committed pointer layer is `data/processed/gold/`, which should contain `gold_to_code.csv` and the human-confirmed `production_slate.json`.
+- **Local setup is partly manual.** `PathRegistry.ensure_dirs()` creates output directories but not `data/raw/`; stage 01 hard-fails on missing upstream parquet unless `data.allow_synthetic: true`. If a local setup still points the heavy silver-side artifacts at an old processed-tree symlink, re-point that storage under `data/interim/` before documenting or debugging path issues.
 - **Two human checkpoints gate the pipeline.**
   - **G1 (labels gate)** — before stage 02 (bake-off) or stage 04 (QC), the pipeline validates that `gold_to_code.csv` has complete `0/1` human labels for every row in the required split (`prompt_dev` for 02, `validation` for 04). If labels are missing, blank, or non-`0/1`, the run exits gracefully (no GPU work wasted).
-  - **G2 (slate gate)** — before stage 03 (full annotation), the pipeline requires a human-confirmed `production_slate.json` in `gold_dir`. If stages 02+03 are requested together and no confirmed slate exists, stage 02 runs (produces `proposed_slate.json`), then the pipeline exits gracefully before stage 03.
+  - **G2 (slate gate)** — before stage 03 (full annotation), the pipeline requires a human-confirmed `data/processed/gold/production_slate.json`. If stages 02+03 are requested together and no confirmed slate exists, stage 02 runs (produces `proposed_slate.json`), then the pipeline exits gracefully before stage 03.
 - **Upstream `*.parquet` inputs are gitignored and absent locally.** They are produced by the sibling `NonProfitData` project, expected at `../NonProfitData`. Stages that read parquet can't run without it.
-- **Manifests in `train_test_datasets/` are `EIN2` lists + sampling metadata, not text/labels.** The text is re-joined from the upstream parquet by `EIN2`. Old flat CSVs sit in `train_test_datasets/legacy/`.
-- **`results/` is gitignored and absent.**
+- **Manifests live under `interim_dir/manifests/`** — they are `EIN2` lists + sampling metadata, not text/labels. The text is re-joined from the upstream parquet by `EIN2`.
+- **Bake-off artifacts live under `interim_dir/bakeoff/`** — scores + proposed slate. All interim pipeline outputs (manifests, bake-off, annotation stores) share the cloud symlink.
+- **The sampled frame is HIGH+MEDIUM only (`Q >= 3.0`).** LOW-quality rows are excluded from stage-01 sampling and handled by the rule layer later. Do not describe silver/gold as population-representative over all nonprofits without folding LOW back in.
+- **Roadmap facts live in README + configuration docs.** Future DVC migration, prevalence estimation, encoder choice, and evaluation upgrades are documented there; keep AGENTS as pointers, not the canonical long-form roadmap.
 - **`EIN2` is the upstream join key — carry it through every artifact.**
 - **`archive/legacy-pipe/` is reference-only.** Don't run it, and don't "fix" it to match the new pipeline.
 

@@ -49,9 +49,7 @@ def build_json_schema() -> dict[str, Any]:
     ``guided_json``. All fields are in ``required``; nullable types use
     ``anyOf`` with ``{"type": "null"}``.
     """
-    string_null: dict[str, Any] = {
-        "anyOf": [{"type": "string"}, {"type": "null"}]
-    }
+    string_null: dict[str, Any] = {"anyOf": [{"type": "string"}, {"type": "null"}]}
     string_array_null: dict[str, Any] = {
         "anyOf": [
             {"type": "array", "items": {"type": "string"}},
@@ -249,15 +247,13 @@ class LabelRecord(BaseModel):
             ),
             evidence_spans=(
                 json.loads(row["evidence_spans"])
-                if isinstance(row.get("evidence_spans"), str)
-                and row["evidence_spans"]
+                if isinstance(row.get("evidence_spans"), str) and row["evidence_spans"]
                 else None
             ),
             boundary_notes=_clean(row.get("boundary_notes")),
             binary_label=(
                 BinaryLabel(row["binary_label"])
-                if isinstance(row.get("binary_label"), str)
-                and row["binary_label"]
+                if isinstance(row.get("binary_label"), str) and row["binary_label"]
                 else None
             ),
             system_fingerprint=_clean(row.get("system_fingerprint")),

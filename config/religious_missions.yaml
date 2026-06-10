@@ -12,18 +12,10 @@ field: LONGEST_MISSION
 label_name: religious
 
 paths:
-  upstream_repo: ../NonProfitData
-  missions_parquet: data/processed/corpus/missions/missions_cross_section.parquet
-  bmf_parquet: data/processed/panel/core/bmf_unified_processed.parquet
-  output_dir: .
-  data_dir: data
-  train_test_dir: train_test_datasets
-  results_dir: results
-  models_dir: models
-  # Gold is committed (human-coded artifacts); silver is the cloud-symlinked
-  # machine-labelled pool. Set these to match your local folder layout.
-  gold_dir: data/processed/train_test_datasets/gold
-  silver_dir: data/processed/train_test_datasets/silver
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  models_dir: data/models
 
 # Config-driven slate: each candidate is tagged with its serving provider so
 # the annotator factory can route construction. OpenAI ids are floating
@@ -52,8 +44,11 @@ q_thresholds:
 
 sample_sizes:
   silver: 20000
-  gold: 400
+  # Gold includes the incremental monitor slice so validation/test keep their
+  # pre-monitor sizes for the QC confidence-interval gate.
+  gold: 450
   prompt_dev: 50
+  monitor: 50
 
 annotation:
   temperature: 0.0
@@ -67,8 +62,13 @@ data:
   allow_synthetic: false
 
 qc:
-  # Minimum LLM-vs-human validation agreement required to freeze silver labels.
+  # Raw LLM-vs-human validation agreement is logged for continuity, but the
+  # freeze gate now uses chance-corrected κ plus the minority-F1 CI floor.
   agreement_threshold: 0.85
+  # κ≈0.70 reproduces the old 0.85 raw-agreement operating point on the roughly
+  # balanced validation split; the CI floor is the deliberate new variance gate.
+  kappa_threshold: 0.70
+  f1_ci_floor: 0.70
 
 training:
   learning_rate: 5.0e-5

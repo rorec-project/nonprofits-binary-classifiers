@@ -55,7 +55,11 @@ def _seed_store_no_confidence(registry, rows) -> None:
 
 
 def _write_validation(registry, rows) -> None:
-    """rows: list of (EIN2, human_label)."""
+    """Write coded validation rows and matching gold-manifest entries.
+
+    Metric tests exercise the same stage-04 freeze path as production, where
+    the post-gate leak guard requires the gold manifest before writing labels.
+    """
     df = pd.DataFrame(
         [
             {"EIN2": e, "split": "validation", "text": "t", "human_label": h}
@@ -64,6 +68,9 @@ def _write_validation(registry, rows) -> None:
     )
     registry.gold_coding_template.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(registry.gold_coding_template, index=False)
+    pd.DataFrame(
+        [{"EIN2": e, "split": "validation"} for e, _ in rows]
+    ).to_csv(registry.gold_manifest, index=False)
 
 
 def test_gate_passes_returns_full_metrics(tiny_config, tiny_registry) -> None:
@@ -74,7 +81,7 @@ def test_gate_passes_returns_full_metrics(tiny_config, tiny_registry) -> None:
     _write_validation(tiny_registry, [("00-1", 1), ("00-2", 0)])
     result = run_quality_check(tiny_config, tiny_registry)
     assert result["agreement"] == 1.0
-    frozen = tiny_registry.train_test_dir / "silver_labels.csv"
+    frozen = tiny_registry.processed_dir / "silver_labels.csv"
     assert frozen.exists()
 
     assert "confusion_matrix" in result
@@ -106,7 +113,7 @@ def test_gate_below_threshold_metrics_in_exception(tiny_config, tiny_registry) -
         [("00-1", BinaryLabel.RELIGIOUS), ("00-2", BinaryLabel.RELIGIOUS)],
     )
     _write_validation(tiny_registry, [("00-1", 1), ("00-2", 0)])
-    frozen = tiny_registry.train_test_dir / "silver_labels.csv"
+    frozen = tiny_registry.processed_dir / "silver_labels.csv"
     with pytest.raises(ValueError, match="AGREEMENT GATE FAILED") as exc_info:
         run_quality_check(tiny_config, tiny_registry)
     assert not frozen.exists()

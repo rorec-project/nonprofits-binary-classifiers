@@ -23,12 +23,11 @@ from binary_classifier.qc.evidence import (
 def _make_registry(tmp_path: Path, text_map: dict[str, str]) -> PathRegistry:
     """Create a registry anchored in tmp_path with a synthetic missions parquet."""
     cfg = BinaryClassifierConfig()
-    cfg.paths.upstream_repo = Path("upstream")
     registry = PathRegistry.from_config(cfg, root=tmp_path)
     registry.ensure_dirs()
 
     missions_dir = (
-        tmp_path / "upstream" / "data/processed/corpus/missions"
+        tmp_path / cfg.paths.raw_dir
     )
     missions_dir.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(
@@ -196,7 +195,6 @@ def test_rate_calculation(tmp_path: Path) -> None:
 
 def test_missing_missions_raises(tmp_path: Path) -> None:
     cfg = BinaryClassifierConfig()
-    cfg.paths.upstream_repo = Path("upstream")
     registry = PathRegistry.from_config(cfg, root=tmp_path)
     registry.ensure_dirs()
 

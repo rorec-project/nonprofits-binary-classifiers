@@ -29,7 +29,7 @@
 ## Data Flow
 
 - [ ] Upstream parquet read via `PathRegistry` (resolves `../NonProfitData/...`), not a hardcoded filename?
-- [ ] Outputs written under `data/`, `train_test_datasets/`, `results/`, or `models/`?
+- [ ] Outputs written under `data/` or `models/`?
 - [ ] `EIN2` (the upstream join key) carried through every artifact?
 
 ## Validation

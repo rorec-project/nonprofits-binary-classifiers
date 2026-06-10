@@ -21,7 +21,7 @@ Stages 01–04 exist. Training, evaluation, inference-at-scale, and visualizatio
 
 ## Inputs
 
-Cross-section parquets come from the sibling **`NonProfitData`** repo (expected at `../NonProfitData`); they are gitignored/absent locally, as are `results/` and `models/`. `EIN2` is the join key — keep it on every artifact.
+Cross-section parquets come from the sibling **`NonProfitData`** repo (expected at `../NonProfitData`); they are gitignored/absent locally, as are `data/` and `models/`. `EIN2` is the join key — keep it on every artifact.
 
 ## Related
 
