@@ -105,7 +105,7 @@ def run_quality_check(
 
     if df.empty:
         raise ValueError(
-            f"Annotation store at {store_path} is empty. Run stage 03 first."
+            f"Annotation store at {store_path} is empty. Run stage 03 first.",
         )
 
     if cfg.qc.abstain_on_fabricated_positive:
@@ -134,7 +134,7 @@ def run_quality_check(
         raise ValueError(
             "No overlapping validation labels to compare; cannot run the "
             "agreement gate. Check that the silver run and the coded "
-            "validation split share EIN2s."
+            "validation split share EIN2s.",
         )
 
     agree = int((valid["silver_label"] == valid["human_label"]).sum())
@@ -144,7 +144,7 @@ def run_quality_check(
     f1_ci_floor = cfg.qc.f1_ci_floor
 
     # Compute full metric bundle
-    metrics = _compute_metrics(valid)
+    metrics = _compute_metrics(valid, seed=cfg.SEED)
     minority_f1_ci = metrics["bootstrap_ci"]["minority_f1"]
     minority_f1_ci_lower = minority_f1_ci["lower"]
 
@@ -186,10 +186,10 @@ def run_quality_check(
     # (arXiv:2509.08825)).
     kappa_pass = bool(
         np.isfinite(metrics["cohens_kappa"])
-        and metrics["cohens_kappa"] >= kappa_threshold
+        and metrics["cohens_kappa"] >= kappa_threshold,
     )
     f1_ci_pass = bool(
-        np.isfinite(minority_f1_ci_lower) and minority_f1_ci_lower >= f1_ci_floor
+        np.isfinite(minority_f1_ci_lower) and minority_f1_ci_lower >= f1_ci_floor,
     )
     if not (kappa_pass and f1_ci_pass):
         msg = (
@@ -323,7 +323,7 @@ def _exclude_gold_manifest_ein2s(
     if not gold_manifest_path.exists():
         raise FileNotFoundError(
             f"No gold manifest at {gold_manifest_path}. Run stage 01 first; "
-            "cannot freeze silver labels without the gold-row leak guard."
+            "cannot freeze silver labels without the gold-row leak guard.",
         )
 
     gold_df = pd.read_csv(gold_manifest_path)
@@ -342,7 +342,7 @@ def _exclude_gold_manifest_ein2s(
     return aggregated.loc[keep_mask].copy()
 
 
-def _compute_metrics(valid: pd.DataFrame) -> dict:
+def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
     """Compute the full sklearn metric bundle on the validation overlap.
 
     The QC gate now uses chance-corrected agreement plus the lower bound of the
@@ -356,8 +356,8 @@ def _compute_metrics(valid: pd.DataFrame) -> dict:
         Dict with all computed metrics.
 
     """
-    y_true = valid["human_label"].astype(int).values
-    y_pred = valid["silver_label"].astype(int).values
+    y_true = valid["human_label"].astype(int).to_numpy()
+    y_pred = valid["silver_label"].astype(int).to_numpy()
 
     # Confusion matrix
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
@@ -368,7 +368,10 @@ def _compute_metrics(valid: pd.DataFrame) -> dict:
 
     # Precision, recall, F1 for both classes; report minority explicitly
     precisions, recalls, f1s, _ = precision_recall_fscore_support(
-        y_true, y_pred, labels=[0, 1], zero_division=0
+        y_true,
+        y_pred,
+        labels=[0, 1],
+        zero_division=0,
     )
     precision = float(precisions[minority_class])
     recall = float(recalls[minority_class])
@@ -385,13 +388,13 @@ def _compute_metrics(valid: pd.DataFrame) -> dict:
         "silver_confidence" in valid.columns
         and valid["silver_confidence"].notna().any()
     ):
-        scores = valid["silver_confidence"].astype(float).values
+        scores = valid["silver_confidence"].astype(float).to_numpy()
         mask = ~np.isnan(scores)
         if mask.any():
             pr_auc = float(average_precision_score(y_true[mask], scores[mask]))
 
     # Bootstrap CI
-    bootstrap_ci = _bootstrap_ci(y_true, y_pred, minority_class)
+    bootstrap_ci = _bootstrap_ci(y_true, y_pred, minority_class, seed=seed)
 
     return {
         "confusion_matrix": {
@@ -455,6 +458,7 @@ def _bootstrap_ci(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     minority_class: int,
+    seed: int,
     n_resamples: int = 1000,
     confidence_level: float = 0.95,
 ) -> dict:
@@ -476,7 +480,7 @@ def _bootstrap_ci(
         ``lower`` and ``upper``.
 
     """
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(seed=seed)
     n = len(y_true)
     accs = np.empty(n_resamples, dtype=float)
     f1s = np.empty(n_resamples, dtype=float)
@@ -485,7 +489,10 @@ def _bootstrap_ci(
         idx = rng.integers(0, n, size=n)
         accs[i] = float(np.mean(y_true[idx] == y_pred[idx]))
         f1s[i] = f1_score(
-            y_true[idx], y_pred[idx], pos_label=minority_class, zero_division=0
+            y_true[idx],
+            y_pred[idx],
+            pos_label=minority_class,
+            zero_division=0,
         )
 
     alpha = 1 - confidence_level
@@ -521,7 +528,7 @@ def _load_validation_labels(human_validation_path: Path) -> pd.DataFrame:
     if not human_validation_path.exists():
         raise FileNotFoundError(
             f"No human coding template at {human_validation_path}. Code "
-            f"human_label (0/1) for the validation split before stage 04."
+            f"human_label (0/1) for the validation split before stage 04.",
         )
     df = pd.read_csv(human_validation_path)
     required = {"EIN2", "split", "human_label"}
@@ -532,6 +539,6 @@ def _load_validation_labels(human_validation_path: Path) -> pd.DataFrame:
     if sub.empty:
         raise ValueError(
             f"No coded validation labels in {human_validation_path}. Fill "
-            f"human_label (0/1) for the validation split before stage 04."
+            f"human_label (0/1) for the validation split before stage 04.",
         )
     return sub

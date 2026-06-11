@@ -7,8 +7,8 @@ label table. The schema is designed to be weak-supervision-ready: one row per
 """
 
 import json
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import datetime, UTC
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 # ── Enums ────────────────────────────────────────────────────────────────────
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     """Origin of a label in the long/tidy store."""
 
     LLM_PROMPT = "llm_prompt"
@@ -26,7 +26,7 @@ class SourceType(str, Enum):
     HUMAN = "human"
 
 
-class BinaryLabel(str, Enum):
+class BinaryLabel(StrEnum):
     """Source-of-truth label from the LLM codebook.
 
     ``religious`` → 1, ``nonreligious`` → 0, ``ambiguous_review`` and
@@ -54,7 +54,7 @@ def build_json_schema() -> dict[str, Any]:
         "anyOf": [
             {"type": "array", "items": {"type": "string"}},
             {"type": "null"},
-        ]
+        ],
     }
 
     return {
@@ -101,7 +101,8 @@ class LabelRecord(BaseModel):
     # Identifiers
     EIN2: str = Field(..., description="IRS identifier (join key).")
     source_id: str = Field(
-        ..., description="Unique run identifier: model_id + prompt_id."
+        ...,
+        description="Unique run identifier: model_id + prompt_id.",
     )
 
     # Source metadata
@@ -111,7 +112,7 @@ class LabelRecord(BaseModel):
     temperature: float = Field(..., description="Sampling temperature used.")
     seed: int | None = Field(None, description="Random seed used (if any).")
     run_timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp of the annotation.",
     )
 
@@ -235,7 +236,7 @@ class LabelRecord(BaseModel):
             run_timestamp=(
                 datetime.fromisoformat(row["run_timestamp"])
                 if row.get("run_timestamp")
-                else datetime.now(timezone.utc)
+                else datetime.now(UTC)
             ),
             raw_response=_clean(row.get("raw_response")),
             reason=_clean(row.get("reason")),
@@ -342,7 +343,7 @@ class AnnotationStore:
             df = pd.read_parquet(self.path, columns=["EIN2", "source_id"])
         else:
             df = pd.read_csv(self.path, usecols=["EIN2", "source_id"])
-        self._done_set = set(zip(df["EIN2"], df["source_id"]))
+        self._done_set = set(zip(df["EIN2"], df["source_id"], strict=True))
         return self._done_set
 
     # ── Public API ───────────────────────────────────────────────────────

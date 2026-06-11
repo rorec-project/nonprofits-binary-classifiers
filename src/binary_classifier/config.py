@@ -74,10 +74,14 @@ def _default_bakeoff_candidates() -> list[BakeoffCandidate]:
     return [
         BakeoffCandidate(id="gpt-4o-mini", provider="openai"),
         BakeoffCandidate(
-            id="gpt-5-mini", provider="openai", reasoning_effort="minimal"
+            id="gpt-5-mini",
+            provider="openai",
+            reasoning_effort="minimal",
         ),
         BakeoffCandidate(
-            id="gpt-5-nano", provider="openai", reasoning_effort="minimal"
+            id="gpt-5-nano",
+            provider="openai",
+            reasoning_effort="minimal",
         ),
         BakeoffCandidate(id="google/gemma-3-27b-it", provider="vllm"),
     ]
@@ -179,9 +183,10 @@ class SampleSizesConfig(BaseModel):
 class AnnotationConfig(BaseModel):
     """Hyperparameters for the LLM-as-primary labeler.
 
-    Temperature and seed are fixed to keep annotations low-variance /
-    best-effort reproducible (closed APIs do not guarantee determinism across
-    backend changes). Resume is keyed by (EIN2, source_id) rather than row
+    Temperature is fixed to keep annotations low-variance / best-effort
+    reproducible (closed APIs do not guarantee determinism across backend
+    changes). The global ``SEED`` from :class:`BinaryClassifierConfig` is
+    used for seeding. Resume is keyed by (EIN2, source_id) rather than row
     count to avoid the audit R-08 idempotency gap.
     """
 
@@ -189,7 +194,6 @@ class AnnotationConfig(BaseModel):
     max_retries: int = 5
     checkpoint_every: int = 100
     guided_json: bool = True
-    seed: int = 42
 
 
 class DataConfig(BaseModel):

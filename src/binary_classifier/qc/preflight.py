@@ -13,7 +13,8 @@ problems; the orchestrator decides when to call it and exits non-zero on any
 problem (see ``scripts/run_pipeline.py``).
 """
 
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -69,7 +70,7 @@ def _validate_labels(registry: "PathRegistry", needed_splits: list[str]) -> list
     if not path.exists():
         return [
             f"G1: gold coding template not found at {path}. Run stage 01, then "
-            f"code human_label (0/1) for the {needed_splits} split(s)."
+            f"code human_label (0/1) for the {needed_splits} split(s).",
         ]
 
     df = pd.read_csv(path)
@@ -88,7 +89,7 @@ def _validate_labels(registry: "PathRegistry", needed_splits: list[str]) -> list
             n_missing = len(manifest_eins - template_eins)
             problems.append(
                 f"G1: {path} EIN2 set does not match {registry.gold_manifest} "
-                f"({n_extra} extra, {n_missing} missing)."
+                f"({n_extra} extra, {n_missing} missing).",
             )
 
     for split in needed_splits:
@@ -100,7 +101,7 @@ def _validate_labels(registry: "PathRegistry", needed_splits: list[str]) -> list
         if n_bad:
             problems.append(
                 f"G1: '{split}' has {n_bad}/{len(sub)} row(s) with a blank or "
-                f"non-{{0,1}} human_label (strict 0/1 required, no abstain)."
+                f"non-{{0,1}} human_label (strict 0/1 required, no abstain).",
             )
 
     return problems
@@ -131,7 +132,7 @@ def _validate_slate(
         return [
             f"G2: no confirmed production slate at {path}. Review "
             f"{registry.bakeoff_results}, copy {registry.proposed_slate} to "
-            f"{path}, edit it, and set 'confirmed': true."
+            f"{path}, edit it, and set 'confirmed': true.",
         ]
 
     try:
@@ -142,7 +143,7 @@ def _validate_slate(
     problems: list[str] = []
     if not slate.confirmed:
         problems.append(
-            f"G2: {path} is not confirmed (set 'confirmed': true after review)."
+            f"G2: {path} is not confirmed (set 'confirmed': true after review).",
         )
     if not slate.models:
         problems.append(f"G2: {path} lists no models under 'models'.")
@@ -152,7 +153,7 @@ def _validate_slate(
         if model.id not in configured:
             problems.append(
                 f"G2: production model {model.id!r} is not among the configured "
-                f"bakeoff_candidates {sorted(configured)}."
+                f"bakeoff_candidates {sorted(configured)}.",
             )
 
     return problems

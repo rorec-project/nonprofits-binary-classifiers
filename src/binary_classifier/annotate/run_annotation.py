@@ -13,9 +13,10 @@ The module can be imported and used programmatically, or invoked via
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -61,7 +62,7 @@ def load_canary_ein2s(registry: "PathRegistry") -> set[str]:
     if not path.exists():
         raise FileNotFoundError(
             f"No monitor manifest at {path}. run stage 01 first; monitor "
-            "manifest lives under the cloud-symlinked interim tree."
+            "manifest lives under the cloud-symlinked interim tree.",
         )
 
     monitor = pd.read_csv(path)
@@ -100,13 +101,13 @@ def resolve_production_specs(registry: "PathRegistry") -> list[BakeoffCandidate]
         raise FileNotFoundError(
             f"No confirmed production slate at {path}. Run stage 02, review "
             f"{registry.bakeoff_results}, then copy {registry.proposed_slate} "
-            f"to {path} and set 'confirmed': true."
+            f"to {path} and set 'confirmed': true.",
         )
     slate = load_slate(path)
     if not slate.confirmed:
         raise ValueError(
             f"{path} is not confirmed. Review the bake-off scores and set "
-            f"'confirmed': true before running stage 03."
+            f"'confirmed': true before running stage 03.",
         )
     if not slate.models:
         raise ValueError(f"{path} lists no models under 'models'.")
@@ -253,7 +254,7 @@ def run_annotation_matrix(
         if cfg is None or registry is None:
             raise ValueError(
                 "canary_only requires cfg and registry so stage 03 can load "
-                "the held-out monitor manifest and record drift metadata."
+                "the held-out monitor manifest and record drift metadata.",
             )
 
         canary_ein2s = load_canary_ein2s(registry)
@@ -263,7 +264,7 @@ def run_annotation_matrix(
             raise ValueError(
                 "Canary monitor EIN2s do not overlap the annotation pool; "
                 "run stage 01 and stage 03 on the same manifests before "
-                "requesting --canary."
+                "requesting --canary.",
             )
         if canary_pool_ein2s != canary_ein2s:
             logger.warning(
@@ -284,7 +285,7 @@ def run_annotation_matrix(
         for prompt_id in prompt_texts:
             work_items.extend(
                 (ein2, text, spec, prompt_id)
-                for ein2, text in zip(df["EIN2"], df["text"])
+                for ein2, text in zip(df["EIN2"], df["text"], strict=True)
             )
 
     # Resume filtering — source_id == f"{spec.id}__{prompt_id}".
@@ -377,7 +378,7 @@ def _record_canary_audit(
     # (arXiv:2412.14461), Variance-Aware protocol (arXiv:2601.02370), and
     # "LLM Hacking" model×prompt variance (arXiv:2509.08825).
     audit_record = {
-        "run_timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_timestamp": datetime.now(UTC).isoformat(),
         "canary_set_hash": canary_set_hash,
         "canary_set_version": f"sha256:{canary_set_hash[:12]}",
         "monitor_manifest": str(registry.monitor_manifest),
@@ -473,7 +474,7 @@ def _aggregate_canary_predictions(
                 if pd.isna(row["agreement"])
                 else float(row["agreement"]),
                 "tie": bool(row["tie"]),
-            }
+            },
         )
     return predictions
 
@@ -503,7 +504,7 @@ def _model_fingerprints(
             system_fingerprints = []
             if not source_rows.empty and "system_fingerprint" in source_rows.columns:
                 system_fingerprints = sorted(
-                    source_rows["system_fingerprint"].dropna().astype(str).unique()
+                    source_rows["system_fingerprint"].dropna().astype(str).unique(),
                 )
             fingerprints.append(
                 {
@@ -511,10 +512,10 @@ def _model_fingerprints(
                     "provider": spec.provider,
                     "pinned_snapshot_id": spec.id,
                     "prompt_id": prompt_id,
-                    "seed": cfg.annotation.seed,
+                    "seed": cfg.SEED,
                     "temperature": cfg.annotation.temperature,
                     "system_fingerprints": system_fingerprints,
-                }
+                },
             )
     return fingerprints
 
@@ -589,7 +590,9 @@ def _compare_canary_to_baseline(
 
     y_base = [baseline_labels[ein2] for ein2 in common]
     y_current = [current_labels[ein2] for ein2 in common]
-    n_changed = sum(1 for before, after in zip(y_base, y_current) if before != after)
+    n_changed = sum(
+        1 for before, after in zip(y_base, y_current, strict=True) if before != after
+    )
     return {
         "status": "compared",
         "baseline_run_timestamp": baseline.get("run_timestamp"),
@@ -626,7 +629,7 @@ def _cohens_kappa(y_a: list[int], y_b: list[int]) -> float:
     labels fall in one class, a common outcome for tiny monitor fixtures.
     """
     labels = sorted(set(y_a) | set(y_b))
-    observed = sum(1 for a, b in zip(y_a, y_b) if a == b) / len(y_a)
+    observed = sum(1 for a, b in zip(y_a, y_b, strict=True) if a == b) / len(y_a)
     expected = 0.0
     for label in labels:
         p_a = sum(1 for value in y_a if value == label) / len(y_a)
@@ -647,7 +650,9 @@ def _krippendorff_alpha_nominal_two_raters(
     canary labels; expected disagreement comes from the pooled label
     distribution across both runs.
     """
-    observed_disagreement = sum(1 for a, b in zip(y_a, y_b) if a != b) / len(y_a)
+    observed_disagreement = sum(
+        1 for a, b in zip(y_a, y_b, strict=True) if a != b
+    ) / len(y_a)
     pooled = y_a + y_b
     labels = set(pooled)
     expected_agreement = sum(

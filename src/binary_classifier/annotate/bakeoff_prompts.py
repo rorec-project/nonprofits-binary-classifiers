@@ -11,7 +11,7 @@ gate-G2 step (see :func:`run_annotation.resolve_production_specs`).
 import json
 import logging
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -127,7 +127,7 @@ def run_bakeoff(
                     "prompt_id": prompt_id,
                     "source_id": source_id,
                     "scores": scores,
-                }
+                },
             )
             logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
 
@@ -173,7 +173,7 @@ def _load_coded_prompt_dev(human_labels_path: Path, limit: int | None) -> pd.Dat
         raise FileNotFoundError(
             f"No human coding template at {human_labels_path}. Run stage 01, "
             f"then code human_label (0/1) for the prompt_dev rows before the "
-            f"bake-off."
+            f"bake-off.",
         )
     df = pd.read_csv(human_labels_path)
     required = {"EIN2", "split", "text", "human_label"}
@@ -186,7 +186,7 @@ def _load_coded_prompt_dev(human_labels_path: Path, limit: int | None) -> pd.Dat
     if sub.empty:
         raise ValueError(
             f"No coded prompt_dev rows in {human_labels_path}. Fill human_label "
-            f"(0/1) for the prompt_dev split before the bake-off."
+            f"(0/1) for the prompt_dev split before the bake-off.",
         )
     if limit:
         sub = sub.head(limit)
@@ -223,7 +223,7 @@ def _build_proposed_slate(results: list[dict], threshold: float) -> dict:
                     "id": r["model_id"],
                     "provider": r["provider"],
                     "reasoning_effort": r["reasoning_effort"],
-                }
+                },
             )
 
     return {"confirmed": False, "models": models, "selected": selected}

@@ -256,7 +256,8 @@ def build_gold_set(
         draws.append(_safe_sample_with_inclusion_prob(other_df, n_other, rng))
 
         stratum_sample = pd.concat(draws, ignore_index=True).drop_duplicates(
-            subset=["EIN2"], keep="first"
+            subset=["EIN2"],
+            keep="first",
         )
         sampled_rows.append(stratum_sample)
 
@@ -463,7 +464,7 @@ def _write_gold_coding_template(
             "split": gold_all["split"].to_numpy(),
             "text": gold_all["mission_text"].to_numpy(),
             "human_label": "",
-        }
+        },
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     template.to_csv(path, index=False)

@@ -15,6 +15,7 @@ message, non-zero exit, no wasted GPU/API work):
 
 import argparse
 import importlib
+import logging
 import sys
 from pathlib import Path
 
@@ -95,7 +96,8 @@ def _run_stage(
 def _report_gate(title: str, problems: list[str], hint: str | None = None) -> None:
     """Print a gate failure to stderr."""
     print(
-        f"\n✗ Gate {title} failed — stopping before any further work:", file=sys.stderr
+        f"\n✗ Gate {title} failed — stopping before any further work:",
+        file=sys.stderr,
     )
     for p in problems:
         print(f"  - {p}", file=sys.stderr)
@@ -174,6 +176,7 @@ def run_pipeline(
 
 def main() -> None:
     """Run the requested pipeline stages in order."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = _parse_args()
 
     cfg = load_config(args.config)

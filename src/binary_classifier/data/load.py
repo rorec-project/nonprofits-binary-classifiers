@@ -80,12 +80,12 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
                 f"Upstream parquet not found (missions: {missions_path}; "
                 f"bmf: {bmf_path}). Provide the NonProfitData parquet, or set "
                 f"data.allow_synthetic: true in the config to generate "
-                f"synthetic smoke-test data."
+                f"synthetic smoke-test data.",
             )
         logger.warning(
             "[load] Upstream parquet missing — generating SYNTHETIC data. "
             "This is NOT a real run; set data.allow_synthetic: false for "
-            "production."
+            "production.",
         )
         missions_path, bmf_path = _generate_synthetic_parquets(cfg)
         synthetic = True
@@ -192,7 +192,7 @@ def _generate_synthetic_parquets(
             41,
             1,
             4,
-        ]
+        ],
     )
     ntee_weights = ntee_weights / ntee_weights.sum()
 
@@ -332,14 +332,14 @@ def _generate_synthetic_parquets(
             "CANONICAL_MISSION_SOURCE_YEAR": rng.integers(2010, 2024, size=n),
             "LONGEST_MISSION": missions,
             "LONGEST_MISSION_SOURCE_YEAR": rng.integers(2010, 2024, size=n),
-        }
+        },
     )
 
     df_bmf = pd.DataFrame(
         {
             "EIN2": ein2s,
             "NTEE_IRS": ntee_irse,
-        }
+        },
     )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="binary_classifier_synthetic_"))

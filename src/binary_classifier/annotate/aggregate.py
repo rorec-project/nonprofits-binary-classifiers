@@ -8,7 +8,7 @@ verified for correlated LLM ensembles, and CROWDLAB needs classifier
 cleanlab multiannotator docs).
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -106,7 +106,7 @@ def aggregate_dawid_skene(
     """
     raise NotImplementedError(
         "Dawid-Skene is quarantined: unverified for correlated LLM ensembles; "
-        "majority vote is the default."
+        "majority vote is the default.",
     )
 
 
@@ -131,7 +131,7 @@ def aggregate_crowdlab(
     """
     raise NotImplementedError(
         "CROWDLAB is quarantined: requires pred_probs from a trained "
-        "classifier (fine-tuning stage), not yet available."
+        "classifier (fine-tuning stage), not yet available.",
     )
 
 

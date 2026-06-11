@@ -48,6 +48,13 @@ extend-exclude = [".agents", "archive", "tests"]
 force-exclude = true
 
 [tool.ruff.lint]
+extend-select = [
+  "B905",    # zip() without explicit strict= — catches bugs
+  "PD011",   # .values -> .to_numpy() — pandas 3.x compat
+  "UP017",   # datetime.UTC alias — modern stdlib
+  "UP035",   # collections.abc import — modern stdlib
+  "UP042",   # enum.StrEnum — modern stdlib
+]
 ignore = [
   "F821", # undefined name -> covered by ty's `unresolved-reference`
 ]

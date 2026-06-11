@@ -37,7 +37,7 @@ config/
 
 ## Data layout
 
-The pipeline follows the cookiecutter-data-science layout (`raw/` → `interim/` → `processed/` → `models/`; cookiecutter-data-science, drivendata):
+The pipeline follows the cookiecutter-data-science layout (`raw/` → `interim/` → `processed/` → `models/`; [cookiecutter-data-science, drivendata](https://cookiecutter-data-science.drivendata.org/)):
 
 - `data/raw/` — immutable upstream parquet inputs. Not committed.
 - `data/interim/` — manifests, bake-off outputs, and annotation stores. Not committed.

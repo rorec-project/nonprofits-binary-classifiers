@@ -37,7 +37,7 @@ def verify_evidence_spans(registry: PathRegistry, store_df: pd.DataFrame) -> dic
     if not missions_path.exists():
         raise FileNotFoundError(
             f"Missions parquet not found at {missions_path}. "
-            f"Run upstream data generation first."
+            f"Run upstream data generation first.",
         )
 
     missions = pd.read_parquet(missions_path)
