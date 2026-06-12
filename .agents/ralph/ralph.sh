@@ -32,6 +32,7 @@ PLAN_DIR=".agents/plans/eager-catmull-prs"
 STATE_DIR=".agents/ralph/state"
 LOG_DIR=".agents/ralph/logs/$PR_ID"
 STATUS_FILE="$STATE_DIR/$PR_ID.status"
+STATE_FILE="$STATE_DIR/$PR_ID.md"
 MODEL="${RALPH_MODEL:-openai/gpt-5.5}"
 AGENT="${RALPH_AGENT:-ralph-orchestrator}"
 
@@ -41,6 +42,35 @@ done
 command -v opencode >/dev/null 2>&1 || { echo "[ralph] opencode CLI not on PATH" >&2; exit 1; }
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
+# Seed the state journal so the orchestrator's unconditional Read never hits a
+# missing file (opencode aborts the whole run on a failed Read). The orchestrator
+# replaces this stub with the ORCHESTRATOR.md A.3 template on the first iteration.
+if [[ ! -f "$STATE_FILE" ]]; then
+  cat > "$STATE_FILE" <<EOF
+# Ralph state — ${PR_ID}
+
+NOT YET SEEDED — no iteration has run yet. Orchestrator: this is the FIRST
+iteration. Run the ${PR_ID}.md pre-flight (dependency sentinels, branch), then
+replace this file with the ORCHESTRATOR.md A.3 template (one task-board row per
+T-task), per A.2 step 2.
+EOF
+fi
+
+# Seed DEVIATIONS.md for the same reason (it is in the unconditional read list).
+if [[ ! -f "$STATE_DIR/DEVIATIONS.md" ]]; then
+  cat > "$STATE_DIR/DEVIATIONS.md" <<'EOF'
+# DEVIATIONS — living overlay over CONTEXT.md
+
+Read by every orchestrator and subagent together with
+`.agents/plans/eager-catmull-prs/CONTEXT.md`; on conflict, this file wins.
+One table row per deviation, appended by the PR orchestrator that produced it
+(ORCHESTRATOR.md A.4/A.2 step 5). Never rewrite or delete rows — append only.
+
+| Date | PR | Task | Fact changed (CONTEXT.md § / work-order point) | What was done instead | Why | Downstream impact |
+|---|---|---|---|---|---|---|
+EOF
+fi
+
 echo "=== Ralph Wiggum — $PR_ID ==="
 echo "work order : $PLAN_DIR/$PR_ID.md"
 echo "agent/model: $AGENT / $MODEL"
@@ -48,11 +78,31 @@ echo "max iters  : $MAX_ITERS"
 echo "git branch : $(git rev-parse --abbrev-ref HEAD)"
 echo "git status :"
 git status --short | head -20 || true
-if [[ "${RALPH_YES:-0}" != "1" ]]; then
-  echo "The working tree must already contain this PR's dependencies (see the"
-  echo "'Depends on' row in $PLAN_DIR/$PR_ID.md)."
-  read -r -p "[ralph] Launch? [Enter to start / Ctrl-C to abort] "
+if [[ "${RALPH_STEP:-0}" == "1" && ! -t 0 ]]; then
+  echo "[ralph] RALPH_STEP=1 needs an interactive terminal" >&2
+  exit 1
 fi
+if [[ "${RALPH_YES:-0}" != "1" ]]; then
+  if [[ -t 0 ]]; then
+    echo "The working tree must already contain this PR's dependencies (see the"
+    echo "'Depends on' row in $PLAN_DIR/$PR_ID.md)."
+    read -r -p "[ralph] Launch? [Enter to start / Ctrl-C to abort] "
+  else
+    echo "[ralph] no terminal for the launch confirmation — re-run with RALPH_YES=1" >&2
+    exit 1
+  fi
+fi
+
+# Stall guard: a crashed opencode run that changed nothing (no journal update, no
+# working-tree or HEAD movement) is counted as a strike; three consecutive strikes
+# abort the campaign instead of burning the remaining iteration budget.
+fingerprint() {
+  { cat "$STATE_FILE" 2>/dev/null
+    git status --porcelain 2>/dev/null
+    git rev-parse HEAD 2>/dev/null
+  } | shasum | cut -d' ' -f1
+}
+STRIKES=0
 
 for ((i = 1; i <= MAX_ITERS; i++)); do
   printf 'RUNNING\n' > "$STATUS_FILE"
@@ -62,7 +112,8 @@ Read fully, in this order:
 1. ${PLAN_DIR}/CONTEXT.md          (shared context pack; original section numbering)
 2. ${PLAN_DIR}/ORCHESTRATOR.md     (Part 2 defines this iteration's protocol)
 3. ${PLAN_DIR}/${PR_ID}.md         (your work order)
-4. ${STATE_DIR}/DEVIATIONS.md and, if present, ${STATE_DIR}/${PR_ID}.md
+4. ${STATE_DIR}/DEVIATIONS.md and ${STATE_DIR}/${PR_ID}.md (the state journal; if it
+   still says NOT YET SEEDED, this is the first iteration — see A.2 step 2)
 
 Then execute exactly ONE Ralph iteration for ${PR_ID} per ORCHESTRATOR.md Part 2
 (A.2): advance one task or one [parallel-ok] group via ralph-implementer subagents,
@@ -72,8 +123,11 @@ RUNNING for another iteration)."
 
   echo "--- iteration $i/$MAX_ITERS — $(date '+%Y-%m-%d %H:%M:%S') ---"
   LOG_FILE="$LOG_DIR/iter-$(printf '%02d' "$i").log"
-  if ! opencode run --agent "$AGENT" --model "$MODEL" "$PROMPT" 2>&1 | tee "$LOG_FILE"; then
-    echo "[ralph] opencode exited non-zero; the status file decides what happens next" >&2
+  FP_BEFORE="$(fingerprint)"
+  OC_EXIT=0
+  opencode run --agent "$AGENT" --model "$MODEL" "$PROMPT" 2>&1 | tee "$LOG_FILE" || OC_EXIT=$?
+  if (( OC_EXIT != 0 )); then
+    echo "[ralph] opencode exited $OC_EXIT; the status file decides what happens next" >&2
   fi
 
   STATUS="$(head -n 1 "$STATUS_FILE" 2>/dev/null || echo RUNNING)"
@@ -91,6 +145,18 @@ RUNNING for another iteration)."
       echo "[ralph] See $STATE_DIR/$PR_ID.md and $LOG_DIR/"
       exit 4 ;;
   esac
+
+  if (( OC_EXIT != 0 )) && [[ "$(fingerprint)" == "$FP_BEFORE" ]]; then
+    STRIKES=$((STRIKES + 1))
+    echo "[ralph] iteration $i crashed with no progress (strike $STRIKES/3)" >&2
+    if (( STRIKES >= 3 )); then
+      echo "[ralph] 3 consecutive crashed iterations without progress — aborting." >&2
+      echo "[ralph] See $LOG_DIR/ for transcripts; fix the cause, then re-run." >&2
+      exit 4
+    fi
+  else
+    STRIKES=0
+  fi
 
   if [[ "${RALPH_STEP:-0}" == "1" && $i -lt $MAX_ITERS ]]; then
     read -r -p "[ralph] iteration $i finished (status: $STATUS). Enter = next iteration, Ctrl-C = stop "

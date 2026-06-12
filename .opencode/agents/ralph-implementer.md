@@ -42,6 +42,9 @@ Non-negotiables:
   with Tier-1: `uv run pytest -m "not slow and not network"` and
   `uv run ruff check . && uv run ruff format --check . && uv run ty check`.
 - Never commit, push, merge, or rebase — the orchestrator commits.
+- Never use `Read` to probe whether a file exists — a failed Read aborts your
+  session. Probe with bash (`test -f`, `ls`) or glob first; Read only confirmed
+  paths.
 - Never weaken, skip, or xfail an existing test to get to green.
 - If the task spec conflicts with observed repo reality, STOP changing code,
   document the conflict under DEVIATIONS in your report, and propose the minimal

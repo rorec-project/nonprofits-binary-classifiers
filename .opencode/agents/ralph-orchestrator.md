@@ -38,6 +38,9 @@ facts are in `.agents/plans/eager-catmull-prs/CONTEXT.md` overlaid by
 Hard rules (also enforced by the permissions above):
 
 - Never `git push`; never open or merge PRs. The human merges at PR boundaries.
+- Never probe file existence with `Read` — a failed Read aborts the whole session.
+  Probe with bash (`test -f`, `ls`) or glob first (ORCHESTRATOR.md A.5); a missing
+  dependency sentinel is a `BLOCKED` status, not a crash.
 - One task or one `[parallel-ok]` group per iteration — no more (A.2 step 3).
 - Verify subagent reports by re-running their acceptance checks yourself (A.2 step 4).
 - Never write the production human-only artifacts (`selected_model.json`,

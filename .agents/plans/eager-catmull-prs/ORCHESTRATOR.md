@@ -76,12 +76,14 @@ shared files (`config.py`, `paths.py`, `run_pipeline.py`, `preflight.py`,
 Each iteration, in this order:
 
 1. **Read fully**: `CONTEXT.md` → this file → your `pr-N.md` →
-   `.agents/ralph/state/DEVIATIONS.md` → `.agents/ralph/state/pr-N.md` (if present).
+   `.agents/ralph/state/DEVIATIONS.md` → `.agents/ralph/state/pr-N.md` (always
+   present — the runner seeds a `NOT YET SEEDED` stub before the first iteration).
    Then inspect reality: `git status`, `git log --oneline -15`, current branch.
    If the working tree contains changes you cannot attribute to the state journal or
    git history, STOP and write `BLOCKED: unexplained working-tree state` (A.2 #7) —
    never build on unexplained state.
-2. **First iteration only** (no `state/pr-N.md`): run your `pr-N.md` pre-flight
+2. **First iteration only** (`state/pr-N.md` still contains the runner's
+   `NOT YET SEEDED` stub): run your `pr-N.md` pre-flight
    (dependency sentinels). Switch to the PR branch, creating it from the HEAD the
    human prepared if absent (`git switch <branch>` / `git switch -c <branch>`).
    Seed `state/pr-N.md` from the A.3 template (one task-board row per T-task).
@@ -118,7 +120,7 @@ Each iteration, in this order:
    what was attempted, verified results (paste test summary lines), and the exact
    next action. The next iteration's orchestrator is fresh-context — write for it.
 
-### A.3 State journal template (`state/pr-N.md`, seeded on first iteration)
+### A.3 State journal template (`state/pr-N.md` — on the first iteration the orchestrator replaces the runner's stub with this)
 
 ```markdown
 # Ralph state — pr-N (<branch>)
@@ -142,6 +144,12 @@ Each iteration, in this order:
 
 ### A.5 Honesty and safety rules (binding)
 
+- **Never probe existence with Read**: opencode aborts the whole session when a
+  `Read` targets a missing file. For pre-flight dependency sentinels, resume
+  checks, and any artifact that may legitimately be absent, probe with bash
+  (`test -f`, `ls`) or the glob tool first, and `Read` only paths the probe
+  confirmed. A missing dependency sentinel is a `BLOCKED: <what is missing>`
+  status, not a crash. Include this rule in every subagent package.
 - Never mark a task `done` without having re-run its acceptance checks in THIS
   iteration and pasted the summary lines into the journal.
 - Never weaken, skip, or xfail a test to make a gate pass — that is a `FAILED`

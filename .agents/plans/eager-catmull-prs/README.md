@@ -69,7 +69,8 @@ writes `DONE`.
 Exit codes: `0` DONE (gate passed, committed) · `2` iteration cap exhausted — review
 the journal, re-run the same command to resume (resume is state-based and safe) ·
 `3` BLOCKED on something only you can provide (the status line says what) ·
-`4` FAILED, needs your decision · `1` usage/config error.
+`4` FAILED, needs your decision (also used when 3 consecutive iterations crash
+without making any progress — the stall guard) · `1` usage/config error.
 
 ## Between PRs (the human gate)
 
