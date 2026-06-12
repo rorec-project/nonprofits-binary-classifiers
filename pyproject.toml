@@ -20,10 +20,14 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0",
   "scikit-learn>=1.9.0",
-  "torch>=2.6.0",
-  "transformers>=4.56.0,<5.0.0",
-  "vllm>=0.5.0",
+  "sentencepiece>=0.2.0",
+  "torch>=2.7.0",
+  "transformers>=5.8.0,<6.0.0",
 ]
+
+[project.optional-dependencies]
+serve = ["vllm>=0.22.0"]
+tracking = ["trackio"]
 
 [dependency-groups]
 dev = [
@@ -41,6 +45,10 @@ packages = ["src/binary_classifier"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "slow: real training loops / long E2E; excluded by default",
+  "network: requires HF Hub downloads; excluded by default",
+]
 
 [tool.ruff]
 line-length = 88

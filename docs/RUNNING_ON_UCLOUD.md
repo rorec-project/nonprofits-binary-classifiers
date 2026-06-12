@@ -53,6 +53,22 @@ set +a
 
 > **Caveat:** Variables exported inside `utils/init.sh` do **not** propagate to the interactive shell. Always source `.env` after connecting.
 
+### GPU environment
+
+B200 GPUs are Blackwell `sm_100` devices and require PyTorch 2.7 or newer from the CUDA 12.8 (`cu128`) wheel index. For training jobs, install the base environment only:
+
+```bash
+uv sync
+```
+
+Use `uv sync --extra serve` only on jobs that serve annotation models with vLLM.
+
+Before production runs, verify the CUDA build and bf16 support:
+
+```bash
+uv run python -c "import torch; print(torch.version.cuda, torch.cuda.is_bf16_supported())"
+```
+
 ## Secrets
 
 Store `OPENAI_API_KEY` (and any other secrets) in a `.env` file inside a **private `/work` Drive**. Never commit secrets to the repository.
