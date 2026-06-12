@@ -14,7 +14,9 @@ mise.*.toml
 .DS_Store
 
 # Agents
-.opencode/*
+.opencode/agents/*
+.opencode/commands/*
+.opencode/plans
 .agents/*
 .claude/*
 !.agents/architecture
@@ -22,6 +24,13 @@ mise.*.toml
 !.agents/notebooks
 !.agents/plans
 !.agents/stubs
+!.agents/ralph
+# Ralph runner: keep runner + state journals + DEVIATIONS tracked; transcripts and
+# runtime status files are ephemeral.
+.agents/ralph/logs/
+.agents/ralph/state/*.status
+!.opencode/agents/ralph-implementer.md
+!.opencode/agents/ralph-orchestrator.md
 CLAUDE.md
 
 # Data: heavy/cloud artifacts ignored; symlinks stand in for DVC until we adopt it.
