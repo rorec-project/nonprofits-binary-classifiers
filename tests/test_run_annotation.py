@@ -305,7 +305,7 @@ def test_run_annotation_canary_uses_monitor_manifest_only(
     assert audit["canary_set_version"].startswith("sha256:")
     assert audit["kappa_alpha_change_test"]["status"] == "baseline"
     assert audit["model_fingerprints"][0]["pinned_snapshot_id"] == "m1"
-    assert audit["model_fingerprints"][0]["seed"] == tiny_config.annotation.seed
+    assert audit["model_fingerprints"][0]["seed"] == tiny_config.SEED
     assert (
         audit["model_fingerprints"][0]["temperature"]
         == tiny_config.annotation.temperature
