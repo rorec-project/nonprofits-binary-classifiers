@@ -142,9 +142,9 @@ Each iteration, in this order:
 
 `| date | PR | task | fact changed (CONTEXT.md § or work-order point) | what was done instead | why | downstream impact |`
 
-Deviations are a living overlay. Rows are kept for the historical record
-even after the deviation is resolved — resolved rows have a follow-up
-entry documenting the fix.
+Deviations are a living overlay. Rows are kept for the historical record;
+resolved deviations remain documented without a separate follow-up row.
+The fix is evident from git history.
 
 ### A.5 Honesty and safety rules (binding)
 
