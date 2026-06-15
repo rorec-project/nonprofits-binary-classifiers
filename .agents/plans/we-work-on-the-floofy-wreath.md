@@ -276,3 +276,42 @@ The empirical basis for the sampling design — the **full mission-quality chara
 ## Housekeeping notes for the user
 
 - Optional upstream ask: lift the ~1000-char `LONGEST_MISSION` truncation in `NonProfitData` (affects ~0.75% of rows).
+
+---
+
+## Superseded decisions (June 2026)
+
+This memo supersedes the point-3 training stub above where it conflicts with the
+stage-05→11 roadmap now tracked for PR-2 and later PRs.
+
+- **Training-size sweep replaced.** The old `{0.5k, 1k, 2k, 4k, 8k,
+  16k}` learning-curve sweep is dropped. Stage 06 trains on the full available
+  silver pool by default and records only a lightweight documentation curve at
+  `{25%, 50%, 100%}` with one seed per fraction. This matches the current
+  evidence that LLM-label distillation saturates early because systematic LLM
+  bias, not silver-label volume, becomes binding (arXiv:2504.15432). The curve
+  is documentation for the sample-size decision, not a broad model-selection
+  search; report it in the spirit of transparent design documentation (Card et
+  al. 2020).
+- **Encoder grid reduced.** RoBERTa-base and DistilBERT are removed from the
+  encoder grid. Stage 06 compares **DeBERTa-v3-base** as the primary encoder
+  against **ModernBERT-base** for throughput-sensitive deployment, with TF-IDF
+  and MiniLM baselines covering the cheap floor. The reduction follows the
+  DeBERTa-v3 vs. ModernBERT controlled-study evidence (arXiv:2504.08716) and
+  keeps the experiment grid small enough for repeated seeded runs.
+- **Soft labels become the default training target.** Stage 06 should train on
+  vote-share soft targets by default, with the hard-majority-vote arm retained
+  as the required check. This follows the §4.3 training-recipe evidence: soft
+  targets match hard labels on accuracy and improve calibration, while LLM vote
+  shares remain optimistically concentrated because the sources are correlated.
+- **Skip-list methods stay out of implementation.** Do not implement label
+  smoothing, focal loss/resampling, or confidence-weighted loss in the default
+  PR-2 training work. Label smoothing is redundant with soft targets and can
+  harm probability ranking; focal/resampling is the wrong imbalance treatment
+  for the planned prevalence/calibration use case; confidence-weighted loss is
+  redundant with the soft-target representation. Co-teaching/loss-filtering and
+  SiDyP-style methods remain frontier references only, not Stage 06 arms.
+- **Roadmap pointer.** The active staged plan is now: 05 anchor sample, 06
+  training, 07 evaluation, 08 inference, 09 prevalence, 10 visualization, and
+  11 aggregation comparison. README and configuration docs should point readers
+  at these stages and this memo rather than the old broad sweep.

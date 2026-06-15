@@ -243,23 +243,113 @@ class QCConfig(BaseModel):
     abstain_on_fabricated_positive: bool = False
 
 
-class TrainingConfig(BaseModel):
-    """Stubs for the fine-tuning stage (point 3 in the roadmap).
+TrainingArm = Literal["hard", "pruned", "class_weighted"]
+BaselineName = Literal["tfidf_logreg", "minilm_logreg"]
 
-    These values are placeholders; the actual hyperparameters will be chosen
-    empirically via the learning-curve sweep and best-model selection on the
-    human validation set.
+
+def _default_training_arms() -> list[TrainingArm]:
+    """Return the default training-data variants for the sweep."""
+    return ["hard", "pruned", "class_weighted"]
+
+
+def _default_curve_fractions() -> list[float]:
+    """Return the default learning-curve fractions."""
+    return [0.25, 0.5, 1.0]
+
+
+def _default_sweep_seeds() -> list[int]:
+    """Return the default model-selection seeds."""
+    return [42, 43, 44]
+
+
+def _default_final_seeds() -> list[int]:
+    """Return the default final-refit seeds."""
+    return [42, 43, 44, 45, 46]
+
+
+def _default_baselines() -> list[BaselineName]:
+    """Return the default baseline model families."""
+    return ["tfidf_logreg", "minilm_logreg"]
+
+
+class EncoderArm(BaseModel):
+    """Encoder model participating in the training comparison slate.
+
+    Attributes:
+        id: HuggingFace model identifier for the encoder.
+        arm: Whether this encoder is the primary production candidate or a
+            comparison arm.
+        max_length: Maximum tokenized sequence length for training/evaluation.
+
     """
 
-    learning_rate: float = 5e-5
-    batch_size: int = 16
+    id: str
+    arm: Literal["primary", "comparison"] = "comparison"
+    max_length: int = 256
+
+
+class TrainingConfig(BaseModel):
+    """Fine-tuning, baseline, and learning-curve configuration.
+
+    Attributes:
+        dev_fraction: Fraction of silver labels reserved for development during
+            training-data construction.
+        targets: Whether encoder training consumes soft aggregate scores or hard
+            labels.
+        arms: Training-data variants included in the learning-curve sweep.
+        curve_fractions: Fractions of available training data used for learning
+            curve comparisons.
+        sweep_seeds: Random seeds used during the model-selection sweep.
+        final_seeds: Random seeds used for final model refits.
+        crossfit_folds: Number of folds for cross-fit silver-label prediction.
+        encoders: Encoder slate evaluated by the training stage.
+        baselines: Baseline model families evaluated alongside encoders.
+        minilm_id: Sentence-transformer id for the MiniLM logistic baseline.
+        learning_rate: Optimizer learning rate for encoder fine-tuning.
+        batch_size: Per-device training batch size.
+        epochs: Maximum number of training epochs.
+        weight_decay: Optimizer weight decay.
+        warmup_fraction: Fraction of training steps used for learning-rate
+            warmup.
+        early_stopping_patience: Validation checks without improvement before
+            stopping.
+        metric_for_best_model: Validation metric used for checkpoint selection.
+        greater_is_better: Whether larger values of the selection metric are
+            preferred.
+        save_total_limit: Maximum checkpoints retained per training run.
+        precision: Numeric precision policy for encoder fine-tuning.
+        device: Compute device selection policy.
+        report_to: External training loggers enabled for trainer integrations.
+
+    """
+
+    dev_fraction: float = 0.1
+    targets: Literal["soft", "hard"] = "soft"
+    arms: list[TrainingArm] = Field(default_factory=_default_training_arms)
+    curve_fractions: list[float] = Field(default_factory=_default_curve_fractions)
+    sweep_seeds: list[int] = Field(default_factory=_default_sweep_seeds)
+    final_seeds: list[int] = Field(default_factory=_default_final_seeds)
+    crossfit_folds: int = 5
+    encoders: list[EncoderArm] = Field(
+        default_factory=lambda: [
+            EncoderArm(id="microsoft/deberta-v3-base", arm="primary"),
+            EncoderArm(id="answerdotai/ModernBERT-base", arm="comparison"),
+        ],
+    )
+    baselines: list[BaselineName] = Field(default_factory=_default_baselines)
+    minilm_id: str = "sentence-transformers/all-MiniLM-L6-v2"
+    learning_rate: float = 2e-5
+    batch_size: int = 32
     epochs: int = 10
     weight_decay: float = 0.01
+    warmup_fraction: float = 0.06
+    early_stopping_patience: int = 4
     metric_for_best_model: str = "pr_auc"
     greater_is_better: bool = True
-    early_stopping_patience: int = 4
     save_total_limit: int = 2
-    fp16: bool = True
+    precision: Literal["auto", "bf16", "fp32"] = "auto"
+    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
+    report_to: list[str] = Field(default_factory=list)
 
 
 class BinaryClassifierConfig(BaseModel):
@@ -281,7 +371,7 @@ class BinaryClassifierConfig(BaseModel):
         annotation: LLM annotation hyperparameters.
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
-        training: Fine-tuning hyperparameter stubs.
+        training: Fine-tuning, baseline, and learning-curve settings.
 
     """
 

@@ -34,6 +34,7 @@ _STAGE_MODULES = {
     "03": ("binary_classifier.annotate.run_annotation", "run_annotation"),
     "04": ("binary_classifier.qc.agreement", "run_quality_check"),
     "05": ("binary_classifier.data.anchor", "build_anchor"),
+    "06": ("binary_classifier.train.trainer", "run_training"),
 }
 
 # Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
@@ -46,7 +47,7 @@ _GATE_EXIT = 2
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
-        "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor sample) "
+        "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor → 06 train) "
         "with human gates.",
     )
     parser.add_argument(
@@ -169,8 +170,8 @@ def run_pipeline(
             )
             sys.exit(_GATE_EXIT)
 
-    # Stages 03, 04, and 05 — annotation, QC freeze, and anchor sampling.
-    for stage_id in ("03", "04", "05"):
+    # Stages 03–06 — annotation, QC freeze, anchor sampling, and training.
+    for stage_id in ("03", "04", "05", "06"):
         if stage_id in requested:
             print(f"Running stage {stage_id} ...")
             _run_stage(stage_id, cfg, registry, annotate_limit, force)

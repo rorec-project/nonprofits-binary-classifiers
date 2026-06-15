@@ -2,7 +2,7 @@
 
 A reproducible, config-driven binary text classifier for US nonprofit missions. The pipeline labels short text records as religious (`1`) vs. non-religious (`0`) using LLM-as-primary annotation, aggregates noisy labels across a multi-model × multi-prompt ensemble, and is designed to fine-tune modern encoder models on the resulting silver dataset in a later stage. Designed for extensibility beyond the religious task to pregnancy centers, education, international aid, and other nonprofit sectors.
 
-> **Status:** Stages 01–04 are implemented: sampling, bake-off, annotation, and QC/freeze. Training, evaluation, inference-at-scale, and visualization remain roadmap work. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
+> **Status:** Stages 01–04 are implemented: sampling, bake-off, annotation, and QC/freeze. Stages 05–11 are roadmap work: anchor sample, training, evaluation, inference-at-scale, prevalence, visualization, and aggregation comparison. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
 
 ## Architecture
 
@@ -218,10 +218,37 @@ This framing is deliberate: the current pipeline optimizes annotation and QC on 
 
 ## Roadmap (not built yet)
 
-- **Population share over all nonprofits:** add a representative anchor sample drawn at the real prior over the full frame, including LOW-quality rows, then combine it with the rule-layer LOW mass. Primary estimator: PPI++ (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks (Saerens, Latinne & Decaestecker 2002; QuaPy) and per-NTEE-stratum calibration where prior-shift assumptions are fragile.
-- **Fine-tuning stage:** default encoder target is DeBERTa-v3-base; ModernBERT remains a throughput-driven comparison arm only if large-scale inference speed becomes binding. Planned upgrades include soft-label or confidence-weighted training, label smoothing, and `bf16` on Blackwell B200 hardware (DeBERTa-v3 vs ModernBERT controlled study arXiv:2504.08716; NVIDIA).
-- **Evaluation stage:** keep minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, and bootstrap intervals, then add decision-curve / net-benefit analysis plus ECE calibration reporting (Vickers & Elkin 2006).
-- **Weak-supervision upgrades:** uncertainty-weighted aggregation and classifier-assisted evidence-checking remain gated roadmap arms; they should only be adopted if they beat the current majority-vote baseline on the human held-out data.
+The detailed decision record lives in
+`.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
+**Superseded decisions (June 2026)** memo. That memo replaces the old broad
+training sweep with the staged plan below.
+
+- **Stage 05 — anchor sample:** draw a representative anchor sample at the real
+  prior over the full frame, including LOW-quality rows, so later prevalence
+  estimates do not treat the HIGH+MEDIUM silver/gold frame as population
+  representative.
+- **Stage 06 — training:** train on the full silver pool by default and keep only
+  a `{25%, 50%, 100%}` one-seed documentation curve. Use soft vote-share labels
+  as the default target, retain hard majority vote as the check, and compare
+  DeBERTa-v3-base with ModernBERT-base plus TF-IDF/MiniLM baselines. RoBERTa,
+  DistilBERT, label smoothing, focal/resampling, and confidence-weighted loss
+  are intentionally skipped.
+- **Stage 07 — evaluation:** report minority-class precision/recall/F1, MCC,
+  balanced accuracy, PR-AUC, bootstrap intervals, and calibration metrics, then
+  add decision-curve / net-benefit analysis where useful.
+- **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows,
+  route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist
+  model-version metadata with positive-class probabilities.
+- **Stage 09 — prevalence:** estimate population share over all nonprofits with
+  PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
+  arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks and
+  per-NTEE-stratum calibration where prior-shift assumptions are fragile.
+- **Stage 10 — visualization:** produce auditable n-gram log-odds bars plus
+  metric and calibration plots.
+- **Stage 11 — aggregation comparison:** evaluate cleanlab/crowd-kit,
+  uncertainty-weighted aggregation, and classifier-assisted evidence-checking as
+  gated comparison arms; adopt only if they beat majority vote on the human
+  held-out data.
 
 ## UCloud runtime
 

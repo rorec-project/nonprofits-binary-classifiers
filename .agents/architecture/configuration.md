@@ -54,10 +54,34 @@ No source edits, provided the upstream parquet exposes the chosen `field`.
 
 ## Roadmap hooks (documented, not built)
 
-- **Population share over all nonprofits:** add a representative anchor sample over the full frame, including LOW-quality rows, and estimate prevalence with PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks (Saerens, Latinne & Decaestecker 2002; QuaPy) plus per-NTEE-stratum calibration.
-- **Fine-tuning:** default encoder target is DeBERTa-v3-base, with ModernBERT reserved for throughput-sensitive comparisons. Planned training upgrades include soft-label or confidence-weighted losses, label smoothing, and `bf16` on Blackwell B200 hardware (DeBERTa-v3 vs ModernBERT controlled study arXiv:2504.08716; NVIDIA).
-- **Evaluation:** extend the current metric bundle with decision-curve / net-benefit analysis and ECE calibration reporting (Vickers & Elkin 2006).
-- **Future weak-supervision arms:** uncertainty-weighted aggregation and classifier-assisted evidence verification remain gated comparison arms; each should only ship if it beats the current majority-vote baseline on the human held-out set.
+- The active staged roadmap is recorded in
+  `.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
+  **Superseded decisions (June 2026)** memo. That memo replaces the old broad
+  training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
+- **Stage 05 — anchor sample:** add a representative anchor sample over the full
+  frame, including LOW-quality rows, so population prevalence can be estimated
+  without treating the HIGH+MEDIUM silver/gold frame as representative.
+- **Stage 06 — training:** train on the full silver pool by default, record only
+  a `{25%, 50%, 100%}` one-seed documentation curve, use soft vote-share targets
+  by default with hard majority vote as the check, and compare DeBERTa-v3-base
+  against ModernBERT-base plus TF-IDF/MiniLM baselines. Label smoothing,
+  focal/resampling, and confidence-weighted loss are intentionally skipped.
+- **Stage 07 — evaluation:** keep minority-class precision/recall/F1, MCC,
+  balanced accuracy, PR-AUC, bootstrap intervals, and calibration reporting,
+  then add decision-curve / net-benefit analysis where useful.
+- **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows,
+  route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist
+  model-version metadata with positive-class probabilities.
+- **Stage 09 — prevalence:** estimate population share over all nonprofits with
+  PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
+  arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks plus
+  per-NTEE-stratum calibration.
+- **Stage 10 — visualization:** replace exploratory word clouds with auditable
+  n-gram log-odds bars and metric/calibration plots.
+- **Stage 11 — aggregation comparison:** keep uncertainty-weighted aggregation,
+  cleanlab/crowd-kit alternatives, and classifier-assisted evidence verification
+  as gated comparison arms that must beat majority vote on the human held-out
+  set before adoption.
 
 ## Related
 

@@ -77,12 +77,31 @@ qc:
   f1_ci_floor: 0.70
 
 training:
-  learning_rate: 5.0e-5
-  batch_size: 16
+  dev_fraction: 0.1
+  targets: soft
+  arms: [hard, pruned, class_weighted]
+  curve_fractions: [0.25, 0.5, 1.0]
+  sweep_seeds: [42, 43, 44]
+  final_seeds: [42, 43, 44, 45, 46]
+  crossfit_folds: 5
+  encoders:
+    - id: microsoft/deberta-v3-base
+      arm: primary
+      max_length: 256
+    - id: answerdotai/ModernBERT-base
+      arm: comparison
+      max_length: 256
+  baselines: [tfidf_logreg, minilm_logreg]
+  minilm_id: sentence-transformers/all-MiniLM-L6-v2
+  learning_rate: 2.0e-5
+  batch_size: 32
   epochs: 10
   weight_decay: 0.01
+  warmup_fraction: 0.06
+  early_stopping_patience: 4
   metric_for_best_model: pr_auc
   greater_is_better: true
-  early_stopping_patience: 4
   save_total_limit: 2
-  fp16: true
+  precision: auto
+  device: auto
+  report_to: []
