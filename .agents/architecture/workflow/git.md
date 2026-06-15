@@ -34,6 +34,12 @@ All commits must follow **Conventional Commits** for clear history and automated
 - No period at end
 - Max 50 characters
 
+### No automatic attribution trailers
+
+Do **not** add `Co-Authored-By`, `Signed-off-by`, or any other automatic attribution
+trailer to commit messages. The human author controls all footers. AI agents must
+omit attribution trailers entirely.
+
 ### Examples
 
 ```
