@@ -142,10 +142,9 @@ Each iteration, in this order:
 
 `| date | PR | task | fact changed (CONTEXT.md § or work-order point) | what was done instead | why | downstream impact |`
 
-Deviations are a living overlay. When a deviation is resolved (the
-underlying code change is committed), the corresponding row is removed
-from the table. Historical rows are not preserved — the file reflects
-only active deviations.
+Deviations are a living overlay. Rows are kept for the historical record
+even after the deviation is resolved — resolved rows have a follow-up
+entry documenting the fix.
 
 ### A.5 Honesty and safety rules (binding)
 
