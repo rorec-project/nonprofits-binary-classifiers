@@ -128,12 +128,22 @@ class PathRegistry:
         """
         return self.interim_dir / "manifests" / "monitor_manifest.csv"
 
+    @property
+    def anchor_manifest(self) -> Path:
+        """EIN2 manifest for the full-frame anchor sample."""
+        return self.interim_dir / "manifests" / "anchor_manifest.csv"
+
     # ── Human-coding & slate artifacts ───────────────────────────────────────
 
     @property
     def gold_coding_template(self) -> Path:
         """In-place human-coding template (EIN2, split, text, human_label)."""
         return self.gold_dir / "gold_to_code.csv"
+
+    @property
+    def anchor_coding_template(self) -> Path:
+        """In-place human-coding template for the anchor sample."""
+        return self.gold_dir / "anchor_to_code.csv"
 
     @property
     def proposed_slate(self) -> Path:
@@ -144,6 +154,16 @@ class PathRegistry:
     def production_slate(self) -> Path:
         """Human-confirmed production slate (committed); gate G2 requires it."""
         return self.gold_dir / "production_slate.json"
+
+    @property
+    def selected_model(self) -> Path:
+        """Human-confirmed selected model artifact."""
+        return self.gold_dir / "selected_model.json"
+
+    @property
+    def test_unlock(self) -> Path:
+        """Human-confirmed test-unlock artifact."""
+        return self.gold_dir / "test_unlock.json"
 
     @property
     def bakeoff_results(self) -> Path:
@@ -167,6 +187,106 @@ class PathRegistry:
         """Directory containing built-in prompt text files."""
         return self._root / "src" / "binary_classifier" / "annotate" / "prompts"
 
+    @property
+    def silver_labels(self) -> Path:
+        """Aggregated silver labels for downstream training."""
+        return self.processed_dir / "silver_labels.csv"
+
+    @property
+    def runs_dir(self) -> Path:
+        """Directory for training sweep run artifacts."""
+        return self.models_dir / "runs"
+
+    @property
+    def checkpoints_dir(self) -> Path:
+        """Directory for model checkpoints."""
+        return self.models_dir / "checkpoints"
+
+    @property
+    def learning_curve_results(self) -> Path:
+        """JSONL learning-curve results artifact."""
+        return self.runs_dir / "results.jsonl"
+
+    @property
+    def selection_report(self) -> Path:
+        """Model-selection report artifact."""
+        return self.models_dir / "selection_report.json"
+
+    @property
+    def oof_pred_probs(self) -> Path:
+        """Out-of-fold prediction probabilities for training rows."""
+        return self.interim_dir / "oof_pred_probs.parquet"
+
+    @property
+    def embeddings_dir(self) -> Path:
+        """Directory for cached text embeddings."""
+        return self.interim_dir / "embeddings"
+
+    @property
+    def evaluation_dir(self) -> Path:
+        """Directory for evaluation artifacts."""
+        return self.processed_dir / "evaluation"
+
+    @property
+    def test_evaluation(self) -> Path:
+        """Frozen test-set evaluation report."""
+        return self.evaluation_dir / "test_evaluation.json"
+
+    @property
+    def calibrator_path(self) -> Path:
+        """Persisted calibration model artifact."""
+        return self.evaluation_dir / "calibrator.json"
+
+    @property
+    def anchor_oof_scores(self) -> Path:
+        """Out-of-fold scores for anchor rows."""
+        return self.evaluation_dir / "anchor_oof_scores.parquet"
+
+    @property
+    def rule_validation(self) -> Path:
+        """Rule-layer validation report."""
+        return self.evaluation_dir / "rule_validation.json"
+
+    @property
+    def predictions_dir(self) -> Path:
+        """Directory for inference-at-scale predictions."""
+        return self.processed_dir / "predictions"
+
+    @property
+    def predictions_parquet(self) -> Path:
+        """Full predictions parquet artifact."""
+        return self.predictions_dir / "predictions.parquet"
+
+    @property
+    def monitor_scores(self) -> Path:
+        """Monitor-slice prediction scores."""
+        return self.predictions_dir / "monitor_scores.json"
+
+    @property
+    def prevalence_dir(self) -> Path:
+        """Directory for prevalence-estimation artifacts."""
+        return self.processed_dir / "prevalence"
+
+    @property
+    def prevalence_report(self) -> Path:
+        """Prevalence-estimation report."""
+        return self.prevalence_dir / "prevalence_report.json"
+
+    @property
+    def prevalence_by_ntee(self) -> Path:
+        """Prevalence estimates grouped by NTEE major group."""
+        return self.prevalence_dir / "prevalence_by_ntee.csv"
+
+    @property
+    def figures_dir(self) -> Path:
+        """Directory for generated figures."""
+        return self.processed_dir / "figures"
+
+    @property
+    def aggregation_compare(self) -> Path:
+        """Aggregation-comparison diagnostics artifact."""
+        return self.interim_dir / "aggregation_compare.json"
+
     # ── Convenience helpers ──────────────────────────────────────────────────
 
     def ensure_dirs(self) -> None:
@@ -175,8 +295,15 @@ class PathRegistry:
             self.interim_dir / "manifests",
             self.bakeoff_dir,
             self.models_dir,
+            self.runs_dir,
+            self.checkpoints_dir,
             self.gold_dir,
             self.interim_dir,
+            self.embeddings_dir,
             self.processed_dir,
+            self.evaluation_dir,
+            self.predictions_dir / "shards",
+            self.prevalence_dir,
+            self.figures_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)

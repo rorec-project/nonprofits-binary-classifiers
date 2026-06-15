@@ -9,7 +9,8 @@ from binary_classifier.annotate.schema import (
     LabelRecord,
     SourceType,
 )
-from binary_classifier.qc.agreement import run_quality_check
+from binary_classifier.metrics import compute_metric_bundle
+from binary_classifier.qc.agreement import _compute_metrics, run_quality_check
 
 
 def _seed_store(registry, rows, confidence=0.9) -> None:
@@ -71,6 +72,52 @@ def _write_validation(registry, rows) -> None:
     pd.DataFrame(
         [{"EIN2": e, "split": "validation"} for e, _ in rows]
     ).to_csv(registry.gold_manifest, index=False)
+
+
+def test_metric_bundle_matches_agreement_private_api() -> None:
+    valid = pd.DataFrame(
+        {
+            "EIN2": ["00-1", "00-2", "00-3", "00-4"],
+            "human_label": [1, 0, 1, 0],
+            "silver_label": [1, 0, 0, 0],
+            "silver_confidence": [0.9, 0.2, 0.4, 0.1],
+        }
+    )
+
+    old_api = _compute_metrics(valid, seed=123)
+    new_api = compute_metric_bundle(
+        valid["human_label"].to_numpy(),
+        valid["silver_label"].to_numpy(),
+        y_score=valid["silver_confidence"].to_numpy(),
+        minority_class=old_api["minority_class"],
+        seed=123,
+    )
+
+    assert old_api == new_api
+
+
+def test_metric_bundle_roc_auc_present_only_with_scores() -> None:
+    y_true = [0, 1, 1, 0]
+    y_pred = [0, 1, 0, 0]
+
+    with_scores = compute_metric_bundle(
+        y_true,
+        y_pred,
+        y_score=[0.1, 0.9, 0.4, 0.2],
+        minority_class=0,
+        seed=123,
+        n_resamples=10,
+    )
+    without_scores = compute_metric_bundle(
+        y_true,
+        y_pred,
+        minority_class=0,
+        seed=123,
+        n_resamples=10,
+    )
+
+    assert with_scores["roc_auc"] == pytest.approx(1.0)
+    assert "roc_auc" not in without_scores
 
 
 def test_gate_passes_returns_full_metrics(tiny_config, tiny_registry) -> None:

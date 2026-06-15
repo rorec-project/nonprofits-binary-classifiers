@@ -1,12 +1,15 @@
 """Pre-flight gates that fail gracefully before any GPU/API work.
 
-Two human checkpoints guard the pipeline:
+Human checkpoints guard the pipeline:
 
 * **G1 (labels)** — before stage 02, every label-dependent requested stage must
   have its human coding complete: ``prompt_dev`` for stage 02, ``validation``
-  for stage 04. ``human_label`` is strict ``{0, 1}`` (no human abstain).
+  for stages 04/06, and ``test`` for stage 07. ``human_label`` is strict
+  ``{0, 1}`` (no human abstain).
 * **G2 (slate)** — before stage 03, a human-confirmed ``production_slate.json``
   must exist and list at least one model resolvable to a configured candidate.
+* **G4 (anchor labels)** — before stages 07/09, the anchor coding template must
+  exist and every anchor row must have a strict ``{0, 1}`` human label.
 
 :func:`validate_gates` is a pure check returning a list of human-readable
 problems; the orchestrator decides when to call it and exits non-zero on any
@@ -25,9 +28,15 @@ if TYPE_CHECKING:
     from binary_classifier.paths import PathRegistry
 
 # Which human split each label-dependent stage needs coded.
-_STAGE_SPLITS: dict[str, str] = {"02": "prompt_dev", "04": "validation"}
+_STAGE_SPLITS: dict[str, str] = {
+    "02": "prompt_dev",
+    "04": "validation",
+    "06": "validation",
+    "07": "test",
+}
 
 _TEMPLATE_COLS = {"EIN2", "split", "text", "human_label"}
+_ANCHOR_TEMPLATE_COLS = {"EIN2", "tier", "text", "human_label"}
 
 
 def validate_gates(
@@ -57,6 +66,10 @@ def validate_gates(
     # G2 — confirmed production slate (stage 03 only).
     if "03" in stages:
         problems.extend(_validate_slate(cfg, registry))
+
+    # G4 — anchor labels for anchor-dependent stages.
+    if stages & {"07", "09"}:
+        problems.extend(_validate_anchor_labels(cfg, registry))
 
     return problems
 
@@ -103,6 +116,64 @@ def _validate_labels(registry: "PathRegistry", needed_splits: list[str]) -> list
                 f"G1: '{split}' has {n_bad}/{len(sub)} row(s) with a blank or "
                 f"non-{{0,1}} human_label (strict 0/1 required, no abstain).",
             )
+
+    return problems
+
+
+# ── G4: anchor human labels ──────────────────────────────────────────────────
+
+
+def _validate_anchor_labels(
+    cfg: "BinaryClassifierConfig",
+    registry: "PathRegistry",
+) -> list[str]:
+    """Check that the anchor coding template exists and is fully coded.
+
+    Args:
+        cfg: Validated configuration object (reserved for future G4 checks).
+        registry: Path registry with resolved artifact paths.
+
+    Returns:
+        A list of G4 problem strings. Empty means the anchor labels are complete.
+
+    """
+    _ = cfg
+    path = registry.anchor_coding_template
+    if not path.exists():
+        return [
+            f"G4: anchor coding template not found at {path}. Run stage 05, then "
+            "code human_label (0/1) for every anchor row.",
+        ]
+
+    df = pd.read_csv(path)
+    missing_cols = _ANCHOR_TEMPLATE_COLS - set(df.columns)
+    if missing_cols:
+        return [f"G4: {path} missing columns {sorted(missing_cols)}."]
+
+    problems: list[str] = []
+
+    if registry.anchor_manifest.exists():
+        manifest = pd.read_csv(registry.anchor_manifest)
+        if "EIN2" not in manifest.columns:
+            problems.append(f"G4: {registry.anchor_manifest} missing column 'EIN2'.")
+        else:
+            manifest_eins = set(manifest["EIN2"].astype(str).str.strip())
+            template_eins = set(df["EIN2"].astype(str).str.strip())
+            if template_eins != manifest_eins:
+                n_extra = len(template_eins - manifest_eins)
+                n_missing = len(manifest_eins - template_eins)
+                problems.append(
+                    f"G4: {path} EIN2 set does not match "
+                    f"{registry.anchor_manifest} ({n_extra} extra, "
+                    f"{n_missing} missing).",
+                )
+
+    n_bad = sum(not _is_strict_binary(v) for v in df["human_label"])
+    if n_bad:
+        problems.append(
+            f"G4: anchor template has {n_bad}/{len(df)} row(s) with a blank or "
+            "non-{0,1} human_label (strict 0/1 required, no abstain).",
+        )
 
     return problems
 

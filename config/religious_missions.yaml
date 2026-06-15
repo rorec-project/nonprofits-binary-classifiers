@@ -51,6 +51,11 @@ sample_sizes:
   prompt_dev: 50
   monitor: 50
 
+anchor:
+  n: 500
+  oversample_low_factor: 1.5
+  min_stratum_frame: 200
+
 annotation:
   temperature: 0.0
   max_retries: 5

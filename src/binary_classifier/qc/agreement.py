@@ -19,18 +19,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (
-    average_precision_score,
-    balanced_accuracy_score,
-    cohen_kappa_score,
-    confusion_matrix,
-    f1_score,
-    matthews_corrcoef,
-    precision_recall_fscore_support,
-)
 
 from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.schema import AnnotationStore
+from binary_classifier.metrics import bootstrap_ci, compute_metric_bundle
 from binary_classifier.qc.evidence import (
     abstain_fabricated_positives,
     verify_evidence_spans,
@@ -77,7 +69,7 @@ def run_quality_check(
         human_validation_path: Coded human labels. Defaults to the gold coding
             template; the ``validation`` split (``EIN2, human_label``) is used.
         output_path: Where to write the frozen silver labels.
-            Defaults to ``processed_dir / "silver_labels.csv"``.
+            Defaults to ``registry.silver_labels``.
 
     Returns:
         Dict with ``agreement``, ``n_total``, ``n_abstain``, ``n_valid``,
@@ -96,7 +88,7 @@ def run_quality_check(
     if store_path is None:
         store_path = registry.annotation_store
     if output_path is None:
-        output_path = registry.processed_dir / "silver_labels.csv"
+        output_path = registry.silver_labels
     if human_validation_path is None:
         human_validation_path = registry.gold_coding_template
 
@@ -343,14 +335,11 @@ def _exclude_gold_manifest_ein2s(
 
 
 def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
-    """Compute the full sklearn metric bundle on the validation overlap.
-
-    The QC gate now uses chance-corrected agreement plus the lower bound of the
-    minority-class F1 bootstrap interval, so this bundle keeps the raw agreement
-    diagnostics and the gate-driving quantities together for logging and tests.
+    """Compute the full metric bundle on the validation overlap.
 
     Args:
         valid: DataFrame with ``silver_label`` and ``human_label`` columns.
+        seed: Seed for bootstrap resampling.
 
     Returns:
         Dict with all computed metrics.
@@ -359,99 +348,24 @@ def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
     y_true = valid["human_label"].astype(int).to_numpy()
     y_pred = valid["silver_label"].astype(int).to_numpy()
 
-    # Confusion matrix
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-
     # Determine minority class
     counts = np.bincount(y_true)
     minority_class = int(np.argmin(counts))
 
-    # Precision, recall, F1 for both classes; report minority explicitly
-    precisions, recalls, f1s, _ = precision_recall_fscore_support(
-        y_true,
-        y_pred,
-        labels=[0, 1],
-        zero_division=0,
-    )
-    precision = float(precisions[minority_class])
-    recall = float(recalls[minority_class])
-    f1 = float(f1s[minority_class])
-
-    mcc = float(matthews_corrcoef(y_true, y_pred))
-    balanced_acc = float(balanced_accuracy_score(y_true, y_pred))
-    kappa = float(cohen_kappa_score(y_true, y_pred))
-    alpha = _krippendorff_alpha_nominal_two_raters(y_true, y_pred)
-
-    # PR-AUC when confidence scores exist
-    pr_auc = None
+    y_score = None
     if (
         "silver_confidence" in valid.columns
         and valid["silver_confidence"].notna().any()
     ):
-        scores = valid["silver_confidence"].astype(float).to_numpy()
-        mask = ~np.isnan(scores)
-        if mask.any():
-            pr_auc = float(average_precision_score(y_true[mask], scores[mask]))
+        y_score = valid["silver_confidence"].astype(float).to_numpy()
 
-    # Bootstrap CI
-    bootstrap_ci = _bootstrap_ci(y_true, y_pred, minority_class, seed=seed)
-
-    return {
-        "confusion_matrix": {
-            "tn": int(tn),
-            "fp": int(fp),
-            "fn": int(fn),
-            "tp": int(tp),
-        },
-        "minority_class": minority_class,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "mcc": mcc,
-        "balanced_accuracy": balanced_acc,
-        "cohens_kappa": kappa,
-        "krippendorff_alpha": alpha,
-        "pr_auc": pr_auc,
-        "bootstrap_ci": bootstrap_ci,
-    }
-
-
-def _krippendorff_alpha_nominal_two_raters(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-) -> float:
-    """Compute nominal Krippendorff's alpha for two validation label vectors.
-
-    The validation gate currently compares pairwise-complete human and silver
-    labels, but alpha is reported alongside κ because it extends naturally to
-    missing/abstaining annotators if the gate later admits those cells
-    (Krippendorff's alpha).
-
-    Args:
-        y_true: Human validation labels.
-        y_pred: Silver labels aligned to ``y_true``.
-
-    Returns:
-        Krippendorff's alpha for nominal labels, or ``nan`` when no labels are
-        available.
-
-    """
-    if len(y_true) == 0:
-        return float("nan")
-
-    observed_disagreement = float(np.mean(y_true != y_pred))
-    pooled = np.concatenate([y_true, y_pred])
-    labels = np.unique(pooled)
-
-    # For two complete raters, nominal alpha is 1 minus observed disagreement over
-    # chance disagreement computed from the pooled label distribution.
-    expected_agreement = sum(
-        float((np.sum(pooled == label) / len(pooled)) ** 2) for label in labels
+    return compute_metric_bundle(
+        y_true,
+        y_pred,
+        y_score=y_score,
+        minority_class=minority_class,
+        seed=seed,
     )
-    expected_disagreement = 1 - expected_agreement
-    if expected_disagreement == 0.0:
-        return 1.0 if observed_disagreement == 0.0 else 0.0
-    return float(1 - observed_disagreement / expected_disagreement)
 
 
 def _bootstrap_ci(
@@ -462,16 +376,13 @@ def _bootstrap_ci(
     n_resamples: int = 1000,
     confidence_level: float = 0.95,
 ) -> dict:
-    """Bootstrap confidence intervals for accuracy and minority-class F1.
-
-    The minority-F1 lower bound is the variance-aware half of the freeze gate,
-    preventing a high point estimate from freezing labels when validation
-    uncertainty remains too wide.
+    """Delegate to the shared bootstrap confidence-interval helper.
 
     Args:
         y_true: Ground-truth labels.
         y_pred: Predicted labels.
         minority_class: The class to report F1 for.
+        seed: Seed for bootstrap resampling.
         n_resamples: Number of bootstrap resamples.
         confidence_level: Confidence level (e.g. 0.95).
 
@@ -480,35 +391,14 @@ def _bootstrap_ci(
         ``lower`` and ``upper``.
 
     """
-    rng = np.random.default_rng(seed=seed)
-    n = len(y_true)
-    accs = np.empty(n_resamples, dtype=float)
-    f1s = np.empty(n_resamples, dtype=float)
-
-    for i in range(n_resamples):
-        idx = rng.integers(0, n, size=n)
-        accs[i] = float(np.mean(y_true[idx] == y_pred[idx]))
-        f1s[i] = f1_score(
-            y_true[idx],
-            y_pred[idx],
-            pos_label=minority_class,
-            zero_division=0,
-        )
-
-    alpha = 1 - confidence_level
-    lower_p = alpha / 2 * 100
-    upper_p = (1 - alpha / 2) * 100
-
-    return {
-        "accuracy": {
-            "lower": float(np.percentile(accs, lower_p)),
-            "upper": float(np.percentile(accs, upper_p)),
-        },
-        "minority_f1": {
-            "lower": float(np.percentile(f1s, lower_p)),
-            "upper": float(np.percentile(f1s, upper_p)),
-        },
-    }
+    return bootstrap_ci(
+        y_true,
+        y_pred,
+        minority_class,
+        seed=seed,
+        n_resamples=n_resamples,
+        confidence_level=confidence_level,
+    )
 
 
 def _load_validation_labels(human_validation_path: Path) -> pd.DataFrame:

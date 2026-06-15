@@ -1,16 +1,19 @@
-"""Orchestrator entrypoint that chains stages 01 through 04.
+"""Orchestrator entrypoint that chains configured pipeline stages.
 
 Stages are thin wrappers around the ``src/binary_classifier/`` package. The
-orchestrator inserts the two human checkpoints that fail gracefully (clear
-message, non-zero exit, no wasted GPU/API work):
+orchestrator inserts human checkpoints that fail gracefully (clear message,
+non-zero exit, no wasted GPU/API work):
 
 * **G1 (labels)** is checked after stage 01 and before any model stage: the
   human coding template must carry strict ``0/1`` labels for every requested
-  label-dependent stage (``prompt_dev``→02, ``validation``→04).
+  label-dependent stage (``prompt_dev``→02, ``validation``→04/06,
+  ``test``→07).
 * **G2 (slate)** is checked after stage 02 and before stage 03: a human must
   have confirmed ``production_slate.json``. Running ``01,02,03,04`` with no
   confirmed slate therefore executes 02 (producing the *proposed* slate) and
   then stops gracefully before 03 — no annotation work is wasted.
+* **G4 (anchor labels)** is checked before stages 07/09: the anchor coding
+  template from stage 05 must exist and be fully coded strict ``0/1``.
 """
 
 import argparse
@@ -30,6 +33,7 @@ _STAGE_MODULES = {
     "02": ("binary_classifier.annotate.bakeoff_prompts", "run_bakeoff"),
     "03": ("binary_classifier.annotate.run_annotation", "run_annotation"),
     "04": ("binary_classifier.qc.agreement", "run_quality_check"),
+    "05": ("binary_classifier.data.anchor", "build_anchor"),
 }
 
 # Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
@@ -42,7 +46,8 @@ _GATE_EXIT = 2
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
-        "(01 sample → 02 bake-off → 03 annotate → 04 QC) with two human gates.",
+        "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor sample) "
+        "with human gates.",
     )
     parser.add_argument(
         "--config",
@@ -65,7 +70,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Pass --force to stage 01 (overwrite the gold coding template).",
+        help=("Pass --force to stages 01 and 05 (overwrite human coding templates)."),
     )
     return parser.parse_args()
 
@@ -85,7 +90,7 @@ def _run_stage(
     module = importlib.import_module(module_name)
     func = getattr(module, func_name)
 
-    if stage_id == "01":
+    if stage_id in {"01", "05"}:
         func(cfg, registry, force=force)
     elif stage_id == "03" and annotate_limit is not None:
         func(cfg, registry, limit=annotate_limit)
@@ -115,7 +120,7 @@ def run_pipeline(
     annotate_limit: int | None = None,
     force: bool = False,
 ) -> None:
-    """Run the requested stages in order, enforcing the two human gates.
+    """Run the requested stages in order, enforcing human gates.
 
     Exits the process with code 2 if a gate fails (graceful stop). Stage 01,
     when requested, always runs first so the coding template exists for the G1
@@ -129,7 +134,7 @@ def run_pipeline(
     # Gate G1 (labels) — before any model stage. Only the label gates are
     # checked here (not G2), so stage 02 can still run to produce the proposed
     # slate even when no confirmed slate exists yet.
-    label_stages = requested & {"02", "04"}
+    label_stages = requested & {"02", "04", "06", "07"}
     if label_stages:
         problems = validate_gates(cfg, registry, label_stages)
         if problems:
@@ -164,11 +169,28 @@ def run_pipeline(
             )
             sys.exit(_GATE_EXIT)
 
-    # Stages 03 + 04 — annotation and the blocking QC freeze.
-    for stage_id in ("03", "04"):
+    # Stages 03, 04, and 05 — annotation, QC freeze, and anchor sampling.
+    for stage_id in ("03", "04", "05"):
         if stage_id in requested:
             print(f"Running stage {stage_id} ...")
             _run_stage(stage_id, cfg, registry, annotate_limit, force)
+
+    # Gate G4 (anchor labels) — before future anchor-dependent stages.
+    anchor_stages = requested & {"07", "09"}
+    if anchor_stages:
+        problems = validate_gates(cfg, registry, anchor_stages)
+        if problems:
+            _report_gate(
+                "G4 (anchor labels)",
+                problems,
+                hint=(
+                    f"open {registry.anchor_coding_template}, fill human_label "
+                    "(0/1) for every anchor row, then re-run."
+                ),
+            )
+            sys.exit(_GATE_EXIT)
+
+    # TODO(PR-3): add G3 test-unlock validation before stage 07 test evaluation.
 
 
 # ── Main entrypoint ───────────────────────────────────────────────────────────

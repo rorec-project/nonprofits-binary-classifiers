@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ── Sub-configs ──────────────────────────────────────────────────────────────
 
@@ -180,6 +180,14 @@ class SampleSizesConfig(BaseModel):
     )
 
 
+class AnchorConfig(BaseModel):
+    """Stage 05 anchor sample over the FULL frame (incl. LOW)."""
+
+    n: int = 500
+    oversample_low_factor: float = 1.5
+    min_stratum_frame: int = 200
+
+
 class AnnotationConfig(BaseModel):
     """Hyperparameters for the LLM-as-primary labeler.
 
@@ -269,12 +277,15 @@ class BinaryClassifierConfig(BaseModel):
         model_slate: Models for the annotation bake-off.
         q_thresholds: Quality-score tiers for the Q rubric.
         sample_sizes: Target sizes for silver/gold/prompt-dev.
+        anchor: Anchor-sample sizing and LOW-quality oversampling controls.
         annotation: LLM annotation hyperparameters.
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
         training: Fine-tuning hyperparameter stubs.
 
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     SEED: int = 42
     entity: str = "missions"
@@ -284,6 +295,7 @@ class BinaryClassifierConfig(BaseModel):
     model_slate: ModelSlateConfig = Field(default_factory=ModelSlateConfig)
     q_thresholds: QThresholdsConfig = Field(default_factory=QThresholdsConfig)
     sample_sizes: SampleSizesConfig = Field(default_factory=SampleSizesConfig)
+    anchor: AnchorConfig = Field(default_factory=AnchorConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     qc: QCConfig = Field(default_factory=QCConfig)

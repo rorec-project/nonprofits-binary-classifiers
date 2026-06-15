@@ -1,5 +1,6 @@
-"""Tests for T1.5: orchestrator wiring of gates G1 (labels) and G2 (slate)."""
+"""Tests for T1.4: orchestrator wiring of stages and gates."""
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -29,6 +30,10 @@ def _spy_stages(monkeypatch, calls: list) -> None:
         "binary_classifier.qc.agreement.run_quality_check",
         lambda *a, **k: calls.append("04"),
     )
+    monkeypatch.setattr(
+        "binary_classifier.data.anchor.build_anchor",
+        lambda *a, **k: calls.append("05"),
+    )
 
 
 def _write_coded_template(registry) -> None:
@@ -36,6 +41,17 @@ def _write_coded_template(registry) -> None:
         [
             {"EIN2": "00-1", "split": "prompt_dev", "text": "t", "human_label": 1},
             {"EIN2": "00-2", "split": "validation", "text": "t", "human_label": 0},
+        ]
+    )
+    registry.gold_coding_template.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(registry.gold_coding_template, index=False)
+
+
+def _write_test_coded_template(registry) -> None:
+    df = pd.DataFrame(
+        [
+            {"EIN2": "00-1", "split": "test", "text": "t", "human_label": 1},
+            {"EIN2": "00-2", "split": "test", "text": "t", "human_label": 0},
         ]
     )
     registry.gold_coding_template.parent.mkdir(parents=True, exist_ok=True)
@@ -92,3 +108,37 @@ def test_phase_two_stages_03_04(tiny_config, tiny_registry, monkeypatch):
     _spy_stages(monkeypatch, calls)
     rp.run_pipeline(tiny_config, tiny_registry, {"03", "04"})
     assert calls == ["03", "04"]
+
+
+def test_stage_05_module_import_resolves() -> None:
+    module_name, func_name = rp._STAGE_MODULES["05"]
+    module = importlib.import_module(module_name)
+    assert callable(getattr(module, func_name))
+
+
+def test_stage_05_runs_with_force(tiny_config, tiny_registry, monkeypatch) -> None:
+    calls: list[tuple[str, bool | None]] = []
+    monkeypatch.setattr(
+        "binary_classifier.data.anchor.build_anchor",
+        lambda *a, **k: calls.append(("05", k.get("force"))),
+    )
+
+    rp.run_pipeline(tiny_config, tiny_registry, {"05"}, force=True)
+
+    assert calls == [("05", True)]
+
+
+def test_stage_07_with_test_labels_exits_at_g4(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    _write_test_coded_template(tiny_registry)
+    calls: list = []
+    _spy_stages(monkeypatch, calls)
+
+    with pytest.raises(SystemExit) as exc:
+        rp.run_pipeline(tiny_config, tiny_registry, {"07"})
+
+    assert exc.value.code == 2
+    assert calls == []
