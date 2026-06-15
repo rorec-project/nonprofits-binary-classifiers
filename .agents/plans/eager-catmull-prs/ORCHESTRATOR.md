@@ -22,9 +22,9 @@
    `uv run pytest -m "not slow and not network"` + `uv run ruff check . &&
    uv run ruff format --check . && uv run ty check` must be green, plus the
    PR-specific checks.
-5. Commit with a conventional message (`feat:`/`chore:`/`fix:`), ending with
-   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Do not push or open a
-   PR unless the human asks.
+5. Commit with a conventional message (`feat:`/`chore:`/`fix:`), with no
+   attribution trailers (Part 2 A.1). Do not push or open a PR unless the
+   human asks.
 
 **Subagent input contract** (the orchestrator includes in each spawn prompt):
 (a) the task's full text from §7; (b) the §3 code-map rows it references; (c) the §6
@@ -65,9 +65,9 @@ shared files (`config.py`, `paths.py`, `run_pipeline.py`, `preflight.py`,
   owned by OTHER tasks in the PR (which it must not touch); (f) any
   `.agents/ralph/state/DEVIATIONS.md` rows touching the task's facts. Subagents
   start fresh — paste content, do not merely reference files.
-- Commit trailer adaptation: end every commit message with
-  `Co-Authored-By: opencode/gpt-5.5 <noreply@opencode.ai>`
-  (replaces the Part-1 Claude trailer; same rule, correct attribution).
+- No automatic attribution trailers. Do not add `Co-Authored-By`,
+  `Signed-off-by`, or any other automatic attribution footer. The human
+  author controls all footers.
 - Never `git push`, never open or merge PRs (also denied by agent permissions). The
   human merges at PR boundaries.
 
@@ -103,7 +103,7 @@ Each iteration, in this order:
    the Part-1 step-4 commands (`uv run pytest -m "not slow and not network"` +
    `uv run ruff check . && uv run ruff format --check . && uv run ty check`) plus the
    PR-specific gate at the bottom of `pr-N.md`. Green → commit per Part-1 step 5
-   (+ A.1 trailer), INCLUDING the updated state files, then write `DONE` to the
+   (no attribution trailers, per A.1), INCLUDING the updated state files, then write `DONE` to the
    status file. Not green → record the failure precisely in the journal; fix within
    this iteration only if small, otherwise leave an exact next-action note and end
    the iteration.
@@ -141,6 +141,11 @@ Each iteration, in this order:
 ### A.4 DEVIATIONS.md row format
 
 `| date | PR | task | fact changed (CONTEXT.md § or work-order point) | what was done instead | why | downstream impact |`
+
+Deviations are a living overlay. When a deviation is resolved (the
+underlying code change is committed), the corresponding row is removed
+from the table. Historical rows are not preserved — the file reflects
+only active deviations.
 
 ### A.5 Honesty and safety rules (binding)
 
