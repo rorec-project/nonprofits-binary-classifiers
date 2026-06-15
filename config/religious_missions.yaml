@@ -118,3 +118,10 @@ evaluation:
   ece_bins: 10
   bootstrap_resamples: 2000
   length_bins: [10, 25, 50]
+
+inference:
+  batch_size: 512
+  shard_size: 50000
+  device: auto
+  route_low_to_rules: true
+  rule_ambiguous_to_classifier: true

@@ -1,0 +1,248 @@
+"""Tests for stage 08 inference sharding and monitor scoring."""
+
+from __future__ import annotations
+
+import json
+
+import pandas as pd
+
+from binary_classifier.inference import predict as predict_mod
+from binary_classifier.inference.predict import run_inference
+
+
+def test_run_inference_writes_schema_rules_monitor_and_metadata(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 3
+    tiny_config.inference.batch_size = 2
+    missions = _missions_frame()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_selected_model(tiny_registry)
+    _write_monitor(tiny_registry, ["E0002", "E0004"])
+
+    run_inference(tiny_config, tiny_registry, predictor=_StubPredictor())
+
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    assert predictions.columns.tolist() == _prediction_columns()
+    assert set(predictions["EIN2"]) == set(missions["EIN2"].astype(str))
+    assert len(predictions) == len(missions)
+    assert set(predictions["decision_source"]) >= {
+        "classifier",
+        "rule_strong_positive",
+        "rule_short_negative",
+        "low_via_classifier",
+    }
+
+    rule_rows = predictions[
+        predictions["decision_source"].isin(
+            ["rule_strong_positive", "rule_short_negative"]
+        )
+    ]
+    assert rule_rows["prob_raw"].isna().all()
+    assert rule_rows["prob_calibrated"].isna().all()
+    assert predictions.loc[
+        predictions["decision_source"] == "rule_strong_positive", "pred_label"
+    ].eq(1).all()
+    assert predictions.loc[
+        predictions["decision_source"] == "rule_short_negative", "pred_label"
+    ].eq(0).all()
+    assert predictions["model_id"].eq("stub-model").all()
+    assert predictions["checkpoint_sha256"].eq("stub-sha").all()
+    assert predictions["calibrator_method"].eq("platt").all()
+    assert predictions["threshold"].eq(0.5).all()
+    assert predictions["inference_date"].astype(str).str.len().gt(0).all()
+    assert predictions["pipeline_version"].astype(str).str.len().gt(0).all()
+    assert predictions["config_hash"].astype(str).str.len().eq(64).all()
+
+    monitor = json.loads(tiny_registry.monitor_scores.read_text())
+    assert monitor["metadata"]["n_monitor"] == 2
+    assert {row["EIN2"] for row in monitor["rows"]} == {"E0002", "E0004"}
+    assert monitor["metadata"]["calibrator_method"] == "platt"
+
+
+def test_run_inference_resumes_existing_shards_and_preserves_completeness(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_first_shard(shard_path)
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    assert set(predictions["EIN2"]) == set(missions["EIN2"])
+    assert len(predictions) == len(missions)
+    assert predictions["EIN2"].duplicated().sum() == 0
+    assert predictor.n_scored == 2
+    preserved = predictions[predictions["EIN2"].isin(["A000", "A001"])]
+    assert preserved["model_id"].eq("preexisting").all()
+
+
+def _missions_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "EIN2": "E0004",
+                "mission_text": "to worship and teach children through ministry, training, and support programs",
+                "ntee_major_group": "X",
+                "is_truncated": False,
+                "NTEE_IRS": "X20",
+                "data_source": "synthetic",
+            },
+            {
+                "EIN2": "E0001",
+                "mission_text": "church",
+                "ntee_major_group": "X",
+                "is_truncated": False,
+                "NTEE_IRS": "X20",
+                "data_source": "synthetic",
+            },
+            {
+                "EIN2": "E0003",
+                "mission_text": "food",
+                "ntee_major_group": "K",
+                "is_truncated": False,
+                "NTEE_IRS": "K20",
+                "data_source": "synthetic",
+            },
+            {
+                "EIN2": "E0002",
+                "mission_text": "alpha beta gamma delta epsilon zeta",
+                "ntee_major_group": "A",
+                "is_truncated": False,
+                "NTEE_IRS": "A20",
+                "data_source": "synthetic",
+            },
+            {
+                "EIN2": "E0005",
+                "mission_text": "to provide food education and housing for families through training and services",
+                "ntee_major_group": "P",
+                "is_truncated": False,
+                "NTEE_IRS": "P20",
+                "data_source": "synthetic",
+            },
+        ]
+    )
+
+
+def _classifier_only_missions() -> pd.DataFrame:
+    rows = []
+    for i in range(4):
+        rows.append(
+            {
+                "EIN2": f"A{i:03d}",
+                "mission_text": (
+                    "to provide food education and housing for families "
+                    f"through training and services {i}"
+                ),
+                "ntee_major_group": "P",
+                "is_truncated": False,
+                "NTEE_IRS": "P20",
+                "data_source": "synthetic",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _write_calibrator(registry) -> None:
+    registry.calibrator_path.parent.mkdir(parents=True, exist_ok=True)
+    registry.calibrator_path.write_text(
+        json.dumps({"method": "platt", "params": {"a": 1.0, "b": 0.0}, "threshold": 0.5})
+    )
+
+
+def _write_selected_model(registry) -> None:
+    registry.selected_model.parent.mkdir(parents=True, exist_ok=True)
+    registry.selected_model.write_text(
+        json.dumps(
+            {
+                "encoder_id": "stub-model",
+                "tokenizer_id": "stub-model",
+                "checkpoint_sha256": "stub-sha",
+                "checkpoint_relpath": "unused/model.safetensors",
+            }
+        )
+    )
+
+
+def _write_monitor(registry, ein2s: list[str]) -> None:
+    registry.monitor_manifest.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"EIN2": ein2s}).to_csv(registry.monitor_manifest, index=False)
+
+
+def _prewrite_first_shard(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            _prediction_row("A000", 0.1, 0),
+            _prediction_row("A001", 0.9, 1),
+        ],
+        columns=_prediction_columns(),
+    ).to_parquet(path, index=False)
+
+
+def _prediction_row(ein2: str, prob: float, label: int) -> dict:
+    return {
+        "EIN2": ein2,
+        "pred_label": label,
+        "prob_raw": prob,
+        "prob_calibrated": prob,
+        "decision_source": "classifier",
+        "tier": "HIGH",
+        "Q": 5.0,
+        "ntee_major_group": "P",
+        "model_id": "preexisting",
+        "checkpoint_sha256": "preexisting-sha",
+        "calibrator_method": "platt",
+        "threshold": 0.5,
+        "inference_date": "2026-01-01T00:00:00+00:00",
+        "pipeline_version": "test",
+        "config_hash": "0" * 64,
+    }
+
+
+def _prediction_columns() -> list[str]:
+    return [
+        "EIN2",
+        "pred_label",
+        "prob_raw",
+        "prob_calibrated",
+        "decision_source",
+        "tier",
+        "Q",
+        "ntee_major_group",
+        "model_id",
+        "checkpoint_sha256",
+        "calibrator_method",
+        "threshold",
+        "inference_date",
+        "pipeline_version",
+        "config_hash",
+    ]
+
+
+class _StubPredictor:
+    def predict_proba(self, texts):
+        scores = [0.85 if "worship" in text or "provide" in text else 0.25 for text in texts]
+        return [[1.0 - score, score] for score in scores]
+
+
+class _CountingPredictor:
+    def __init__(self) -> None:
+        self.n_scored = 0
+
+    def predict_proba(self, texts):
+        self.n_scored += len(texts)
+        return [[0.2, 0.8] for _ in texts]

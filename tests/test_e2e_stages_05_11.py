@@ -1,6 +1,6 @@
 """Slow synthetic E2E route for stages 05 onward.
 
-Later PRs extend this file through stages 07–11.
+Later PRs extend this file through stages 09–11.
 """
 
 import json
@@ -13,18 +13,20 @@ from binary_classifier.annotate.schema import AnnotationStore, BinaryLabel, Labe
 from binary_classifier.data import anchor as anchor_mod
 from binary_classifier.evaluation import evaluate as evaluate_mod
 from binary_classifier.evaluation.evaluate import run_evaluation
+from binary_classifier.inference import predict as predict_mod
+from binary_classifier.inference.predict import run_inference
 from binary_classifier.train import data as train_data_mod
 from binary_classifier.train import sweep
 from binary_classifier.train.trainer import run_training
 
 
 @pytest.mark.slow
-def test_e2e_stages_05_to_06_with_finetune_stub(
+def test_e2e_stages_05_to_08_with_finetune_stub(
     monkeypatch,
     tiny_config,
     tiny_registry,
 ) -> None:
-    """Fabricate stage-04 artifacts, run stage 05, then run stage 06 offline."""
+    """Fabricate stage-04 artifacts, then run stages 05-08 offline."""
     tiny_config.anchor.n = 8
     tiny_config.anchor.min_stratum_frame = 1
     tiny_config.training.baselines = ["tfidf_logreg"]
@@ -45,6 +47,7 @@ def test_e2e_stages_05_to_06_with_finetune_stub(
     monkeypatch.setattr(anchor_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(train_data_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(evaluate_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(sweep, "finetune", _fake_finetune)
 
     _write_stage04_training_artifacts(tiny_registry)
@@ -84,6 +87,15 @@ def test_e2e_stages_05_to_06_with_finetune_stub(
 
     assert tiny_registry.calibrator_path.exists()
     assert tiny_registry.test_evaluation.exists()
+
+    run_inference(tiny_config, tiny_registry, predictor=_TextPredictor())
+
+    assert tiny_registry.predictions_parquet.exists()
+    assert tiny_registry.monitor_scores.exists()
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    assert set(predictions["EIN2"].astype(str)) == set(missions["EIN2"].astype(str))
+    monitor_scores = json.loads(tiny_registry.monitor_scores.read_text())
+    assert monitor_scores["metadata"]["n_monitor"] == 8
 
     with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
         run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())
@@ -204,6 +216,10 @@ def _write_stage01_manifests(registry) -> None:
     )
     pd.DataFrame({"EIN2": [f"A{i:04d}" for i in range(24, 40)]}).to_csv(
         registry.gold_manifest,
+        index=False,
+    )
+    pd.DataFrame({"EIN2": [f"A{i:04d}" for i in range(40, 48)]}).to_csv(
+        registry.monitor_manifest,
         index=False,
     )
 

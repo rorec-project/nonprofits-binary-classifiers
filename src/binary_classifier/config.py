@@ -196,6 +196,27 @@ class EvaluationConfig(BaseModel):
     length_bins: list[int] = Field(default_factory=_default_length_bins)
 
 
+class InferenceConfig(BaseModel):
+    """Batch inference configuration.
+
+    Attributes:
+        batch_size: Number of rows scored per classifier batch.
+        shard_size: Number of input rows processed per inference shard.
+        device: Compute device selection policy for classifier inference.
+        route_low_to_rules: Whether LOW-quality rows use the rule layer before
+            classifier scoring.
+        rule_ambiguous_to_classifier: Whether rule-layer abstentions on
+            LOW-quality rows fall through to the classifier.
+
+    """
+
+    batch_size: int = 512
+    shard_size: int = 50_000
+    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
+    route_low_to_rules: bool = True
+    rule_ambiguous_to_classifier: bool = True
+
+
 class TestUnlock(BaseModel):
     """A human-confirmed frozen-test unlock artifact.
 
@@ -459,6 +480,7 @@ class BinaryClassifierConfig(BaseModel):
         qc: Quality-control gate thresholds.
         training: Fine-tuning, baseline, and learning-curve settings.
         evaluation: Evaluation, calibration, and test-unlock settings.
+        inference: Batch inference and LOW-tier routing settings.
 
     """
 
@@ -478,6 +500,7 @@ class BinaryClassifierConfig(BaseModel):
     qc: QCConfig = Field(default_factory=QCConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    inference: InferenceConfig = Field(default_factory=InferenceConfig)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
