@@ -15,7 +15,7 @@ training:
   curve_fractions: [1.0]
   arms: []
   crossfit_folds: 2
-  encoders: [{ id: prajjwal1/bert-tiny, arm: primary, max_length: 128 }]
+  encoders: [{ id: hf-internal-testing/tiny-random-bert, arm: primary, max_length: 128 }]
 evaluation:
   acceptance: { min_pr_auc: 0.50, min_minority_f1_ci_lower: 0.0, max_ece: 0.30 }
   bootstrap_resamples: 200

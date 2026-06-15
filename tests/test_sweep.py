@@ -129,9 +129,24 @@ def _spec(targets: str, arm: str, seed: int) -> sweep.RunSpec:
 
 
 def _row(spec: sweep.RunSpec, pr_auc: float, minority_f1: float) -> dict:
-    row = sweep.synthetic_result_row(spec, pr_auc=pr_auc, minority_f1=minority_f1)
-    row["timestamp"] = datetime.now(UTC).isoformat()
-    return row
+    bundle = {"pr_auc": pr_auc, "f1": minority_f1}
+    return {
+        "run_id": spec.run_id,
+        "model": spec.model,
+        "targets": spec.targets,
+        "arm": spec.arm,
+        "train_fraction": spec.train_fraction,
+        "n_train": 4,
+        "seed": spec.seed,
+        "dev": bundle,
+        "validation": bundle,
+        "wall_seconds": 0.0,
+        "precision": "fp32",
+        "device": "cpu",
+        "git_sha": "unknown",
+        "config_hash": "unknown",
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
 
 
 def _frame(n_rows: int, start: int = 0) -> pd.DataFrame:

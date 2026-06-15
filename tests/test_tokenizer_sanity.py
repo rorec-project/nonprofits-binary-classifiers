@@ -9,7 +9,11 @@ pytestmark = pytest.mark.network
 
 @pytest.mark.parametrize(
     "model_id",
-    ["microsoft/deberta-v3-base", "answerdotai/ModernBERT-base"],
+    [
+        "hf-internal-testing/tiny-random-bert",
+        "microsoft/deberta-v3-base",
+        "answerdotai/ModernBERT-base",
+    ],
 )
 def test_tokenizer_adds_cls_and_sep_tokens(model_id: str) -> None:
     tok = AutoTokenizer.from_pretrained(model_id)

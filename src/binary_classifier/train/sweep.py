@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 import pandas as pd
 
-from binary_classifier import metrics
 from binary_classifier.train import encoder as encoder_mod
 from binary_classifier.train.arms import ArmName, run_arm
 from binary_classifier.train.baselines import minilm_logreg, tfidf_logreg
@@ -527,7 +526,11 @@ def _run_encoder(
     if spec.encoder is None:
         raise ValueError("Encoder run spec missing encoder config.")
     run_train = subset_fraction(train_df, spec.train_fraction, spec.seed)
-    oof_probs = _oof_probs_for_pruned(run_train) if spec.arm == "pruned" else None
+    oof_probs = (
+        _oof_probs_for_pruned(run_train, registry, cfg)
+        if spec.arm == "pruned"
+        else None
+    )
     if spec.arm in {"hard", "pruned", "class_weighted"}:
         run_train, loss_spec = run_arm(
             cast(ArmName, spec.arm), run_train, oof_probs=oof_probs
@@ -539,34 +542,18 @@ def _run_encoder(
         arm = spec.arm
 
     with _validation_override(validation_df):
-        try:
-            return finetune(
-                cfg,
-                registry,
-                spec.encoder,
-                run_train,
-                dev_df,
-                targets=targets,
-                arm=arm,
-                train_fraction=spec.train_fraction,
-                seed=spec.seed,
-                run_root=registry.runs_dir / _storage_phase(spec),
-            )
-        except ValueError as exc:
-            if cfg.data.allow_synthetic and "Couldn't instantiate" in str(exc):
-                logger.warning(
-                    "Falling back to deterministic synthetic encoder metrics for "
-                    "smoke config after tokenizer startup failure: %s",
-                    exc,
-                )
-                return _synthetic_encoder_row(
-                    registry,
-                    spec,
-                    run_train,
-                    dev_df,
-                    validation_df,
-                )
-            raise
+        return finetune(
+            cfg,
+            registry,
+            spec.encoder,
+            run_train,
+            dev_df,
+            targets=targets,
+            arm=arm,
+            train_fraction=spec.train_fraction,
+            seed=spec.seed,
+            run_root=registry.runs_dir / _storage_phase(spec),
+        )
 
 
 def _run_ids(rows: Iterable[Mapping[str, Any]]) -> set[str]:
@@ -599,15 +586,46 @@ def _run_id_parts(
     return parts
 
 
-def _oof_probs_for_pruned(train_df: pd.DataFrame) -> pd.DataFrame:
-    """Return deterministic OOF-like probabilities for cleanlab pruning.
-
-    The stage-06 pruned arm needs calibrated OOF probabilities, but the current
-    fine-tune primitive returns metrics rather than a reusable predictor. This
-    adapter is intentionally conservative: it uses the silver vote share as the
-    probability surface so cleanlab can only prune rows that are both label-issue
-    candidates and in the configured disagreement band.
-    """
+def _oof_probs_for_pruned(
+    train_df: pd.DataFrame,
+    registry: PathRegistry,
+    cfg: BinaryClassifierConfig,
+) -> pd.DataFrame:
+    if registry.oof_pred_probs.exists():
+        logger.info(
+            "Loading true OOF probabilities from %s for pruned arm",
+            registry.oof_pred_probs,
+        )
+        oof_df = pd.read_parquet(registry.oof_pred_probs)
+        merged = (
+            train_df[["EIN2"]]
+            .astype(str)
+            .merge(
+                oof_df[["EIN2", "p1"]].astype(str),
+                on="EIN2",
+                how="left",
+            )
+        )
+        p1 = pd.to_numeric(merged["p1"], errors="coerce")
+        if p1.isna().any():
+            missing = int(p1.isna().sum())
+            logger.warning(
+                "OOF probabilities missing for %d training rows; "
+                "falling back to vote-share proxy",
+                missing,
+            )
+        else:
+            return pd.DataFrame(
+                {
+                    "EIN2": train_df["EIN2"].astype(str).tolist(),
+                    "p0": 1.0 - p1.to_numpy(dtype=float),
+                    "p1": p1.to_numpy(dtype=float),
+                },
+            )
+    logger.warning(
+        "No OOF probabilities at %s; using vote-share proxy for pruned arm",
+        registry.oof_pred_probs,
+    )
     return pd.DataFrame(
         {
             "EIN2": train_df["EIN2"].astype(str).tolist(),
@@ -615,72 +633,6 @@ def _oof_probs_for_pruned(train_df: pd.DataFrame) -> pd.DataFrame:
             "p1": pd.to_numeric(train_df["p_pos"], errors="coerce"),
         },
     )
-
-
-def _synthetic_encoder_row(
-    registry: PathRegistry,
-    spec: RunSpec,
-    train_df: pd.DataFrame,
-    dev_df: pd.DataFrame,
-    validation_df: pd.DataFrame,
-) -> dict[str, Any]:
-    """Return deterministic encoder metrics for synthetic smoke fallback."""
-    checkpoint_dir = (
-        registry.checkpoints_dir / _model_slug(spec.model) / spec.arm / f"s{spec.seed}"
-    )
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    (checkpoint_dir / "model.safetensors").write_bytes(
-        f"synthetic smoke checkpoint {spec.run_id}".encode("utf-8"),
-    )
-    dev_scores = _scores_from_frame(dev_df)
-    validation_scores = _scores_from_frame(validation_df)
-    return {
-        "run_id": spec.run_id,
-        "model": spec.model,
-        "targets": spec.targets,
-        "arm": spec.arm,
-        "train_fraction": spec.train_fraction,
-        "n_train": int(len(train_df)),
-        "seed": spec.seed,
-        "dev": _score_frame(dev_df, dev_scores, spec.seed),
-        "validation": _score_frame(validation_df, validation_scores, spec.seed),
-        "wall_seconds": 0.0,
-        "precision": "fp32",
-        "device": "cpu",
-        "git_sha": "unknown",
-        "config_hash": "unknown",
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-
-
-def _scores_from_frame(frame: pd.DataFrame) -> np.ndarray:
-    """Return deterministic positive-class scores for a frame."""
-    if "p_pos" in frame.columns:
-        return (
-            pd.to_numeric(frame["p_pos"], errors="coerce")
-            .fillna(0.5)
-            .to_numpy(
-                dtype=float,
-            )
-        )
-    text = frame["text"].fillna("").astype(str)
-    return (
-        text.str.contains(
-            "church|prayer|worship|faith|ministry|christian|religious",
-            case=False,
-            regex=True,
-        )
-        .map({False: 0.1, True: 0.9})
-        .to_numpy(dtype=float)
-    )
-
-
-def _score_frame(frame: pd.DataFrame, scores: np.ndarray, seed: int) -> dict[str, Any]:
-    """Score deterministic smoke predictions against frame labels."""
-    label_column = "hard_label" if "hard_label" in frame.columns else "human_label"
-    y_true = pd.to_numeric(frame[label_column], errors="coerce").astype(int).to_numpy()
-    y_pred = (scores >= 0.5).astype(int)
-    return metrics.compute_metric_bundle(y_true, y_pred, y_score=scores, seed=seed)
 
 
 @contextmanager
@@ -909,49 +861,3 @@ def _validated_fraction(value: float) -> float:
 
 def _model_slug(model_name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "__", model_name).strip("_")
-
-
-def synthetic_result_row(
-    spec: RunSpec,
-    *,
-    pr_auc: float,
-    minority_f1: float,
-) -> dict[str, Any]:
-    """Build a valid synthetic result row for tests.
-
-    Args:
-        spec: Run specification supplying identity fields.
-        pr_auc: Validation PR-AUC to record.
-        minority_f1: Validation minority-F1 to record.
-
-    Returns:
-        Stage-06 result row with deterministic metric bundles.
-
-    """
-    y_true = np.array([0, 1, 0, 1])
-    y_pred = np.array([0, 1, 0, 1])
-    bundle = metrics.compute_metric_bundle(
-        y_true,
-        y_pred,
-        y_score=np.array([0.1, 0.9, 0.2, 0.8]),
-        seed=spec.seed,
-    )
-    bundle["pr_auc"] = float(pr_auc)
-    bundle["f1"] = float(minority_f1)
-    return {
-        "run_id": spec.run_id,
-        "model": spec.model if spec.kind == "encoder" else f"baseline:{spec.model}",
-        "targets": spec.targets,
-        "arm": spec.arm,
-        "train_fraction": spec.train_fraction,
-        "n_train": 4,
-        "seed": spec.seed,
-        "dev": bundle,
-        "validation": bundle,
-        "wall_seconds": 0.0,
-        "precision": "fp32",
-        "device": "cpu",
-        "git_sha": "unknown",
-        "config_hash": "unknown",
-        "timestamp": datetime.now(UTC).isoformat(),
-    }

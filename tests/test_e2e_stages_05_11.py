@@ -185,7 +185,22 @@ def _fake_finetune(
         arm=arm,
         encoder=encoder,
     )
-    row = sweep.synthetic_result_row(spec, pr_auc=0.8, minority_f1=0.7)
-    row["n_train"] = len(train_df)
-    row["timestamp"] = datetime.now(UTC).isoformat()
+    bundle = {"pr_auc": 0.8, "f1": 0.7}
+    row = {
+        "run_id": spec.run_id,
+        "model": spec.model,
+        "targets": spec.targets,
+        "arm": spec.arm,
+        "train_fraction": spec.train_fraction,
+        "n_train": len(train_df),
+        "seed": spec.seed,
+        "dev": bundle,
+        "validation": bundle,
+        "wall_seconds": 0.0,
+        "precision": "fp32",
+        "device": "cpu",
+        "git_sha": "unknown",
+        "config_hash": "unknown",
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
     return row
