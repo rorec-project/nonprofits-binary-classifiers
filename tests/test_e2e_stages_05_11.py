@@ -11,6 +11,8 @@ import pytest
 
 from binary_classifier.annotate.schema import AnnotationStore, BinaryLabel, LabelRecord, SourceType
 from binary_classifier.data import anchor as anchor_mod
+from binary_classifier.evaluation import evaluate as evaluate_mod
+from binary_classifier.evaluation.evaluate import run_evaluation
 from binary_classifier.train import data as train_data_mod
 from binary_classifier.train import sweep
 from binary_classifier.train.trainer import run_training
@@ -31,10 +33,18 @@ def test_e2e_stages_05_to_06_with_finetune_stub(
     tiny_config.training.final_seeds = [42, 43]
     tiny_config.training.curve_fractions = [1.0]
     tiny_config.training.arms = []
+    tiny_config.evaluation.crossfit_folds = 2
+    tiny_config.evaluation.calibration_methods = ["platt"]
+    tiny_config.evaluation.bootstrap_resamples = 20
+    tiny_config.evaluation.ece_bins = 2
+    tiny_config.evaluation.acceptance.min_pr_auc = 0.5
+    tiny_config.evaluation.acceptance.min_minority_f1_ci_lower = 0.0
+    tiny_config.evaluation.acceptance.max_ece = 1.0
 
     missions = _missions_frame()
     monkeypatch.setattr(anchor_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(train_data_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(evaluate_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(sweep, "finetune", _fake_finetune)
 
     _write_stage04_training_artifacts(tiny_registry)
@@ -44,7 +54,7 @@ def test_e2e_stages_05_to_06_with_finetune_stub(
 
     anchor_mod.build_anchor(tiny_config, tiny_registry, force=True)
     anchor_template = pd.read_csv(tiny_registry.anchor_coding_template)
-    anchor_template["human_label"] = [i % 2 for i in range(len(anchor_template))]
+    anchor_template["human_label"] = anchor_template["text"].str.contains("church").astype(int)
     anchor_template.to_csv(tiny_registry.anchor_coding_template, index=False)
 
     run_training(tiny_config, tiny_registry, final=True)
@@ -55,6 +65,28 @@ def test_e2e_stages_05_to_06_with_finetune_stub(
     report = json.loads(tiny_registry.selection_report.read_text())
     assert report["recommendation"]["encoder_id"] == Encoder.id
     assert report["selected_model_skeleton"]["checkpoint_relpath"]
+
+    selected_model = report["selected_model_skeleton"]
+    tiny_registry.selected_model.write_text(json.dumps(selected_model))
+    tiny_registry.test_unlock.write_text(
+        json.dumps(
+            {
+                "confirmed": True,
+                "checkpoint": selected_model["checkpoint_relpath"],
+                "checkpoint_sha256": selected_model["checkpoint_sha256"],
+                "acceptance": tiny_config.evaluation.acceptance.model_dump(),
+                "rationale": "slow smoke fixture",
+            }
+        )
+    )
+
+    run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())
+
+    assert tiny_registry.calibrator_path.exists()
+    assert tiny_registry.test_evaluation.exists()
+
+    with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
+        run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())
 
 
 def _missions_frame() -> pd.DataFrame:
@@ -121,12 +153,31 @@ def _write_stage04_training_artifacts(registry) -> None:
 def _write_coded_gold(registry) -> None:
     rows = []
     for i in range(8):
+        mission_i = i + 24
         rows.append(
             {
-                "EIN2": f"G{i:04d}",
+                "EIN2": f"A{mission_i:04d}",
                 "split": "validation",
-                "text": f"validation text {i}",
-                "human_label": i % 2,
+                "text": (
+                    f"church prayer worship mission {mission_i}"
+                    if mission_i % 2
+                    else f"food shelter arts community mission {mission_i}"
+                ),
+                "human_label": mission_i % 2,
+            }
+        )
+    for i in range(8):
+        mission_i = i + 32
+        rows.append(
+            {
+                "EIN2": f"A{mission_i:04d}",
+                "split": "test",
+                "text": (
+                    f"church prayer worship mission {mission_i}"
+                    if mission_i % 2
+                    else f"food shelter arts community mission {mission_i}"
+                ),
+                "human_label": mission_i % 2,
             }
         )
     registry.gold_coding_template.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +202,7 @@ def _write_stage01_manifests(registry) -> None:
         registry.silver_manifest,
         index=False,
     )
-    pd.DataFrame({"EIN2": [f"G{i:04d}" for i in range(8)]}).to_csv(
+    pd.DataFrame({"EIN2": [f"A{i:04d}" for i in range(24, 40)]}).to_csv(
         registry.gold_manifest,
         index=False,
     )
@@ -204,3 +255,9 @@ def _fake_finetune(
         "timestamp": datetime.now(UTC).isoformat(),
     }
     return row
+
+
+class _TextPredictor:
+    def predict_proba(self, texts):
+        scores = [0.9 if "church" in str(text).lower() else 0.1 for text in texts]
+        return [[1.0 - score, score] for score in scores]

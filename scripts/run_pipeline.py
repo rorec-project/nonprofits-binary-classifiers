@@ -12,6 +12,9 @@ non-zero exit, no wasted GPU/API work):
   have confirmed ``production_slate.json``. Running ``01,02,03,04`` with no
   confirmed slate therefore executes 02 (producing the *proposed* slate) and
   then stops gracefully before 03 — no annotation work is wasted.
+* **G3 (test unlock)** is checked before stage 07: a human must confirm the
+  selected checkpoint SHA and acceptance criteria snapshot before the frozen
+  test evaluation is touched.
 * **G4 (anchor labels)** is checked before stages 07/09: the anchor coding
   template from stage 05 must exist and be fully coded strict ``0/1``.
 """
@@ -35,6 +38,7 @@ _STAGE_MODULES = {
     "04": ("binary_classifier.qc.agreement", "run_quality_check"),
     "05": ("binary_classifier.data.anchor", "build_anchor"),
     "06": ("binary_classifier.train.trainer", "run_training"),
+    "07": ("binary_classifier.evaluation.evaluate", "run_evaluation"),
 }
 
 # Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
@@ -47,7 +51,8 @@ _GATE_EXIT = 2
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
-        "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor → 06 train) "
+        "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor → "
+        "06 train → 07 evaluate) "
         "with human gates.",
     )
     parser.add_argument(
@@ -111,6 +116,11 @@ def _report_gate(title: str, problems: list[str], hint: str | None = None) -> No
         print(f"\n  Next: {hint}", file=sys.stderr)
 
 
+def _gate_problems(cfg, registry, stages: set[str], prefix: str) -> list[str]:
+    """Return only the requested gate's problems for staged reporting."""
+    return [p for p in validate_gates(cfg, registry, stages) if p.startswith(prefix)]
+
+
 # ── Orchestration core ───────────────────────────────────────────────────────
 
 
@@ -137,7 +147,7 @@ def run_pipeline(
     # slate even when no confirmed slate exists yet.
     label_stages = requested & {"02", "04", "06", "07"}
     if label_stages:
-        problems = validate_gates(cfg, registry, label_stages)
+        problems = _gate_problems(cfg, registry, label_stages, "G1:")
         if problems:
             _report_gate(
                 "G1 (human labels)",
@@ -179,7 +189,7 @@ def run_pipeline(
     # Gate G4 (anchor labels) — before future anchor-dependent stages.
     anchor_stages = requested & {"07", "09"}
     if anchor_stages:
-        problems = validate_gates(cfg, registry, anchor_stages)
+        problems = _gate_problems(cfg, registry, anchor_stages, "G4:")
         if problems:
             _report_gate(
                 "G4 (anchor labels)",
@@ -191,7 +201,23 @@ def run_pipeline(
             )
             sys.exit(_GATE_EXIT)
 
-    # TODO(PR-3): add G3 test-unlock validation before stage 07 test evaluation.
+    # Gate G3 (test unlock) — the frozen test is touched only after explicit
+    # human confirmation of the selected checkpoint and acceptance thresholds.
+    if "07" in requested:
+        problems = _gate_problems(cfg, registry, {"07"}, "G3:")
+        if problems:
+            _report_gate(
+                "G3 (test unlock)",
+                problems,
+                hint=(
+                    f"review {registry.selected_model}, create "
+                    f"{registry.test_unlock}, set 'confirmed': true, and re-run."
+                ),
+            )
+            sys.exit(_GATE_EXIT)
+
+        print("Running stage 07 ...")
+        _run_stage("07", cfg, registry, annotate_limit, force)
 
 
 # ── Main entrypoint ───────────────────────────────────────────────────────────

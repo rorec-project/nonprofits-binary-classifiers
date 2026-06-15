@@ -105,3 +105,16 @@ training:
   precision: auto
   device: auto
   report_to: []
+
+evaluation:
+  acceptance:
+    min_pr_auc: 0.90
+    min_minority_f1_ci_lower: 0.70
+    max_ece: 0.05
+  calibration_methods: [platt, temperature]
+  crossfit_folds: 5
+  threshold_policy: precision_floor
+  precision_floor: 0.80
+  ece_bins: 10
+  bootstrap_resamples: 2000
+  length_bins: [10, 25, 50]

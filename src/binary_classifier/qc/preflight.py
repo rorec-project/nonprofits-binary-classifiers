@@ -8,6 +8,9 @@ Human checkpoints guard the pipeline:
   ``{0, 1}`` (no human abstain).
 * **G2 (slate)** — before stage 03, a human-confirmed ``production_slate.json``
   must exist and list at least one model resolvable to a configured candidate.
+* **G3 (test unlock)** — before stage 07, a human-confirmed
+  ``test_unlock.json`` must match the current acceptance criteria and selected
+  checkpoint SHA.
 * **G4 (anchor labels)** — before stages 07/09, the anchor coding template must
   exist and every anchor row must have a strict ``{0, 1}`` human label.
 
@@ -16,12 +19,13 @@ problems; the orchestrator decides when to call it and exits non-zero on any
 problem (see ``scripts/run_pipeline.py``).
 """
 
+import json
 from typing import TYPE_CHECKING
 from collections.abc import Iterable
 
 import pandas as pd
 
-from binary_classifier.config import load_slate
+from binary_classifier.config import load_slate, load_test_unlock
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -70,6 +74,10 @@ def validate_gates(
     # G4 — anchor labels for anchor-dependent stages.
     if stages & {"07", "09"}:
         problems.extend(_validate_anchor_labels(cfg, registry))
+
+    # G3 — human test-unlock for frozen test evaluation.
+    if "07" in stages:
+        problems.extend(_validate_test_unlock(cfg, registry))
 
     return problems
 
@@ -188,6 +196,86 @@ def _is_strict_binary(value: object) -> bool:
     except ValueError:
         return False
     return as_float in (0.0, 1.0)
+
+
+# ── G3: human test unlock ────────────────────────────────────────────────────
+
+
+def _validate_test_unlock(
+    cfg: "BinaryClassifierConfig",
+    registry: "PathRegistry",
+) -> list[str]:
+    """Check that the frozen-test unlock matches current acceptance settings.
+
+    Args:
+        cfg: Validated configuration object.
+        registry: Path registry with resolved test-unlock and selected-model
+            paths.
+
+    Returns:
+        A list of G3 problem strings. Empty means the frozen test may be run.
+
+    """
+    path = registry.test_unlock
+    if not path.exists():
+        return [
+            f"G3: no confirmed test unlock at {path}. Review "
+            f"{registry.selected_model}, create {path}, and set "
+            "'confirmed': true.",
+        ]
+
+    try:
+        unlock = load_test_unlock(path)
+    except Exception as exc:
+        return [f"G3: {path} is not valid test-unlock JSON: {exc}"]
+
+    problems: list[str] = []
+    if not unlock.confirmed:
+        problems.append(
+            f"G3: {path} is not confirmed (set 'confirmed': true after review).",
+        )
+
+    current_acceptance = cfg.evaluation.acceptance.model_dump()
+    unlock_acceptance = unlock.acceptance.model_dump()
+    drifted_fields = [
+        field
+        for field, current_value in current_acceptance.items()
+        if unlock_acceptance.get(field) != current_value
+    ]
+    if drifted_fields:
+        problems.append(
+            f"G3: {path} acceptance snapshot differs from current "
+            "cfg.evaluation.acceptance for field(s) "
+            f"{sorted(drifted_fields)}.",
+        )
+
+    selected_path = registry.selected_model
+    if not selected_path.exists():
+        problems.append(
+            f"G3: selected model artifact not found at {selected_path}. "
+            "Run stage 06 and copy the selected-model skeleton after review.",
+        )
+        return problems
+
+    try:
+        selected_model = json.loads(selected_path.read_text())
+    except Exception as exc:
+        problems.append(f"G3: {selected_path} is not valid JSON: {exc}")
+        return problems
+    if not isinstance(selected_model, dict):
+        problems.append(f"G3: {selected_path} must be a JSON object.")
+        return problems
+
+    selected_sha = str(selected_model.get("checkpoint_sha256", "")).strip()
+    if not selected_sha:
+        problems.append(f"G3: {selected_path} missing 'checkpoint_sha256'.")
+    elif unlock.checkpoint_sha256 != selected_sha:
+        problems.append(
+            f"G3: {path} checkpoint_sha256 does not match "
+            f"{selected_path} checkpoint_sha256.",
+        )
+
+    return problems
 
 
 # ── G2: confirmed production slate ───────────────────────────────────────────

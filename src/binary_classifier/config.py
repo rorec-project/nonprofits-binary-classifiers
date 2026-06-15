@@ -143,6 +143,92 @@ def load_slate(path: Path | str) -> Slate:
     return Slate.model_validate(raw)
 
 
+class AcceptanceCriteria(BaseModel):
+    """Frozen-test and calibration acceptance thresholds.
+
+    Attributes:
+        min_pr_auc: Minimum precision-recall AUC on the frozen test set.
+        min_minority_f1_ci_lower: Minimum lower confidence bound for minority
+            F1 on the frozen test set.
+        max_ece: Maximum expected calibration error on anchor OOF scores.
+
+    """
+
+    min_pr_auc: float = 0.90
+    min_minority_f1_ci_lower: float = 0.70
+    max_ece: float = 0.05
+
+
+def _default_calibration_methods() -> list[Literal["platt", "temperature"]]:
+    """Return the default calibration method slate."""
+    return ["platt", "temperature"]
+
+
+def _default_length_bins() -> list[int]:
+    """Return default word-count bin edges for subgroup evaluation."""
+    return [10, 25, 50]
+
+
+class EvaluationConfig(BaseModel):
+    """Evaluation, calibration, and test-unlock configuration.
+
+    Attributes:
+        acceptance: Threshold snapshot required for test unlock approval.
+        calibration_methods: Calibration methods considered for score scaling.
+        crossfit_folds: Number of folds for anchor out-of-fold scoring.
+        threshold_policy: Rule for selecting the operating threshold.
+        precision_floor: Minimum precision under the precision-floor policy.
+        ece_bins: Number of bins for expected calibration error.
+        bootstrap_resamples: Bootstrap draws for confidence intervals.
+        length_bins: Word-count bin edges for length subgroup reporting.
+
+    """
+
+    acceptance: AcceptanceCriteria = Field(default_factory=AcceptanceCriteria)
+    calibration_methods: list[Literal["platt", "temperature"]] = Field(
+        default_factory=_default_calibration_methods,
+    )
+    crossfit_folds: int = 5
+    threshold_policy: Literal["precision_floor", "max_f1"] = "precision_floor"
+    precision_floor: float = 0.80
+    ece_bins: int = 10
+    bootstrap_resamples: int = 2000
+    length_bins: list[int] = Field(default_factory=_default_length_bins)
+
+
+class TestUnlock(BaseModel):
+    """A human-confirmed frozen-test unlock artifact.
+
+    Attributes:
+        confirmed: ``True`` only after human review authorizes test evaluation.
+        checkpoint: Human-readable checkpoint identifier or relative path.
+        checkpoint_sha256: SHA-256 digest for the selected model checkpoint.
+        acceptance: Snapshot of acceptance criteria at unlock time.
+        rationale: Human rationale for unlocking the frozen test set.
+
+    """
+
+    confirmed: bool = False
+    checkpoint: str = ""
+    checkpoint_sha256: str = ""
+    acceptance: AcceptanceCriteria = Field(default_factory=AcceptanceCriteria)
+    rationale: str = ""
+
+
+def load_test_unlock(path: Path | str) -> TestUnlock:
+    """Load and validate a test-unlock JSON file.
+
+    Args:
+        path: Path to ``test_unlock.json``.
+
+    Returns:
+        A validated ``TestUnlock`` instance.
+
+    """
+    raw = json.loads(Path(path).read_text())
+    return TestUnlock.model_validate(raw)
+
+
 class QThresholdsConfig(BaseModel):
     """Quality-score thresholds for the computable rubric Q.
 
@@ -372,6 +458,7 @@ class BinaryClassifierConfig(BaseModel):
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
         training: Fine-tuning, baseline, and learning-curve settings.
+        evaluation: Evaluation, calibration, and test-unlock settings.
 
     """
 
@@ -390,6 +477,7 @@ class BinaryClassifierConfig(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     qc: QCConfig = Field(default_factory=QCConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
