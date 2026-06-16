@@ -54,6 +54,7 @@ _ALLOWED_DECISION_SOURCES = {
     "classifier",
     "rule_strong_positive",
     "rule_short_negative",
+    "rule_abstain",
     "low_via_classifier",
 }
 
@@ -357,10 +358,15 @@ def _predict_shard(
     output["prob_calibrated"] = np.nan
     output["pred_label"] = np.nan
 
-    rule_mask = shard["rule_label"].notna()
+    rule_mask = shard["decision_source"].isin(
+        {"rule_strong_positive", "rule_short_negative"}
+    )
     output.loc[rule_mask, "pred_label"] = shard.loc[rule_mask, "rule_label"].astype(int)
 
-    classifier_mask = ~rule_mask
+    abstain_mask = shard["decision_source"] == "rule_abstain"
+    output.loc[abstain_mask, "pred_label"] = 0
+
+    classifier_mask = ~rule_mask & ~abstain_mask
     if classifier_mask.any():
         texts = shard.loc[classifier_mask, "mission_text"].astype(str).tolist()
         raw = _batched_positive_probabilities(

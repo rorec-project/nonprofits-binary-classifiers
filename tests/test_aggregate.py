@@ -6,32 +6,31 @@ import pytest
 from binary_classifier.annotate.aggregate import aggregate_labels
 
 
-@pytest.mark.parametrize(
-    ("method", "message"),
-    [
-        (
-            "dawid_skene",
-            "unverified for correlated LLM ensembles; majority vote is the default",
-        ),
-        (
-            "crowdlab",
-            "requires pred_probs from a trained classifier",
-        ),
-    ],
-)
-def test_quarantined_aggregators_raise_not_implemented(
-    method: str,
-    message: str,
-) -> None:
-    """Alternative aggregation arms fail explicitly while quarantined."""
+def test_dawid_skene_small_n_raises_value_error() -> None:
+    """Dawid-Skene raises ValueError when label matrix is too small."""
     df = pd.DataFrame(
         [
             {"EIN2": "00-1", "source_id": "m__p1", "label": 1, "confidence": 0.9},
         ]
     )
 
-    with pytest.raises(NotImplementedError, match=message):
-        aggregate_labels(df, method=method)
+    with pytest.raises(ValueError, match="requires at least 2 tasks and 2 annotators"):
+        aggregate_labels(df, method="dawid_skene")
+
+
+def test_crowdlab_raises_not_implemented() -> None:
+    """CROWDLAB raises NotImplementedError when pred_probs are unavailable."""
+    df = pd.DataFrame(
+        [
+            {"EIN2": "00-1", "source_id": "m__p1", "label": 1, "confidence": 0.9},
+        ]
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="requires pred_probs from a trained classifier",
+    ):
+        aggregate_labels(df, method="crowdlab")
 
 
 def test_aggregate_labels_majority_unchanged() -> None:

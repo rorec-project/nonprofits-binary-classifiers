@@ -249,6 +249,13 @@ class PrevalenceConfig(BaseModel):
     low_tier_sensitivity: bool = True
 
 
+class AggregationConfig(BaseModel):
+    """Label aggregation method and comparison arms."""
+
+    method: Literal["majority", "dawid_skene", "crowdlab"] = "majority"
+    comparison_arms: list[str] = []
+
+
 class TestUnlock(BaseModel):
     """A human-confirmed frozen-test unlock artifact.
 
@@ -380,20 +387,6 @@ class QCConfig(BaseModel):
     kappa_threshold: float = 0.70
     f1_ci_floor: float = 0.70
     abstain_on_fabricated_positive: bool = False
-
-
-class AggregationConfig(BaseModel):
-    """Weak-label aggregation configuration.
-
-    Attributes:
-        method: Production aggregation method used to produce silver labels.
-        comparison_arms: Optional non-production aggregation arms to run for
-            method-comparison diagnostics.
-
-    """
-
-    method: Literal["majority", "dawid_skene", "crowdlab"] = "majority"
-    comparison_arms: list[str] = Field(default_factory=list)
 
 
 TrainingArm = Literal["hard", "pruned", "class_weighted"]

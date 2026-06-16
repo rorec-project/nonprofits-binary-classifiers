@@ -196,9 +196,9 @@ def aggregate_dawid_skene(
     """
     labels = _label_matrix(df)
     if labels.shape[0] < 2 or labels.shape[1] < 2:
-        raise NotImplementedError(
-            "Dawid-Skene is quarantined: unverified for correlated LLM ensembles; "
-            "majority vote is the default.",
+        raise ValueError(
+            "Dawid-Skene requires at least 2 tasks and 2 annotators; "
+            f"got {labels.shape[0]} tasks \u00d7 {labels.shape[1]} annotators.",
         )
 
     from crowdkit.aggregation.classification import DawidSkene
