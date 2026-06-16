@@ -250,6 +250,13 @@ training sweep with the staged plan below.
   gated comparison arms; adopt only if they beat majority vote on the human
   held-out data.
 
+> **Visualization note:** stage 10 is a script-only renderer
+> (`uv run python scripts/10_visualize.py --config ...`) that writes PNG and SVG
+> figures for whichever upstream artifacts exist, skipping missing inputs. It
+> uses signed n-gram log-odds bars instead of word clouds because the bars are
+> reproducible, statistically interpretable diagnostics and avoid adding a new
+> word-cloud dependency.
+
 ## UCloud runtime
 
 See `docs/RUNNING_ON_UCLOUD.md` for:

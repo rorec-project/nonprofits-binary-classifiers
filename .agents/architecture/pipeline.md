@@ -13,11 +13,11 @@ Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate
 3. **03 annotate** — full matrix labeling into a resumable long/tidy store.
 4. **04 quality_check** — aggregate to silver labels + LLM-vs-human agreement gate; freeze.
 
-`uv run python scripts/run_pipeline.py` runs 01→04 (`--stages`, `--config`, `--annotate-limit`); each stage also runs standalone via its own script.
+`uv run python scripts/run_pipeline.py` runs 01→04 (`--stages`, `--config`, `--annotate-limit`); each stage also runs standalone via its own script. Stage 10 visualization is intentionally script-only (`uv run python scripts/10_visualize.py --config ...`) and is not wired into the orchestrator.
 
 ## Status
 
-Stages 01–04 exist. Training, evaluation, inference-at-scale, and visualization are **roadmap** (not built). The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–04 exist. Training, evaluation, and inference-at-scale are **roadmap** areas in this high-level note; stage 10 visualization exists as an optional renderer over artifacts from those stages and skips missing inputs. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
 
 ## Inputs
 
