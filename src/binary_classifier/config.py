@@ -116,11 +116,11 @@ class Slate(BaseModel):
     Attributes:
         confirmed: ``True`` only after a human has reviewed the scores and
             promoted the slate. Stage 03 refuses to run an unconfirmed slate.
-        models: The authoritative model set stage 03 runs (each × the prompt
-            set). The human edits this list to control production.
+        models: The authoritative model set stage 03 runs. The human edits this
+            list to control production.
         selected: Per-(model, prompt) detail retained for review — which combos
-            cleared the agreement threshold and their scores. Not consumed by
-            stage 03; informational.
+            cleared the agreement threshold and their scores. When present,
+            stage 03 consumes these selected ``(model_id, prompt_id)`` pairs.
 
     """
 
@@ -250,10 +250,12 @@ class PrevalenceConfig(BaseModel):
 
 
 class AggregationConfig(BaseModel):
-    """Label aggregation method and comparison arms."""
+    """Production aggregation plus stage-11 diagnostic comparison arms."""
 
-    method: Literal["majority", "dawid_skene", "crowdlab"] = "majority"
-    comparison_arms: list[str] = []
+    method: Literal["majority"] = "majority"
+    comparison_arms: list[Literal["dawid_skene", "crowdlab"]] = Field(
+        default_factory=list,
+    )
 
 
 class TestUnlock(BaseModel):
@@ -517,7 +519,8 @@ class BinaryClassifierConfig(BaseModel):
         annotation: LLM annotation hyperparameters.
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
-        aggregation: Silver-label aggregation method and comparison arms.
+        aggregation: Majority-only production aggregation and stage-11
+            diagnostic comparison arms.
         training: Fine-tuning, baseline, and learning-curve settings.
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.

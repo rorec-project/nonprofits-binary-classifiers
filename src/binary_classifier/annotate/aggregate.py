@@ -71,11 +71,11 @@ def majority_vote(df: pd.DataFrame) -> pd.DataFrame:
         tie = (counts == top_count).sum() > 1
         silver_label = np.nan if tie else top_label
 
-        # Confidence = mean confidence among votes for the silver label
+        # Confidence is only meaningful when there is a selected silver label.
         conf_for_label = group[group["label"] == top_label]["confidence"]
-        silver_confidence = (
-            conf_for_label.mean() if not conf_for_label.empty else np.nan
-        )
+        silver_confidence = np.nan
+        if not tie and not conf_for_label.empty:
+            silver_confidence = conf_for_label.mean()
 
         results.append(
             {

@@ -77,6 +77,8 @@ qc:
   f1_ci_floor: 0.70
 
 aggregation:
+  # Stage 04 production aggregation is intentionally majority-only. Non-majority
+  # arms belong in comparison_arms for stage-11 sensitivity diagnostics.
   method: majority
   comparison_arms: []
 

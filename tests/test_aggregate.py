@@ -62,3 +62,19 @@ def test_aggregate_labels_majority_unchanged() -> None:
     assert row["num_abstain"] == 0
     assert row["agreement"] == pytest.approx(2 / 3)
     assert not row["tie"]
+
+
+def test_majority_tie_has_no_silver_confidence() -> None:
+    """Tie rows have no selected label, so confidence should not choose a side."""
+    df = pd.DataFrame(
+        [
+            {"EIN2": "00-1", "source_id": "m__p1", "label": 1, "confidence": 0.8},
+            {"EIN2": "00-1", "source_id": "m__p2", "label": 0, "confidence": 0.9},
+        ]
+    )
+
+    row = aggregate_labels(df, method="majority").iloc[0]
+
+    assert row["tie"]
+    assert pd.isna(row["silver_label"])
+    assert pd.isna(row["silver_confidence"])

@@ -12,7 +12,7 @@ from binary_classifier.annotate.aggregate import (
     aggregate_labels,
     majority_vote,
 )
-from binary_classifier.config import BinaryClassifierConfig, load_config
+from binary_classifier.config import AggregationConfig, BinaryClassifierConfig, load_config
 
 
 SILVER_COLUMNS = [
@@ -58,7 +58,7 @@ def _pred_probs(n: int = 20) -> pd.DataFrame:
 
 
 def test_aggregation_config_defaults_and_yaml_load() -> None:
-    """Aggregation config defaults keep in-memory and YAML loading valid."""
+    """Aggregation config keeps production aggregation majority-only."""
     assert BinaryClassifierConfig().aggregation.method == "majority"
     assert BinaryClassifierConfig().aggregation.comparison_arms == []
 
@@ -66,6 +66,17 @@ def test_aggregation_config_defaults_and_yaml_load() -> None:
 
     assert cfg.aggregation.method == "majority"
     assert cfg.aggregation.comparison_arms == []
+
+
+def test_aggregation_config_rejects_non_majority_production_method() -> None:
+    """Dawid-Skene/CROWDLAB are comparison arms, not stage-04 methods."""
+    with pytest.raises(ValueError):
+        AggregationConfig(method="dawid_skene")
+
+    cfg = AggregationConfig(comparison_arms=["dawid_skene", "crowdlab"])
+
+    assert cfg.method == "majority"
+    assert cfg.comparison_arms == ["dawid_skene", "crowdlab"]
 
 
 def test_crowdlab_pivot_nan_handling_and_prediction_drop(
