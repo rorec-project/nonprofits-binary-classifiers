@@ -1,4 +1,4 @@
-"""Thin CLI wrapper for Stage 4: quality control and aggregation.
+"""Thin CLI wrapper for Stage 4: QC and majority-vote silver-label freeze.
 
 Calls :func:`binary_classifier.qc.agreement.run_quality_check`.
 """
@@ -13,7 +13,7 @@ from binary_classifier.qc.agreement import run_quality_check
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Aggregate labels and run the QC gate (agreement).",
+        description="Freeze majority-vote labels after the QC agreement gate.",
     )
     parser.add_argument(
         "--config",
@@ -49,7 +49,8 @@ def main() -> None:
     """Load stage-04 inputs and delegate QC to the package implementation.
 
     The CLI remains a thin wrapper so standalone runs and the orchestrator share
-    the same agreement gate and fabricated-evidence abstention behavior.
+    the same majority-vote freeze gate and fabricated-evidence abstention
+    behavior.
     """
     args = _parse_args()
     cfg = load_config(args.config)

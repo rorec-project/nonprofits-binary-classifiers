@@ -47,6 +47,7 @@ packages = ["src/binary_classifier"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow and not network'"
 markers = [
   "slow: real training loops / long E2E; excluded by default",
   "network: requires HF Hub downloads; excluded by default",
