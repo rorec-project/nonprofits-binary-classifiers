@@ -249,6 +249,13 @@ class PrevalenceConfig(BaseModel):
     low_tier_sensitivity: bool = True
 
 
+class AggregationConfig(BaseModel):
+    """Label aggregation method and comparison arms."""
+
+    method: Literal["majority", "dawid_skene", "crowdlab"] = "majority"
+    comparison_arms: list[str] = []
+
+
 class TestUnlock(BaseModel):
     """A human-confirmed frozen-test unlock artifact.
 
@@ -510,6 +517,7 @@ class BinaryClassifierConfig(BaseModel):
         annotation: LLM annotation hyperparameters.
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
+        aggregation: Silver-label aggregation method and comparison arms.
         training: Fine-tuning, baseline, and learning-curve settings.
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.
@@ -531,6 +539,7 @@ class BinaryClassifierConfig(BaseModel):
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     qc: QCConfig = Field(default_factory=QCConfig)
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
