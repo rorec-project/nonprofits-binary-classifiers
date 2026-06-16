@@ -4,10 +4,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from binary_classifier.prevalence.quantify import (
-    emq_prevalence,
-    quapy_emq_prevalence,
-)
+from binary_classifier.prevalence.quantify import emq_prevalence
 
 
 def test_emq_recovers_known_prior_shift_on_synthetic_posteriors() -> None:
@@ -17,20 +14,6 @@ def test_emq_recovers_known_prior_shift_on_synthetic_posteriors() -> None:
     estimate = emq_prevalence(val_posteriors, val_labels, corpus_posteriors)
 
     assert estimate == pytest.approx(0.6, abs=1e-3)
-
-
-def test_quapy_emq_matches_vendored_on_synthetic_prior_shift() -> None:
-    """QuaPy EMQ agrees with the vendored EMQ loop when the API is available."""
-    pytest.importorskip("quapy")
-    val_posteriors, val_labels, corpus_posteriors = _prior_shift_problem()
-    vendored = emq_prevalence(val_posteriors, val_labels, corpus_posteriors)
-
-    try:
-        quapy = quapy_emq_prevalence(val_posteriors, val_labels, corpus_posteriors)
-    except ImportError as exc:
-        pytest.skip(str(exc))
-
-    assert quapy == pytest.approx(vendored, abs=1e-6)
 
 
 @pytest.mark.parametrize(

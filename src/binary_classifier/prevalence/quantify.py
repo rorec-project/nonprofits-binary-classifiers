@@ -74,63 +74,6 @@ def emq_prevalence(
     return _positive_prevalence(target_prior, "EMQ prevalence")
 
 
-def quapy_emq_prevalence(
-    val_posteriors: Iterable[Iterable[float]],
-    val_labels: Iterable[float],
-    corpus_posteriors: Iterable[Iterable[float]],
-    max_iter: int = 1000,
-    tol: float = 1e-6,
-) -> float:
-    """Estimate positive-class prevalence with QuaPy's EMQ implementation.
-
-    Args:
-        val_posteriors: Validation-set posterior matrix with columns ordered as
-            negative class then positive class.
-        val_labels: Validation-set binary labels encoded as 0/1.
-        corpus_posteriors: Target corpus posterior matrix with columns ordered
-            as negative class then positive class.
-        max_iter: Maximum EM iterations, forwarded to QuaPy's EMQ class.
-        tol: EM convergence tolerance, forwarded as QuaPy's ``epsilon``.
-
-    Returns:
-        Estimated positive-class prevalence in ``[0, 1]``.
-
-    Raises:
-        ValueError: If inputs are invalid.
-        ImportError: If QuaPy is unavailable or its EMQ API is incompatible.
-
-    """
-    source_post, labels, target_post = _validated_quantifier_inputs(
-        val_posteriors,
-        val_labels,
-        corpus_posteriors,
-    )
-    max_iterations = _validate_max_iter(max_iter)
-    tolerance = _validate_tol(tol)
-    aggregative = _import_quapy_aggregative()
-    emq_cls = getattr(aggregative, "EMQ", None)
-    if emq_cls is None:
-        raise ImportError("QuaPy EMQ prevalence requires quapy.method.aggregative.EMQ")
-
-    try:
-        original_max_iter = emq_cls.MAX_ITER
-        emq_cls.MAX_ITER = max_iterations
-        quantifier = emq_cls(
-            _PosteriorShim(source_post),
-            fit_classifier=False,
-            val_split=None,
-        )
-        quantifier.fit(_dummy_features(len(source_post)), labels)
-        prevalence = quantifier.aggregate(target_post, epsilon=tolerance)
-    except Exception as exc:  # pragma: no cover - exercised only on API drift.
-        raise ImportError("QuaPy EMQ API is unavailable or incompatible") from exc
-    finally:
-        if "original_max_iter" in locals():
-            emq_cls.MAX_ITER = original_max_iter
-
-    return _positive_prevalence(prevalence, "QuaPy EMQ prevalence")
-
-
 def kdey_prevalence(
     val_posteriors: Iterable[Iterable[float]],
     val_labels: Iterable[float],

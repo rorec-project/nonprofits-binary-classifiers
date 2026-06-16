@@ -41,7 +41,7 @@ def test_ppi_ci_covers_known_population_prevalence_across_seeds(
     assert result["n_labeled"] == 500
     assert result["n_unlabeled"] == n_population
     assert result["weighted"] is False
-    assert 0.0 <= result["lam"] <= 1.0
+    assert result["lam"] is None  # ppi_py auto-tunes lambda internally
 
 
 def test_ppi_weighted_and_unweighted_estimates_differ_with_skewed_weights() -> None:

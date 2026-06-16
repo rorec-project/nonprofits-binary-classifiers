@@ -3,14 +3,14 @@
 import importlib
 import logging
 from collections.abc import Iterable
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
-PPIResult: TypeAlias = dict[str, float | int | bool]
+PPIResult: TypeAlias = dict[str, float | int | bool | None]
 
 
 def ppi_prevalence(
@@ -38,9 +38,9 @@ def ppi_prevalence(
             weights. When provided, these are passed to ``ppi_py`` as ``w``.
 
     Returns:
-        A dictionary containing the point estimate, confidence bounds, PPI++
-        power-tuning lambda, input row counts, a weighted flag, and the ``alpha``
-        actually used.
+        A dictionary containing the point estimate, confidence bounds, the
+        power-tuning ``lam`` (``None`` because ppi_py auto-tunes it internally),
+        input row counts, a weighted flag, and the ``alpha`` actually used.
 
     Raises:
         ValueError: If inputs are empty, non-finite, misaligned, outside the
@@ -60,8 +60,11 @@ def ppi_prevalence(
     weights = None if w is None else _as_weight_array(w, len(y))
     ppi_py = importlib.import_module("ppi_py")
 
-    lam = _auto_lam(y, yhat, yhat_unlab, weights)
-    call_kwargs: dict[str, Any] = {"lam": lam}
+    # Leave ``lam`` unset so ppi_py estimates the optimal PPI++ power-tuning
+    # parameter from the data (Angelopoulos et al. 2023, arXiv:2311.01453). This
+    # uses ppi_py's documented public behaviour (``lam=None`` -> auto-tune)
+    # instead of re-deriving lambda through a private ppi_py internal.
+    call_kwargs: dict[str, Any] = {}
     if weights is not None:
         call_kwargs["w"] = weights
 
@@ -81,7 +84,7 @@ def ppi_prevalence(
         "estimate": estimate,
         "ci_lower": _as_scalar(ci_lower, "ci_lower"),
         "ci_upper": _as_scalar(ci_upper, "ci_upper"),
-        "lam": lam,
+        "lam": None,  # auto-tuned internally by ppi_py
         "alpha": alpha_value,
         "n_labeled": int(len(y)),
         "n_unlabeled": int(len(yhat_unlab)),
@@ -93,55 +96,6 @@ def ppi_prevalence(
         result["n_unlabeled"],
     )
     return result
-
-
-def _auto_lam(
-    y: NDArray[np.float64],
-    yhat: NDArray[np.float64],
-    yhat_unlabeled: NDArray[np.float64],
-    weights: NDArray[np.float64] | None,
-) -> float:
-    """Compute the scalar PPI++ lambda used by ``ppi_py`` for mean CIs."""
-    ppi_py = importlib.import_module("ppi_py")
-    ppi_impl = importlib.import_module("ppi_py.ppi")
-
-    y_2d = ppi_py.reshape_to_2d(y)
-    yhat_2d = ppi_py.reshape_to_2d(yhat)
-    yhat_unlab_2d = ppi_py.reshape_to_2d(yhat_unlabeled)
-    n_labeled = y_2d.shape[0]
-    n_unlabeled = yhat_unlab_2d.shape[0]
-
-    labeled_weights = ppi_py.construct_weight_vector(
-        n_labeled,
-        weights,
-        vectorized=True,
-    )
-    unlabeled_weights = ppi_py.construct_weight_vector(
-        n_unlabeled,
-        None,
-        vectorized=True,
-    )
-    ppi_pointestimate = ppi_py.ppi_mean_pointestimate(
-        y_2d,
-        yhat_2d,
-        yhat_unlab_2d,
-        lam=1,
-        w=labeled_weights,
-        w_unlabeled=unlabeled_weights,
-    )
-    grads = labeled_weights * (y_2d - ppi_pointestimate)
-    grads_hat = labeled_weights * (yhat_2d - ppi_pointestimate)
-    grads_hat_unlabeled = unlabeled_weights * (yhat_unlab_2d - ppi_pointestimate)
-    lam = ppi_impl._calc_lam_glm(
-        grads,
-        grads_hat,
-        grads_hat_unlabeled,
-        np.eye(yhat_2d.shape[1]),
-        coord=None,
-        clip=True,
-        optim_mode="overall",
-    )
-    return _as_scalar(cast("float | NDArray[np.float64]", lam), "lam")
 
 
 def _validate_alpha(alpha: float) -> float:
