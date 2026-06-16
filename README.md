@@ -22,17 +22,29 @@ src/binary_classifier/
       openai_annotator.py
       vllm_annotator.py
     run_annotation.py  # Batch labeling; resume by (EIN2, source_id)
-    aggregate.py       # Majority vote default; other aggregation arms are gated
+    aggregate.py       # Stage 04 majority vote + Stage 11 diagnostic arms
   qc/
     agreement.py       # Validation gate: κ/α reporting + minority-F1 CI floor
-    aggregation_compare.py # Stage 11 decision-support comparison report
+    preflight.py       # Human gates G1–G4
+    aggregation_compare.py # Stage 11 sensitivity/diagnostic comparison report
+  train/               # Stage 06: baselines, encoder sweep, cross-fit OOF, selection
+  evaluation/          # Stage 07: calibration, thresholds, subgroups, frozen-test gate
+  inference/           # Stage 08: rule/classifier routing + sharded full-corpus inference
+  prevalence/          # Stage 09: PPI++ / Rogan–Gladen / quantification cross-checks
+  viz/                 # Stage 10: n-gram log-odds + metric/calibration/prevalence plots
 scripts/
   01_build_sample.py   # Stage 01: construct silver + gold + prompt/validation/test/monitor manifests
   02_bakeoff_prompts.py # Stage 02: model×prompt bake-off on prompt-dev
   03_annotate.py       # Stage 03: full model×prompt matrix labeling over silver ∪ gold
   04_quality_check.py  # Stage 04: QC gate + freeze silver-only labels
+  05_build_anchor.py   # Stage 05: full-frame anchor sample (incl. LOW)
+  06_train.py          # Stage 06: baselines + encoder sweep + final-seed refit
+  07_evaluate.py       # Stage 07: calibration + frozen-test acceptance gate
+  08_infer.py          # Stage 08: full-corpus inference with LOW-tier rule routing
+  09_prevalence.py     # Stage 09: population prevalence (PPI++ + Rogan–Gladen)
+  10_visualize.py      # Stage 10: script-only figure renderer
   11_aggregation_compare.py # Stage 11: script-only aggregation comparison
-  run_pipeline.py      # Orchestrator: chains 01→04
+  run_pipeline.py      # Orchestrator: chains 01→09 with human gates G1–G4
 config/
   religious_missions.yaml   # First task config (entity=missions, field=LONGEST_MISSION)
 ```
@@ -114,7 +126,7 @@ Open `gold_to_code.csv`. It contains four columns: `EIN2`, `split`, `text`, `hum
 
 > **Re-split caveat:** if you re-run stage 01 before coding starts, the gold split tags can reshuffle. Re-split before anyone codes, or regenerate the coding template from the new manifests before continuing.
 
-> **Gate 1 (G1 — labels gate):** The pipeline will refuse to run stages 02 or 04 if any `human_label` is missing, blank, or non-`0/1`. It exits gracefully with a clear message so no GPU work is wasted.
+> **Gate 1 (G1 — labels gate):** The pipeline will refuse to run label-dependent stages if the needed split has missing, blank, or non-`0/1` `human_label` values: `prompt_dev` for stage 02, `validation` for stages 04/06, and `test` for stage 07. It exits gracefully with a clear message so no GPU work is wasted.
 
 If you need to regenerate the template from scratch (discarding all human labels), use:
 
@@ -196,19 +208,75 @@ data:
 
 Stage 01 will generate a small synthetic dataset, stamp it `data_source="synthetic"`, and proceed. This is intended for development smoke tests only — never use synthetic data for production runs.
 
+### Step 7 — Modeling and measurement (stages 05–09)
+
+Stages 05–09 are wired into the orchestrator behind two further human gates (**G4** anchor labels, **G3** test unlock).
+
+```bash
+# 05 anchor: full-frame sample (incl. LOW) for population prevalence
+uv run python scripts/run_pipeline.py --stages 05
+```
+
+Open `data/processed/gold/anchor_to_code.csv` and code every `human_label` as a
+strict `0/1`. **Gate G4** blocks stages 07/09 until this is complete.
+
+```bash
+# 06 train: selection sweep -> final-seed refit (two-phase, automatic)
+uv run python scripts/run_pipeline.py --stages 06
+```
+
+Orchestrated stage 06 runs the selection sweep and then the final-seed refit, so `data/models/selection_report.json` ends with a real checkpoint SHA. Review it, copy its `selected_model_skeleton` into `data/processed/gold/selected_model.json`, then create `data/processed/gold/test_unlock.json` with `"confirmed": true`, the selected `checkpoint_sha256`, and the acceptance snapshot. **Gate G3** touches the frozen test only after this.
+
+```bash
+# 07 evaluate (frozen-test gate) -> 08 infer -> 09 prevalence
+uv run python scripts/run_pipeline.py --stages 07,08,09
+```
+
+### Human gates summary
+
+| Gate               | Before stage(s)   | Human artifact                                               |
+| ------------------ | ----------------- | ------------------------------------------------------------ |
+| G1 (labels)        | 02 / 04 / 06 / 07 | `gold_to_code.csv` coded `0/1` for the needed split          |
+| G2 (slate)         | 03                | `production_slate.json` with `"confirmed": true`             |
+| G4 (anchor labels) | 07 / 09           | `anchor_to_code.csv` coded `0/1`                             |
+| G3 (test unlock)   | 07                | `test_unlock.json` with `"confirmed": true` + checkpoint SHA |
+
+### Per-stage scripts and options
+
+Every stage also runs standalone (`--config` selects the task YAML and is
+accepted everywhere). Notable extra options:
+
+| Stage | Script                      | Notable options                                                                                     |
+| ----- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| 01    | `01_build_sample.py`        | `--force`                                                                                           |
+| 02    | `02_bakeoff_prompts.py`     | `--prompts`, `--human-labels`, `--limit`, `--store-path`, `--output`                                |
+| 03    | `03_annotate.py`            | `--limit`, `--no-resume`, `--canary`, `--checkpoint-every`                                          |
+| 04    | `04_quality_check.py`       | `--human-validation`, `--store-path`, `--output`                                                    |
+| 05    | `05_build_anchor.py`        | `--force`                                                                                           |
+| 06    | `06_train.py`               | `--baselines-only`, `--sweep`, `--final`, `--encoder`, `--subset`, `--epochs`, `--seeds`, `--limit` |
+| 07    | `07_evaluate.py`            | (config only)                                                                                       |
+| 08    | `08_infer.py`               | `--limit`                                                                                           |
+| 09    | `09_prevalence.py`          | (config only)                                                                                       |
+| 10    | `10_visualize.py`           | (config only; script-only, not orchestrated)                                                        |
+| 11    | `11_aggregation_compare.py` | (config only; script-only, not orchestrated)                                                        |
+
+The orchestrator forwards `--config`, `--stages`, `--annotate-limit` (stage 03), `--infer-limit` (stage 08), and `--force` (stages 01/05). Stage-06 options such as `--final` are only available on `06_train.py`; the orchestrator runs stage 06 as a two-phase sweep→final automatically.
+
 ### End-to-end single command
 
-Once the pipeline is fully set up and both human checkpoints are satisfied, you can run the entire chain:
+Once the two label gates (G1/G2) are satisfied, you can chain the early stages:
 
 ```bash
 uv run python scripts/run_pipeline.py --stages 01,02,03,04
 ```
 
+The modeling half is then run around the G3/G4 human artifacts above — typically `--stages 05`, then `06`, then `07,08,09`.
+
 ## Key design decisions
 
 - **Entity-agnostic:** `entity` and `field` are config parameters, not hard-coded.
 - **Reproducibility:** one global `SEED`; every stochastic step is seeded.
-- **Weak-supervision-ready:** the long/tidy label store keeps model×prompt votes so stage 11 can compare gated Dawid-Skene and CROWDLAB arms against majority vote on the human holdout before any human adoption decision.
+- **Weak-supervision-ready:** the long/tidy label store keeps model×prompt votes so stage 11 can run Dawid-Skene and CROWDLAB sensitivity diagnostics against the production majority vote on the human holdout.
 - **Rule layer:** LOW-quality / bare-label missions are handled by a high-precision rule layer at inference, not dropped.
 - **EIN2 everywhere:** the upstream join key is carried through every artifact.
 
@@ -218,49 +286,19 @@ The current sampling frame is the HIGH+MEDIUM quality strata only: `Q >= 3.0`. L
 
 This framing is deliberate: the current pipeline optimizes annotation and QC on text that is informative enough for LLM review, while keeping a clear hook for the later all-nonprofits prevalence estimator.
 
-## Roadmap and script-only extensions
+## Pipeline stages 05–11
 
-The detailed decision record lives in
-`.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
-**Superseded decisions (June 2026)** memo. That memo replaces the old broad
-training sweep with the staged plan below.
+Stages 05–09 are built and wired into the orchestrator (behind gates G3/G4 — see the operator guide above); stages 10–11 are script-only helpers.
 
-- **Stage 05 — anchor sample:** draw a representative anchor sample at the real
-  prior over the full frame, including LOW-quality rows, so later prevalence
-  estimates do not treat the HIGH+MEDIUM silver/gold frame as population
-  representative.
-- **Stage 06 — training:** train on the full silver pool by default and keep only
-  a `{25%, 50%, 100%}` one-seed documentation curve. Use soft vote-share labels
-  as the default target, retain hard majority vote as the check, and compare
-  DeBERTa-v3-base with ModernBERT-base plus TF-IDF/MiniLM baselines. RoBERTa,
-  DistilBERT, label smoothing, focal/resampling, and confidence-weighted loss
-  are intentionally skipped.
-- **Stage 07 — evaluation:** report minority-class precision/recall/F1, MCC,
-  balanced accuracy, PR-AUC, bootstrap intervals, and calibration metrics, then
-  add decision-curve / net-benefit analysis where useful.
-- **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows,
-  route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist
-  model-version metadata with positive-class probabilities.
-- **Stage 09 — prevalence:** estimate population share over all nonprofits with
-  PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
-  arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks and
-  per-NTEE-stratum calibration where prior-shift assumptions are fragile.
-- **Stage 10 — visualization:** produce auditable n-gram log-odds bars plus
-  metric and calibration plots.
-- **Stage 11 — aggregation comparison:** script-only decision support that writes
-  `interim/aggregation_compare.json`, comparing majority vote with configured
-  Dawid-Skene and CROWDLAB arms on the human validation set. Majority remains
-  the default; a non-majority arm is eligible only if its minority-F1 CI lower
-  bound beats the majority point estimate. Adoption is a human decision, never
-  an automatic config switch, and it invalidates frozen `silver_labels.csv` plus
-  downstream trained artifacts, so stages 04→06 must be re-run.
+- **Stage 05 — anchor sample:** draw a representative anchor sample at the real prior over the full frame, including LOW-quality rows, so later prevalence estimates do not treat the HIGH+MEDIUM silver/gold frame as population representative.
+- **Stage 06 — training:** train on the full silver pool by default and keep only a `{25%, 50%, 100%}` one-seed documentation curve. Use soft vote-share labels as the default target, retain hard majority vote as the check, and compare DeBERTa-v3-base with ModernBERT-base plus TF-IDF/MiniLM baselines. RoBERTa, DistilBERT, label smoothing, focal/resampling, and confidence-weighted loss are intentionally skipped.
+- **Stage 07 — evaluation:** report minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, bootstrap intervals, and calibration metrics, then add decision-curve / net-benefit analysis where useful.
+- **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows, route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist model-version metadata with positive-class probabilities.
+- **Stage 09 — prevalence:** estimate population share over all nonprofits with PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453), with a vendored SLD/EMQ implementation and KDEy via QuaPy as cross-checks and per-NTEE-stratum calibration where prior-shift assumptions are fragile.
+- **Stage 10 — visualization:** produce auditable n-gram log-odds bars plus metric and calibration plots.
+- **Stage 11 — aggregation comparison:** script-only sensitivity diagnostics that write `interim/aggregation_compare.json`, comparing majority vote with configured Dawid-Skene arms on the human validation set. CROWDLAB is diagnostic-only and is scored only when leakage-safe, validation-aligned classifier probabilities are available; otherwise the report marks it skipped. Stage 04 production labels remain majority-only; Stage 11 does not continue production or activate a replacement aggregation method.
 
-> **Visualization note:** stage 10 is a script-only renderer
-> (`uv run python scripts/10_visualize.py --config ...`) that writes PNG and SVG
-> figures for whichever upstream artifacts exist, skipping missing inputs. It
-> uses signed n-gram log-odds bars instead of word clouds because the bars are
-> reproducible, statistically interpretable diagnostics and avoid adding a new
-> word-cloud dependency.
+> **Visualization note:** stage 10 is a script-only renderer (`uv run python scripts/10_visualize.py --config ...`) that writes PNG and SVG figures for whichever upstream artifacts exist, skipping missing inputs. It uses signed n-gram log-odds bars instead of word clouds because the bars are reproducible, statistically interpretable diagnostics and avoid adding a new word-cloud dependency.
 
 ## UCloud runtime
 

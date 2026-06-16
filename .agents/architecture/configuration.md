@@ -44,6 +44,10 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 - `f1_ci_floor` — Minimum lower bound on the bootstrap confidence interval for minority-class F1 required to freeze silver labels.
 - `abstain_on_fabricated_positive` — When `true`, any positive label that carries a fabricated evidence span is treated as an abstain (`None`) before aggregation.
 
+### `aggregation`
+- `method` — Production Stage 04 aggregation method. This is intentionally majority-only.
+- `comparison_arms` — Optional Dawid-Skene/CROWDLAB arms for Stage 11 sensitivity diagnostics only; they are not production continuation methods.
+
 ## Retasking (new classification task)
 
 1. Copy `config/religious_missions.yaml` → `config/<task>.yaml`.
@@ -52,12 +56,13 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 
 No source edits, provided the upstream parquet exposes the chosen `field`.
 
-## Roadmap hooks and script-only extensions
+## Built stages and script-only extensions
 
-- The active staged roadmap is recorded in
-  `.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
-  **Superseded decisions (June 2026)** memo. That memo replaces the old broad
-  training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
+Stages 05–09 are built and wired into the orchestrator; stages 10–11 are
+script-only helpers. The decision record is in
+`.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
+**Superseded decisions (June 2026)** memo, which replaced the old broad
+training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
 - **Stage 05 — anchor sample:** add a representative anchor sample over the full
   frame, including LOW-quality rows, so population prevalence can be estimated
   without treating the HIGH+MEDIUM silver/gold frame as representative.
@@ -74,16 +79,14 @@ No source edits, provided the upstream parquet exposes the chosen `field`.
   model-version metadata with positive-class probabilities.
 - **Stage 09 — prevalence:** estimate population share over all nonprofits with
   PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
-  arXiv:2311.01453), with SLD/EMQ and KDEy/DyS via QuaPy as cross-checks plus
-  per-NTEE-stratum calibration.
+  arXiv:2311.01453), with a vendored SLD/EMQ implementation and KDEy via QuaPy
+  as cross-checks plus per-NTEE-stratum calibration.
 - **Stage 10 — visualization:** replace exploratory word clouds with auditable
   n-gram log-odds bars and metric/calibration plots.
-- **Stage 11 — aggregation comparison:** script-only decision support that compares
-  majority vote with configured Dawid-Skene and CROWDLAB arms on the human
-  validation set. Majority remains the default; a non-majority arm is eligible
-  only if its minority-F1 CI lower bound beats the majority point estimate, and
-  human adoption invalidates frozen `silver_labels.csv` and requires re-running
-  stages 04→06.
+- **Stage 11 — aggregation comparison:** script-only sensitivity diagnostics that compare
+   majority vote with configured Dawid-Skene and CROWDLAB arms on the human
+   validation set. Stage 04 production labels remain majority-only; Stage 11
+   does not continue production or activate a replacement aggregation method.
 
 ## Related
 
