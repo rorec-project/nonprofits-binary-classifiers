@@ -287,6 +287,21 @@ def test_raw_agreement_still_logged_and_reported(
     assert "Validation raw agreement (reported only)" in caplog.text
 
 
+def test_pr_auc_uses_positive_class_score_not_winner_confidence(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """Confident negative labels should score low for positive-class AUC."""
+    tiny_config.qc.f1_ci_floor = 0.0
+    rows = [("00-P", 1), ("00-N", 0)]
+    _seed_numeric_store(tiny_registry, rows)
+    _write_validation(tiny_registry, rows)
+
+    result = run_quality_check(tiny_config, tiny_registry)
+
+    assert result["pr_auc"] == pytest.approx(1.0)
+
+
 def test_gate_below_threshold_raises_and_writes_nothing(
     tiny_config, tiny_registry
 ) -> None:

@@ -1,15 +1,16 @@
-"""Stage 11 aggregation-method comparison report.
+"""Stage 11 aggregation-method sensitivity/diagnostic report.
 
-The comparison is deliberately diagnostic: majority vote remains the production
-default unless a human changes configuration and reruns the freeze/training
-stages. This module scores majority vote plus configured comparison arms on the
-human-coded validation split and writes a report with the standing adoption rule.
+The comparison is deliberately diagnostic: stage 04 production labels are always
+frozen by majority vote. This module scores majority vote plus configured
+Dawid-Skene/CROWDLAB comparison arms on the human-coded validation split, but it
+does not continue production or recommend an automatic replacement.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,14 +28,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ADOPTION_RULE = (
-    "A non-majority arm may replace majority only if its bootstrap minority-F1 "
-    "confidence-interval lower bound is strictly greater than majority's "
-    "minority-F1 point estimate."
+_SENSITIVITY_RULE = (
+    "A non-majority diagnostic arm clears the sensitivity screen only if its "
+    "bootstrap minority-F1 confidence-interval lower bound is strictly greater "
+    "than majority's minority-F1 point estimate."
 )
-_RERUN_MESSAGE = (
-    "Adopting any non-majority aggregation arm invalidates the frozen "
-    "silver_labels.csv artifact; re-run stages 04→06 before using the new labels."
+_PRODUCTION_NOTE = (
+    "Diagnostic only: stage 04 intentionally freezes majority-vote labels. "
+    "Dawid-Skene and CROWDLAB are stage-11 sensitivity arms, not production "
+    "continuation methods. CROWDLAB is scored only when leakage-safe, "
+    "validation-aligned classifier probabilities are available; otherwise it is "
+    "reported as skipped."
 )
 
 
@@ -42,7 +46,7 @@ def run_aggregation_compare(
     cfg: "BinaryClassifierConfig",
     registry: "PathRegistry",
 ) -> None:
-    """Compare aggregation arms on the human validation split.
+    """Compare diagnostic aggregation arms on the human validation split.
 
     Args:
         cfg: Validated binary-classifier configuration.
@@ -61,13 +65,33 @@ def run_aggregation_compare(
     store_df = _load_annotation_store(registry.annotation_store)
     validation_df = _load_validation_labels(registry.gold_coding_template)
     methods = _comparison_methods(cfg.aggregation.comparison_arms)
-    pred_probs = (
-        _load_oof_pred_probs(registry.oof_pred_probs) if "crowdlab" in methods else None
-    )
+    pred_probs: pd.DataFrame | None = None
+    crowdlab_skip_reason: str | None = None
+    if "crowdlab" in methods:
+        try:
+            pred_probs = _load_oof_pred_probs(registry.oof_pred_probs)
+        except (FileNotFoundError, ValueError) as exc:
+            crowdlab_skip_reason = str(exc)
 
     arms: dict[str, dict[str, Any]] = {}
     for method in methods:
         logger.info("Scoring aggregation arm: %s", method)
+        if method == "crowdlab":
+            skip_reason = crowdlab_skip_reason or _crowdlab_validation_skip_reason(
+                store_df,
+                validation_df,
+                pred_probs,
+                registry.oof_pred_probs,
+            )
+            if skip_reason is not None:
+                logger.warning("Skipping CROWDLAB diagnostic arm: %s", skip_reason)
+                arms[method] = _skipped_arm_entry(
+                    method,
+                    skip_reason,
+                    validation_df,
+                    pred_probs,
+                )
+                continue
         aggregated = aggregate_labels(
             store_df,
             method=method,
@@ -81,10 +105,11 @@ def run_aggregation_compare(
             n_resamples=int(cfg.evaluation.bootstrap_resamples),
         )
 
-    adoption = _adoption_verdicts(arms)
+    sensitivity = _sensitivity_verdicts(arms)
     report = {
         "metadata": {
             "stage": "11_aggregation_compare",
+            "report_purpose": "sensitivity_diagnostic",
             "created_at_utc": datetime.now(UTC).isoformat(),
             "seed": int(cfg.SEED),
             "bootstrap_resamples": int(cfg.evaluation.bootstrap_resamples),
@@ -94,13 +119,13 @@ def run_aggregation_compare(
             else None,
             "gold_coding_template": str(registry.gold_coding_template),
             "validation_split": "validation",
-            "production_method": cfg.aggregation.method,
+            "production_method": "majority",
             "comparison_arms": list(cfg.aggregation.comparison_arms),
-            "adoption_rule": _ADOPTION_RULE,
-            "rerun_required_if_adopted": _RERUN_MESSAGE,
+            "sensitivity_rule": _SENSITIVITY_RULE,
+            "production_note": _PRODUCTION_NOTE,
         },
         "arms": arms,
-        "adoption": adoption,
+        "sensitivity": sensitivity,
     }
 
     registry.aggregation_compare.parent.mkdir(parents=True, exist_ok=True)
@@ -213,13 +238,61 @@ def _load_validation_labels(path: Path) -> pd.DataFrame:
     return sub.drop_duplicates(subset=["EIN2"], keep="last")
 
 
-def _comparison_methods(comparison_arms: list[str]) -> list[str]:
+def _comparison_methods(comparison_arms: Sequence[str]) -> list[str]:
     """Return majority plus de-duplicated configured comparison methods."""
     methods: list[str] = []
     for method in ["majority", *comparison_arms]:
         if method not in methods:
             methods.append(method)
     return methods
+
+
+def _crowdlab_validation_skip_reason(
+    store_df: pd.DataFrame,
+    validation_df: pd.DataFrame,
+    pred_probs: pd.DataFrame | None,
+    pred_probs_path: Path,
+) -> str | None:
+    """Return why CROWDLAB cannot be safely scored on validation, if any."""
+    if pred_probs is None:
+        return f"CROWDLAB diagnostic requires OOF probabilities at {pred_probs_path}."
+
+    validation_ein2 = set(validation_df["EIN2"].astype(str))
+    annotated_validation = sorted(set(store_df["EIN2"].astype(str)) & validation_ein2)
+    if not annotated_validation:
+        return "CROWDLAB diagnostic has no validation EIN2s in the annotation store."
+
+    prob_ein2 = set(pred_probs["EIN2"].astype(str))
+    missing = [ein2 for ein2 in annotated_validation if ein2 not in prob_ein2]
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = "" if len(missing) <= 5 else f", ... ({len(missing)} total)"
+        return (
+            "CROWDLAB diagnostic skipped because OOF probabilities do not cover "
+            f"all validation annotation EIN2s; missing {preview}{suffix}."
+        )
+    return None
+
+
+def _skipped_arm_entry(
+    method: str,
+    reason: str,
+    validation_df: pd.DataFrame,
+    pred_probs: pd.DataFrame | None,
+) -> dict[str, Any]:
+    """Build a report entry for a diagnostic arm skipped by preflight checks."""
+    entry: dict[str, Any] = {
+        "method": method,
+        "status": "skipped",
+        "skip_reason": reason,
+        "n_validation_labels": int(len(validation_df)),
+    }
+    if pred_probs is not None:
+        validation_ein2 = set(validation_df["EIN2"].astype(str))
+        pred_ein2 = set(pred_probs["EIN2"].astype(str))
+        entry["n_pred_probs"] = int(len(pred_ein2))
+        entry["n_pred_probs_validation_overlap"] = int(len(validation_ein2 & pred_ein2))
+    return entry
 
 
 def _score_arm(
@@ -264,9 +337,7 @@ def _score_arm(
 
     y_true = valid["human_label"].astype(int).to_numpy()
     y_pred = valid["silver_label"].astype(int).to_numpy()
-    y_score = None
-    if valid["silver_confidence"].notna().any():
-        y_score = valid["silver_confidence"].astype(float).to_numpy()
+    y_score = _positive_class_score(valid)
     metrics = compute_metric_bundle(
         y_true,
         y_pred,
@@ -277,6 +348,7 @@ def _score_arm(
     )
     return {
         "method": method,
+        "status": "scored",
         "n_aggregated": int(len(aggregate_norm)),
         "n_validation_labels": int(len(validation_df)),
         "n_validation_overlap": int(len(merged)),
@@ -287,14 +359,23 @@ def _score_arm(
     }
 
 
-def _adoption_verdicts(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Apply the standing adoption rule to non-majority arms.
+def _positive_class_score(valid: pd.DataFrame) -> np.ndarray | None:
+    """Convert winner confidence into a positive-class score for AUC metrics."""
+    if not valid["silver_confidence"].notna().any():
+        return None
+    confidence = valid["silver_confidence"].astype(float)
+    label = valid["silver_label"].astype(int)
+    return np.where(label == 1, confidence, 1.0 - confidence)
+
+
+def _sensitivity_verdicts(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Apply the diagnostic sensitivity screen to non-majority arms.
 
     Args:
         arms: Per-arm score entries including majority.
 
     Returns:
-        Adoption verdict bundle.
+        Sensitivity verdict bundle.
 
     """
     majority_f1 = float(arms["majority"]["metrics"]["f1"])
@@ -304,16 +385,24 @@ def _adoption_verdicts(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
     for method, entry in arms.items():
         if method == "majority":
             continue
+        if entry.get("status") == "skipped":
+            verdicts[method] = {
+                "clears_majority_sensitivity_screen": False,
+                "skip_reason": entry.get("skip_reason"),
+                "rule": _SENSITIVITY_RULE,
+                "production_note": _PRODUCTION_NOTE,
+            }
+            continue
         ci_lower = float(entry["metrics"]["bootstrap_ci"]["minority_f1"]["lower"])
-        may_replace = bool(np.isfinite(ci_lower) and ci_lower > majority_f1)
-        if may_replace:
+        clears_screen = bool(np.isfinite(ci_lower) and ci_lower > majority_f1)
+        if clears_screen:
             eligible.append(method)
         verdicts[method] = {
-            "may_replace_majority": may_replace,
+            "clears_majority_sensitivity_screen": clears_screen,
             "minority_f1_ci_lower": ci_lower,
             "majority_minority_f1_point": majority_f1,
-            "rule": _ADOPTION_RULE,
-            "requires_rerun": _RERUN_MESSAGE,
+            "rule": _SENSITIVITY_RULE,
+            "production_note": _PRODUCTION_NOTE,
         }
 
     recommended = None
@@ -326,11 +415,11 @@ def _adoption_verdicts(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
         )
     return {
         "majority_minority_f1_point": majority_f1,
-        "eligible_arms": eligible,
-        "recommended_arm": recommended,
+        "arms_clearing_screen": eligible,
+        "best_diagnostic_arm": recommended,
         "verdicts": verdicts,
-        "rule": _ADOPTION_RULE,
-        "message": _RERUN_MESSAGE,
+        "rule": _SENSITIVITY_RULE,
+        "message": _PRODUCTION_NOTE,
     }
 
 

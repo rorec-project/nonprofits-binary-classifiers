@@ -52,6 +52,7 @@ def test_run_inference_writes_schema_rules_monitor_and_metadata(
     assert predictions["model_id"].eq("stub-model").all()
     assert predictions["checkpoint_sha256"].eq("stub-sha").all()
     assert predictions["calibrator_method"].eq("platt").all()
+    assert predictions["calibrator_params_hash"].astype(str).str.len().eq(64).all()
     assert predictions["threshold"].eq(0.5).all()
     assert predictions["inference_date"].astype(str).str.len().gt(0).all()
     assert predictions["pipeline_version"].astype(str).str.len().gt(0).all()
@@ -63,7 +64,7 @@ def test_run_inference_writes_schema_rules_monitor_and_metadata(
     assert monitor["metadata"]["calibrator_method"] == "platt"
 
 
-def test_run_inference_resumes_existing_shards_and_preserves_completeness(
+def test_run_inference_rewrites_existing_shards_with_stale_metadata(
     tiny_config,
     tiny_registry,
     monkeypatch,
@@ -85,9 +86,128 @@ def test_run_inference_resumes_existing_shards_and_preserves_completeness(
     assert set(predictions["EIN2"]) == set(missions["EIN2"])
     assert len(predictions) == len(missions)
     assert predictions["EIN2"].duplicated().sum() == 0
-    assert predictor.n_scored == 2
-    preserved = predictions[predictions["EIN2"].isin(["A000", "A001"])]
-    assert preserved["model_id"].eq("preexisting").all()
+    assert predictor.n_scored == 4
+    rewritten = predictions[predictions["EIN2"].isin(["A000", "A001"])]
+    assert rewritten["model_id"].eq("unknown").all()
+    assert rewritten["checkpoint_sha256"].eq("unknown").all()
+
+
+def test_run_inference_rewrites_existing_shards_with_wrong_ein2_slice(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A002", "A003"])
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    assert predictions["EIN2"].tolist() == ["A000", "A001", "A002", "A003"]
+    assert predictor.n_scored == 4
+
+
+def test_run_inference_rewrites_existing_shards_with_wrong_row_count(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A000"])
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    assert predictions["EIN2"].tolist() == ["A000", "A001", "A002", "A003"]
+    assert predictor.n_scored == 4
+
+
+def test_run_inference_rewrites_existing_shards_with_stale_pipeline_version(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A000", "A001"])
+    stale = pd.read_parquet(shard_path)
+    stale["pipeline_version"] = "stale-version"
+    stale.to_parquet(shard_path, index=False)
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    assert predictor.n_scored == 4
+
+
+def test_run_inference_rewrites_existing_shards_with_extra_columns(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A000", "A001"])
+    extra = pd.read_parquet(shard_path)
+    extra["unexpected"] = "extra"
+    extra.to_parquet(shard_path, index=False)
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    assert predictor.n_scored == 4
+
+
+def test_run_inference_rewrites_existing_shards_with_stale_calibrator_params(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    shard_path = tiny_registry.predictions_dir / "shards" / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A000", "A001"])
+    stale = pd.read_parquet(shard_path)
+    stale["calibrator_params_hash"] = "0" * 64
+    stale.to_parquet(shard_path, index=False)
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    assert predictor.n_scored == 4
 
 
 def _missions_frame() -> pd.DataFrame:
@@ -193,6 +313,22 @@ def _prewrite_first_shard(path) -> None:
     ).to_parquet(path, index=False)
 
 
+def _prewrite_matching_metadata_shard(tiny_config, path, ein2s: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for ein2 in ein2s:
+        row = _prediction_row(ein2, 0.8, 1)
+        row["model_id"] = "unknown"
+        row["checkpoint_sha256"] = "unknown"
+        row["calibrator_params_hash"] = predict_mod._calibrator_params_hash(
+            {"params": {"a": 1.0, "b": 0.0}},
+        )
+        row["pipeline_version"] = predict_mod._pipeline_version()
+        row["config_hash"] = predict_mod._config_hash(tiny_config)
+        rows.append(row)
+    pd.DataFrame(rows, columns=_prediction_columns()).to_parquet(path, index=False)
+
+
 def _prediction_row(ein2: str, prob: float, label: int) -> dict:
     return {
         "EIN2": ein2,
@@ -206,6 +342,7 @@ def _prediction_row(ein2: str, prob: float, label: int) -> dict:
         "model_id": "preexisting",
         "checkpoint_sha256": "preexisting-sha",
         "calibrator_method": "platt",
+        "calibrator_params_hash": "preexisting-params-sha",
         "threshold": 0.5,
         "inference_date": "2026-01-01T00:00:00+00:00",
         "pipeline_version": "test",
@@ -226,6 +363,7 @@ def _prediction_columns() -> list[str]:
         "model_id",
         "checkpoint_sha256",
         "calibrator_method",
+        "calibrator_params_hash",
         "threshold",
         "inference_date",
         "pipeline_version",

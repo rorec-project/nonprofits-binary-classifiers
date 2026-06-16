@@ -12,12 +12,12 @@ from binary_classifier.qc import aggregation_compare as compare_mod
 from binary_classifier.qc.aggregation_compare import run_aggregation_compare
 
 
-def test_aggregation_compare_report_schema_and_adoption_true(
+def test_aggregation_compare_report_schema_and_sensitivity_screen_true(
     monkeypatch: pytest.MonkeyPatch,
     tiny_config,
     tiny_registry,
 ) -> None:
-    """A comparison arm can pass only when its CI lower bound clears majority F1."""
+    """A diagnostic arm can pass only when its CI lower bound clears majority F1."""
     tiny_config.aggregation.comparison_arms = ["crowdlab"]
     tiny_config.evaluation.bootstrap_resamples = 100
     validation = _write_inputs(tiny_registry)
@@ -38,23 +38,27 @@ def test_aggregation_compare_report_schema_and_adoption_true(
 
     report = json.loads(tiny_registry.aggregation_compare.read_text())
     assert report["metadata"]["stage"] == "11_aggregation_compare"
+    assert report["metadata"]["report_purpose"] == "sensitivity_diagnostic"
     assert report["metadata"]["production_method"] == "majority"
-    assert "re-run stages 04→06" in report["metadata"]["rerun_required_if_adopted"]
+    assert (
+        "stage 04 intentionally freezes majority-vote"
+        in report["metadata"]["production_note"]
+    )
     assert set(report["arms"]) == {"majority", "crowdlab"}
     assert report["arms"]["crowdlab"]["n_scored"] == len(validation)
     assert report["arms"]["crowdlab"]["scored_ein2"] == validation["EIN2"].tolist()
-    verdict = report["adoption"]["verdicts"]["crowdlab"]
-    assert verdict["may_replace_majority"] is True
-    assert report["adoption"]["eligible_arms"] == ["crowdlab"]
-    assert report["adoption"]["recommended_arm"] == "crowdlab"
+    verdict = report["sensitivity"]["verdicts"]["crowdlab"]
+    assert verdict["clears_majority_sensitivity_screen"] is True
+    assert report["sensitivity"]["arms_clearing_screen"] == ["crowdlab"]
+    assert report["sensitivity"]["best_diagnostic_arm"] == "crowdlab"
 
 
-def test_aggregation_compare_adoption_false_when_ci_does_not_clear_majority(
+def test_aggregation_compare_sensitivity_false_when_ci_does_not_clear_majority(
     monkeypatch: pytest.MonkeyPatch,
     tiny_config,
     tiny_registry,
 ) -> None:
-    """Equal or worse comparison arms do not pass the replacement rule."""
+    """Equal or worse comparison arms do not pass the diagnostic screen."""
     tiny_config.aggregation.comparison_arms = ["dawid_skene"]
     tiny_config.evaluation.bootstrap_resamples = 100
     validation = _write_inputs(tiny_registry)
@@ -73,26 +77,61 @@ def test_aggregation_compare_adoption_false_when_ci_does_not_clear_majority(
     run_aggregation_compare(tiny_config, tiny_registry)
 
     report = json.loads(tiny_registry.aggregation_compare.read_text())
-    verdict = report["adoption"]["verdicts"]["dawid_skene"]
-    assert verdict["may_replace_majority"] is False
-    assert report["adoption"]["eligible_arms"] == []
-    assert report["adoption"]["recommended_arm"] is None
-    assert "invalidates the frozen silver_labels.csv" in report["adoption"]["message"]
+    verdict = report["sensitivity"]["verdicts"]["dawid_skene"]
+    assert verdict["clears_majority_sensitivity_screen"] is False
+    assert report["sensitivity"]["arms_clearing_screen"] == []
+    assert report["sensitivity"]["best_diagnostic_arm"] is None
+    assert "Diagnostic only" in report["sensitivity"]["message"]
 
 
-def test_aggregation_compare_crowdlab_requires_oof_probs(
+def test_aggregation_compare_crowdlab_skips_when_oof_missing(
     tiny_config,
     tiny_registry,
 ) -> None:
-    """Configured CROWDLAB comparisons fail fast without PR-2 OOF probabilities."""
+    """Configured CROWDLAB reports a diagnostic skip without OOF probabilities."""
     tiny_config.aggregation.comparison_arms = ["crowdlab"]
-    _write_inputs(tiny_registry, write_oof=False)
+    validation = _write_inputs(tiny_registry, write_oof=False)
 
-    with pytest.raises(FileNotFoundError, match="requires OOF probabilities"):
-        run_aggregation_compare(tiny_config, tiny_registry)
+    run_aggregation_compare(tiny_config, tiny_registry)
+
+    report = json.loads(tiny_registry.aggregation_compare.read_text())
+    assert report["arms"]["majority"]["status"] == "scored"
+    assert report["arms"]["majority"]["n_scored"] == len(validation)
+    assert report["arms"]["crowdlab"]["status"] == "skipped"
+    assert "requires OOF probabilities" in report["arms"]["crowdlab"]["skip_reason"]
+    verdict = report["sensitivity"]["verdicts"]["crowdlab"]
+    assert verdict["clears_majority_sensitivity_screen"] is False
 
 
-def _write_inputs(tiny_registry, *, write_oof: bool = True) -> pd.DataFrame:
+def test_aggregation_compare_crowdlab_skips_when_oof_misses_validation(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """CROWDLAB skips when OOF probabilities do not cover validation EIN2s."""
+    tiny_config.aggregation.comparison_arms = ["crowdlab"]
+    validation = _write_inputs(
+        tiny_registry,
+        oof_ein2s=[f"T{i:03d}" for i in range(30)],
+    )
+
+    run_aggregation_compare(tiny_config, tiny_registry)
+
+    report = json.loads(tiny_registry.aggregation_compare.read_text())
+    assert report["arms"]["majority"]["status"] == "scored"
+    assert report["arms"]["majority"]["n_scored"] == len(validation)
+    skipped = report["arms"]["crowdlab"]
+    assert skipped["status"] == "skipped"
+    assert "do not cover all validation annotation EIN2s" in skipped["skip_reason"]
+    assert skipped["n_pred_probs_validation_overlap"] == 0
+    assert report["sensitivity"]["arms_clearing_screen"] == []
+
+
+def _write_inputs(
+    tiny_registry,
+    *,
+    write_oof: bool = True,
+    oof_ein2s: list[str] | None = None,
+) -> pd.DataFrame:
     ein2s = [f"V{i:03d}" for i in range(30)]
     labels = [1 if i < 10 else 0 for i in range(30)]
     store_rows = []
@@ -119,12 +158,13 @@ def _write_inputs(tiny_registry, *, write_oof: bool = True) -> pd.DataFrame:
     validation.to_csv(tiny_registry.gold_coding_template, index=False)
 
     if write_oof:
+        prob_ein2s = oof_ein2s or ein2s
         pd.DataFrame(
             {
-                "EIN2": [f" {ein2} " for ein2 in ein2s],
-                "fold": [0] * len(ein2s),
-                "p0": [1.0 - label for label in labels],
-                "p1": labels,
+                "EIN2": [f" {ein2} " for ein2 in prob_ein2s],
+                "fold": [0] * len(prob_ein2s),
+                "p0": [1.0 - labels[idx % len(labels)] for idx in range(len(prob_ein2s))],
+                "p1": [labels[idx % len(labels)] for idx in range(len(prob_ein2s))],
             },
         ).to_parquet(tiny_registry.oof_pred_probs, index=False)
     return validation[["EIN2", "human_label"]]

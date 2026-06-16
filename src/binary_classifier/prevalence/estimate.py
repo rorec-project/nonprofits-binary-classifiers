@@ -8,7 +8,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import NormalDist
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -56,6 +56,16 @@ class _RuleMetric:
     variance: float
     ci_lower: float
     ci_upper: float
+
+
+T = TypeVar("T")
+
+
+def _assert_not_none(x: T | None, name: str = "") -> T:
+    """Narrow a nullable value to non-None for the type checker."""
+    if x is None:
+        raise TypeError(f"Expected {name} to be non-None")
+    return x
 
 
 @dataclass(frozen=True)
@@ -294,6 +304,7 @@ class _LowEstimate:
     sensitivity: _RuleMetric | None
     specificity: _RuleMetric | None
     sensitivity_band: dict[str, float] | None
+    corrected: bool = True
 
 
 def _estimate_low(
@@ -313,6 +324,7 @@ def _estimate_low(
             sensitivity=None,
             specificity=None,
             sensitivity_band=None,
+            corrected=False,
         )
 
     low = low_predictions.dropna(subset=["pred_label"]).copy()
@@ -328,17 +340,32 @@ def _estimate_low(
     p_obs = float(labels.mean())
     n_low = int(len(labels))
     p_obs_var = p_obs * (1.0 - p_obs) / n_low
-    sensitivity = _extract_rule_metric(rule_validation, "sensitivity", alpha=alpha)
-    specificity = _extract_rule_metric(rule_validation, "specificity", alpha=alpha)
-    estimate = rogan_gladen(p_obs, sensitivity.value, specificity.value)
-    variance = rogan_gladen_variance(
-        p_obs,
-        sensitivity.value,
-        specificity.value,
-        p_obs_var,
-        sensitivity.variance,
-        specificity.variance,
+    sensitivity = _maybe_rule_metric(rule_validation, "sensitivity", alpha=alpha)
+    specificity = _maybe_rule_metric(rule_validation, "specificity", alpha=alpha)
+    corrected = (
+        sensitivity is not None
+        and specificity is not None
+        and (sensitivity.value + specificity.value - 1.0) > 0.0
     )
+    if corrected:
+        # Type narrowing: `corrected` implies both metrics are present.
+        assert sensitivity is not None and specificity is not None
+        estimate = rogan_gladen(p_obs, sensitivity.value, specificity.value)
+        variance = rogan_gladen_variance(
+            p_obs,
+            sensitivity.value,
+            specificity.value,
+            p_obs_var,
+            sensitivity.variance,
+            specificity.variance,
+        )
+    else:
+        logger.warning(
+            "LOW-tier rule layer is unvalidated (missing or degenerate "
+            "sensitivity/specificity); using the uncorrected observed LOW rate."
+        )
+        estimate = p_obs
+        variance = p_obs_var
     return _LowEstimate(
         estimate=_estimate_from_variance(estimate, variance, z_value),
         observed_prevalence=p_obs,
@@ -346,9 +373,14 @@ def _estimate_low(
         n_rule_labeled=n_low,
         sensitivity=sensitivity,
         specificity=specificity,
+        corrected=corrected,
         sensitivity_band=(
-            _low_sensitivity_band(p_obs, sensitivity, specificity)
-            if include_sensitivity
+            _low_sensitivity_band(
+                p_obs,
+                _assert_not_none(sensitivity, "sensitivity"),
+                _assert_not_none(specificity, "specificity"),
+            )
+            if include_sensitivity and corrected
             else None
         ),
     )
@@ -653,6 +685,8 @@ def _report(
             "observed_prevalence": low.observed_prevalence,
             "observed_variance": low.observed_variance,
             "n_rule_labeled": low.n_rule_labeled,
+            "correction_applied": low.corrected,
+            "estimator": "rogan_gladen" if low.corrected else "uncorrected_observed",
             "rogan_gladen": low.estimate.as_dict(),
             "sensitivity": _rule_metric_dict(low.sensitivity),
             "specificity": _rule_metric_dict(low.specificity),
@@ -704,20 +738,45 @@ def _variance_from_ci(ci_lower: float, ci_upper: float, z_value: float) -> float
     return (width / (2.0 * z_value)) ** 2
 
 
-def _extract_rule_metric(
+def _maybe_rule_metric(
     rule_validation: Mapping[str, Any],
     name: str,
     *,
     alpha: float,
-) -> _RuleMetric:
-    metric = _find_rule_metric(rule_validation, name)
+) -> _RuleMetric | None:
+    """Extract a rule metric, or ``None`` when it is absent or unvalidated.
+
+    Stage 07 writes ``value: null`` (with null CI bounds) for a rule metric
+    whose denominator is zero — i.e. the anchor sample contains LOW rows but the
+    rule layer covered none of them. Returning ``None`` here lets the LOW
+    prevalence path fall back to the uncorrected observed rate instead of
+    crashing on ``float(None)``.
+
+    Args:
+        rule_validation: Parsed stage-07 rule-validation report.
+        name: Metric name (``"sensitivity"`` or ``"specificity"``).
+        alpha: Significance level used to derive the metric variance from its CI.
+
+    Returns:
+        A populated :class:`_RuleMetric`, or ``None`` when the metric is missing
+        or carries a null point value.
+
+    """
+    try:
+        metric = _find_rule_metric(rule_validation, name)
+    except ValueError:
+        return None
     if isinstance(metric, int | float):
         value = _unit_interval(metric, name)
         return _RuleMetric(value=value, variance=0.0, ci_lower=value, ci_upper=value)
     if not isinstance(metric, Mapping):
-        raise ValueError(f"rule_validation metric {name!r} must be a number or object")
+        return None
 
-    value_obj = _first_present(metric, ("value", "estimate", "point", "mean"))
+    value_obj = _first_present(
+        metric, ("value", "estimate", "point", "mean"), default=None
+    )
+    if value_obj is None:
+        return None
     value = _unit_interval(value_obj, name)
     lower, upper = _ci_bounds(metric, value)
     variance = _variance_from_ci(lower, upper, _z_value(alpha))

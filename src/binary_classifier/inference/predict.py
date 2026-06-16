@@ -44,6 +44,7 @@ _PREDICTION_COLUMNS = [
     "model_id",
     "checkpoint_sha256",
     "calibrator_method",
+    "calibrator_params_hash",
     "threshold",
     "inference_date",
     "pipeline_version",
@@ -57,6 +58,16 @@ _ALLOWED_DECISION_SOURCES = {
     "rule_abstain",
     "low_via_classifier",
 }
+
+_RESUME_METADATA_COLUMNS = [
+    "model_id",
+    "checkpoint_sha256",
+    "calibrator_method",
+    "calibrator_params_hash",
+    "threshold",
+    "pipeline_version",
+    "config_hash",
+]
 
 
 def run_inference(
@@ -321,11 +332,16 @@ def _process_shards(
     shards_dir = registry.predictions_dir / "shards"
     for shard_index, start in enumerate(range(0, len(frame), shard_size)):
         shard_path = shards_dir / f"shard_{shard_index:05d}.parquet"
+        shard = frame.iloc[start : start + shard_size].copy().reset_index(drop=True)
         paths.append(shard_path)
         if shard_path.exists():
-            logger.warning("Skipping existing inference shard %s", shard_path)
-            continue
-        shard = frame.iloc[start : start + shard_size].copy().reset_index(drop=True)
+            if _existing_shard_matches(shard_path, metadata, shard["EIN2"].tolist()):
+                logger.warning("Skipping existing inference shard %s", shard_path)
+                continue
+            logger.warning(
+                "Rewriting inference shard %s because it does not match current run",
+                shard_path,
+            )
         predictions = _predict_shard(
             cfg,
             shard,
@@ -339,6 +355,48 @@ def _process_shards(
         predictions.to_parquet(shard_path, index=False)
         logger.info("Wrote inference shard %s (%d rows)", shard_path, len(predictions))
     return paths
+
+
+def _existing_shard_matches(
+    path: Path,
+    metadata: Mapping[str, Any],
+    expected_ein2: Sequence[str],
+) -> bool:
+    """Return whether a resumable shard belongs to the current run."""
+    try:
+        shard = pd.read_parquet(path)
+    except Exception as exc:
+        logger.warning("Cannot validate existing shard %s: %s", path, exc)
+        return False
+    if shard.columns.tolist() != _PREDICTION_COLUMNS:
+        logger.warning(
+            "Existing shard %s has incompatible prediction schema",
+            path,
+        )
+        return False
+
+    expected_ids = [str(ein2).strip() for ein2 in expected_ein2]
+    observed_ids = _normalize_ein2(shard["EIN2"]).tolist()
+    if len(observed_ids) != len(expected_ids) or observed_ids != expected_ids:
+        return False
+
+    for column in _RESUME_METADATA_COLUMNS:
+        expected = metadata.get(column)
+        if expected is None:
+            return False
+        values = shard[column].dropna().unique()
+        if len(values) != 1:
+            return False
+        observed = values[0]
+        if column == "threshold":
+            try:
+                if not np.isclose(float(observed), float(expected)):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        elif str(observed) != str(expected):
+            return False
+    return True
 
 
 def _predict_shard(
@@ -564,11 +622,18 @@ def _prediction_metadata(
         "model_id": str(model_id),
         "checkpoint_sha256": str(checkpoint_sha256),
         "calibrator_method": str(calibrator["method"]),
+        "calibrator_params_hash": _calibrator_params_hash(calibrator),
         "threshold": float(calibrator["threshold"]),
         "inference_date": datetime.now(UTC).isoformat(),
         "pipeline_version": _pipeline_version(),
         "config_hash": _config_hash(cfg),
     }
+
+
+def _calibrator_params_hash(calibrator: Mapping[str, Any]) -> str:
+    """Return a stable digest of learned calibration parameters."""
+    payload = json.dumps(calibrator.get("params", {}), sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _positive_int(value: int, name: str) -> int:

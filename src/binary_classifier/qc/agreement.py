@@ -1,4 +1,4 @@
-"""Quality control and agreement metrics for the annotation pipeline.
+"""Quality control and majority-vote freeze metrics for the annotation pipeline.
 
 Provides LLM-vs-human agreement scoring and the validation freeze gate, plus a
 full sklearn metric bundle (confusion matrix, minority-class precision/recall/F1,
@@ -22,7 +22,7 @@ import pandas as pd
 
 from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.schema import AnnotationStore
-from binary_classifier.metrics import bootstrap_ci, compute_metric_bundle
+from binary_classifier.metrics import compute_metric_bundle
 from binary_classifier.qc.evidence import (
     abstain_fabricated_positives,
     verify_evidence_spans,
@@ -42,14 +42,16 @@ def run_quality_check(
     human_validation_path: Path | None = None,
     output_path: Path | None = None,
 ) -> dict:
-    """Aggregate labels and run the blocking QC gate.
+    """Freeze majority-vote labels after the blocking QC gate.
 
     Steps:
         1. Load the long/tidy annotation store.
         2. Optionally verify evidence spans and abstain fabricated positive
            labels before voting. This is config-gated so default runs keep the
            current data dependency surface.
-        3. Aggregate per-EIN2 labels by majority vote (default).
+        3. Aggregate per-EIN2 labels by majority vote. Stage 04 intentionally
+           freezes majority-vote labels only; Dawid-Skene and CROWDLAB are
+           reserved for stage-11 sensitivity diagnostics.
         4. Compute LLM-vs-human agreement on the coded validation split.
         5. Compute the full sklearn metric bundle (confusion matrix,
             minority-class precision/recall/F1, MCC, balanced accuracy,
@@ -103,12 +105,12 @@ def run_quality_check(
     if cfg.qc.abstain_on_fabricated_positive:
         df = _abstain_fabricated_positive_labels(df, registry)
 
-    # Aggregate
+    # Stage 04 production aggregation is intentionally majority-only.
     aggregated = aggregate_labels(df, method="majority")
     n_total = len(aggregated)
     n_abstain = int(aggregated["silver_label"].isna().sum())
     logger.info(
-        "Aggregated %d EIN2s; %d abstain/tie (%.1f%%)",
+        "Majority-vote aggregated %d EIN2s; %d abstain/tie (%.1f%%)",
         n_total,
         n_abstain,
         100 * n_abstain / n_total,
@@ -136,7 +138,11 @@ def run_quality_check(
     f1_ci_floor = cfg.qc.f1_ci_floor
 
     # Compute full metric bundle
-    metrics = _compute_metrics(valid, seed=cfg.SEED)
+    metrics = _compute_metrics(
+        valid,
+        seed=cfg.SEED,
+        n_resamples=cfg.evaluation.bootstrap_resamples,
+    )
     minority_f1_ci = metrics["bootstrap_ci"]["minority_f1"]
     minority_f1_ci_lower = minority_f1_ci["lower"]
 
@@ -334,12 +340,13 @@ def _exclude_gold_manifest_ein2s(
     return aggregated.loc[keep_mask].copy()
 
 
-def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
+def _compute_metrics(valid: pd.DataFrame, seed: int, n_resamples: int) -> dict:
     """Compute the full metric bundle on the validation overlap.
 
     Args:
         valid: DataFrame with ``silver_label`` and ``human_label`` columns.
         seed: Seed for bootstrap resampling.
+        n_resamples: Number of bootstrap resamples.
 
     Returns:
         Dict with all computed metrics.
@@ -352,12 +359,7 @@ def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
     counts = np.bincount(y_true)
     minority_class = int(np.argmin(counts))
 
-    y_score = None
-    if (
-        "silver_confidence" in valid.columns
-        and valid["silver_confidence"].notna().any()
-    ):
-        y_score = valid["silver_confidence"].astype(float).to_numpy()
+    y_score = _positive_class_score(valid)
 
     return compute_metric_bundle(
         y_true,
@@ -365,40 +367,20 @@ def _compute_metrics(valid: pd.DataFrame, seed: int) -> dict:
         y_score=y_score,
         minority_class=minority_class,
         seed=seed,
-    )
-
-
-def _bootstrap_ci(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    minority_class: int,
-    seed: int,
-    n_resamples: int = 1000,
-    confidence_level: float = 0.95,
-) -> dict:
-    """Delegate to the shared bootstrap confidence-interval helper.
-
-    Args:
-        y_true: Ground-truth labels.
-        y_pred: Predicted labels.
-        minority_class: The class to report F1 for.
-        seed: Seed for bootstrap resampling.
-        n_resamples: Number of bootstrap resamples.
-        confidence_level: Confidence level (e.g. 0.95).
-
-    Returns:
-        Dict with ``accuracy`` and ``minority_f1`` each containing
-        ``lower`` and ``upper``.
-
-    """
-    return bootstrap_ci(
-        y_true,
-        y_pred,
-        minority_class,
-        seed=seed,
         n_resamples=n_resamples,
-        confidence_level=confidence_level,
     )
+
+
+def _positive_class_score(valid: pd.DataFrame) -> np.ndarray | None:
+    """Convert winner confidence into a positive-class score for AUC metrics."""
+    if (
+        "silver_confidence" not in valid.columns
+        or not valid["silver_confidence"].notna().any()
+    ):
+        return None
+    confidence = valid["silver_confidence"].astype(float)
+    label = valid["silver_label"].astype(int)
+    return np.where(label == 1, confidence, 1.0 - confidence)
 
 
 def _load_validation_labels(human_validation_path: Path) -> pd.DataFrame:

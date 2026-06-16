@@ -11,7 +11,11 @@ from binary_classifier.prevalence.composite import (
     rogan_gladen,
     rogan_gladen_variance,
 )
-from binary_classifier.prevalence.estimate import run_prevalence
+from binary_classifier.prevalence.estimate import (
+    _estimate_low,
+    _z_value,
+    run_prevalence,
+)
 
 
 def test_rogan_gladen_matches_hand_computation() -> None:
@@ -191,3 +195,34 @@ def _anchor_frame(predictions: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(anchor_rows)
+
+
+def test_estimate_low_falls_back_to_uncorrected_when_rule_unvalidated() -> None:
+    """A null rule sensitivity (zero-denominator at stage 07) must not crash.
+
+    Stage 07 writes ``value: null`` for a rule metric whose denominator is zero
+    (anchor has LOW rows but the rule layer covered none). Stage 09 must skip the
+    Rogan-Gladen correction and fall back to the uncorrected observed LOW rate
+    rather than raising on ``float(None)``.
+    """
+    low_predictions = pd.DataFrame({"pred_label": [1, 0, 1, 0, 1]})
+    rule_validation = {
+        "metrics": {
+            "sensitivity": {"value": None, "ci": {"lower": None, "upper": None}},
+            "specificity": {"value": 0.9, "ci": {"lower": 0.8, "upper": 0.95}},
+        }
+    }
+
+    result = _estimate_low(
+        low_predictions,
+        rule_validation,
+        alpha=0.05,
+        z_value=_z_value(0.05),
+        include_sensitivity=True,
+    )
+
+    assert result.corrected is False
+    assert result.sensitivity_band is None
+    # Uncorrected estimate equals the observed LOW rule-label rate (3/5).
+    assert result.observed_prevalence == pytest.approx(0.6)
+    assert result.estimate.estimate == pytest.approx(0.6)
