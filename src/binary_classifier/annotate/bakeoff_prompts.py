@@ -8,10 +8,12 @@ on the coded prompt-dev split, writes the full score bundle, and proposes an
 gate-G2 step (see :func:`run_annotation.resolve_production_specs`).
 """
 
+import concurrent.futures
 import json
 import logging
-from pathlib import Path
+import threading
 from collections.abc import Callable
+from pathlib import Path
 
 import pandas as pd
 
@@ -95,41 +97,84 @@ def run_bakeoff(
     results: list[dict] = []
     threshold = cfg.qc.agreement_threshold
 
+    groups: list[tuple[BakeoffCandidate, Path, str, str]] = []
     for spec in candidates:
         for prompt_path in prompt_paths:
             prompt_id = prompt_path.stem
             source_id = f"{spec.id}__{prompt_id}"
-            try:
-                prompt_text = prompt_path.read_text()
-                annotator = annotator_factory(spec, prompt_id, prompt_text)
-                batch = []
-                for _, row in prompt_dev.iterrows():
-                    if store.already_done(row["EIN2"], source_id):
-                        continue
-                    batch.append(annotator.annotate(row["text"], ein2=row["EIN2"]))
-                if batch:
-                    store.append_many(batch)
+            groups.append((spec, prompt_path, prompt_id, source_id))
 
+    store_lock = threading.Lock()
+    errors_lock = threading.Lock()
+    arm_errors: dict[str, str] = {}
+
+    def _annotate_group(
+        spec: BakeoffCandidate,
+        prompt_path: Path,
+        prompt_id: str,
+        source_id: str,
+    ) -> None:
+        prompt_text = prompt_path.read_text()
+        annotator = annotator_factory(spec, prompt_id, prompt_text)
+        batch = []
+        for _, row in prompt_dev.iterrows():
+            if store.already_done(row["EIN2"], source_id):
+                continue
+            batch.append(annotator.annotate(row["text"], ein2=row["EIN2"]))
+        if batch:
+            with store_lock:
+                store.append_many(batch)
+
+    if groups:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(groups),
+        ) as executor:
+            future_to_group = {
+                executor.submit(
+                    _annotate_group,
+                    spec,
+                    prompt_path,
+                    prompt_id,
+                    source_id,
+                ): (spec, prompt_path, prompt_id, source_id)
+                for spec, prompt_path, prompt_id, source_id in groups
+            }
+            for future in concurrent.futures.as_completed(future_to_group):
+                _spec, _prompt_path, _prompt_id, source_id = future_to_group[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Bake-off arm %s failed: %s", source_id, exc)
+                    with errors_lock:
+                        arm_errors[source_id] = str(exc)
+
+    for spec, prompt_path, prompt_id, source_id in groups:
+        if source_id in arm_errors:
+            scores = {"error": arm_errors[source_id]}
+        else:
+            try:
                 pred_df = store.to_frame()
                 pred_df = pred_df[pred_df["source_id"] == source_id][["EIN2", "label"]]
                 scores = _score_vs_human(pred_df, human_df)
             except Exception as exc:
-                # A vLLM connection failure (server down) or a provider error
-                # degrades this one arm; the OpenAI arms still score.
-                logger.warning("Bake-off arm %s failed: %s", source_id, exc)
+                logger.warning(
+                    "Bake-off arm %s scoring failed: %s",
+                    source_id,
+                    exc,
+                )
                 scores = {"error": str(exc)}
 
-            results.append(
-                {
-                    "model_id": spec.id,
-                    "provider": spec.provider,
-                    "reasoning_effort": spec.reasoning_effort,
-                    "prompt_id": prompt_id,
-                    "source_id": source_id,
-                    "scores": scores,
-                },
-            )
-            logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
+        results.append(
+            {
+                "model_id": spec.id,
+                "provider": spec.provider,
+                "reasoning_effort": spec.reasoning_effort,
+                "prompt_id": prompt_id,
+                "source_id": source_id,
+                "scores": scores,
+            },
+        )
+        logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
 
     proposed = _build_proposed_slate(results, threshold)
 

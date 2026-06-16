@@ -10,9 +10,11 @@ The module can be imported and used programmatically, or invoked via
 ``scripts/03_annotate.py``.
 """
 
+import concurrent.futures
 import hashlib
 import json
 import logging
+import threading
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -279,51 +281,102 @@ def run_annotation_matrix(
         # the same no-silent-no-op guard.
         df = df[df["EIN2"].astype(str).isin(canary_pool_ein2s)].copy()
 
-    # Build the full work matrix: (ein2, text, spec, prompt_id).
-    work_items: list[tuple[str, str, BakeoffCandidate, str]] = []
-    for spec in specs:
-        for prompt_id in prompt_texts:
-            work_items.extend(
-                (ein2, text, spec, prompt_id)
-                for ein2, text in zip(df["EIN2"], df["text"], strict=True)
-            )
-
     # Resume filtering — source_id == f"{spec.id}__{prompt_id}".
+    existing_pairs: set[tuple[str, str]] = set()
     if resume:
         existing_pairs = store.done_pairs()
-        work_items = [
-            (e, t, s, p)
-            for e, t, s, p in work_items
-            if (e, f"{s.id}__{p}") not in existing_pairs
-        ]
+
+    # Build work groups by (spec, prompt_id).  Each group uses one annotator
+    # instance (created once per pair, not once per row).
+    groups: list[tuple[BakeoffCandidate, str, str, list[tuple[str, str]]]] = []
+    for spec in specs:
+        for prompt_id in prompt_texts:
+            prompt_text = prompt_texts[prompt_id]
+            source_id = f"{spec.id}__{prompt_id}"
+            rows: list[tuple[str, str]] = [
+                (ein2, text)
+                for ein2, text in zip(df["EIN2"], df["text"], strict=True)
+                if (ein2, source_id) not in existing_pairs
+            ]
+            if rows:
+                groups.append((spec, prompt_id, prompt_text, rows))
+
+    if resume:
         logger.info(
-            "Resume: %d items already done, %d remaining",
+            "Resume: %d pairs already done, %d remaining",
             len(existing_pairs),
-            len(work_items),
+            sum(len(rows) for _, _, _, rows in groups),
         )
 
-    # Batch execution
-    batch: list = []
+    total_items = sum(len(rows) for _, _, _, rows in groups)
+
+    # Parallel execution: one thread per (spec, prompt_id) group.
     run_records: list[LabelRecord] = []
-    for idx, (ein2, text, spec, prompt_id) in enumerate(work_items):
-        annotator = annotator_factory(spec, prompt_id, prompt_texts[prompt_id])
-        record = annotator.annotate(text, ein2=ein2)
-        batch.append(record)
-        run_records.append(record)
+    if total_items > 0:
+        store_lock = threading.Lock()
+        progress_lock = threading.Lock()
+        run_records_lock = threading.Lock()
+        completed = 0
 
-        if (idx + 1) % checkpoint_every == 0:
-            store.append_many(batch)
-            logger.info(
-                "Checkpoint %d/%d — wrote %d records",
-                idx + 1,
-                len(work_items),
-                len(batch),
-            )
-            batch = []
+        def process_group(
+            spec: BakeoffCandidate,
+            prompt_id: str,
+            prompt_text: str,
+            rows: list[tuple[str, str]],
+        ) -> list[LabelRecord]:
+            nonlocal completed
+            annotator = annotator_factory(spec, prompt_id, prompt_text)
+            batch: list[LabelRecord] = []
+            local_records: list[LabelRecord] = []
+            local_count = 0
 
-    if batch:
-        store.append_many(batch)
-        logger.info("Final flush — wrote %d records", len(batch))
+            for ein2, text in rows:
+                record = annotator.annotate(text, ein2=ein2)
+                batch.append(record)
+                local_records.append(record)
+                local_count += 1
+
+                if local_count % checkpoint_every == 0:
+                    with store_lock:
+                        store.append_many(batch)
+                    with progress_lock:
+                        completed += len(batch)
+                        logger.info(
+                            "Checkpoint %d/%d — wrote %d records",
+                            completed,
+                            total_items,
+                            len(batch),
+                        )
+                    batch = []
+
+            if batch:
+                with store_lock:
+                    store.append_many(batch)
+                with progress_lock:
+                    completed += len(batch)
+                    logger.info(
+                        "Checkpoint %d/%d — wrote %d records",
+                        completed,
+                        total_items,
+                        len(batch),
+                    )
+
+            return local_records
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(groups),
+        ) as executor:
+            futures = [
+                executor.submit(process_group, spec, prompt_id, prompt_text, rows)
+                for spec, prompt_id, prompt_text, rows in groups
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                local_records = future.result()
+                with run_records_lock:
+                    run_records.extend(local_records)
+
+    else:
+        logger.info("All work items already done — nothing to annotate.")
 
     if canary_only and cfg is not None and registry is not None:
         _record_canary_audit(

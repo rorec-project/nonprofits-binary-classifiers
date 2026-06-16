@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import logging
 import re
+import threading
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -196,18 +198,65 @@ def execute_run_matrix(
     """
     registry.ensure_dirs()
     rows: list[dict[str, Any]] = []
-    for spec in specs:
+
+    baseline_specs = [s for s in specs if s.kind == "baseline"]
+    encoder_specs = [s for s in specs if s.kind == "encoder"]
+
+    if baseline_specs:
+        append_lock = threading.Lock()
+
+        def _run_baseline_spec(spec: RunSpec) -> dict[str, Any]:
+            metrics_path = run_metrics_path(registry, spec)
+            if metrics_path.exists():
+                logger.info("Skipping completed run %s", spec.run_id)
+                return _read_json(metrics_path)
+
+            logger.info(
+                "Running stage-06 %s/%s: %s",
+                spec.phase,
+                spec.kind,
+                spec.run_id,
+            )
+            row = _run_one_spec(
+                cfg,
+                registry,
+                spec,
+                train_df,
+                dev_df,
+                validation_df,
+            )
+            _write_metrics(metrics_path, row)
+            with append_lock:
+                append_result_row(registry.learning_curve_results, row)
+            return row
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=2,
+        ) as executor:
+            futures = [
+                executor.submit(_run_baseline_spec, spec) for spec in baseline_specs
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                rows.append(future.result())
+
+    for spec in encoder_specs:
         metrics_path = run_metrics_path(registry, spec)
         if metrics_path.exists():
             logger.info("Skipping completed run %s", spec.run_id)
             rows.append(_read_json(metrics_path))
             continue
 
-        logger.info("Running stage-06 %s/%s: %s", spec.phase, spec.kind, spec.run_id)
+        logger.info(
+            "Running stage-06 %s/%s: %s",
+            spec.phase,
+            spec.kind,
+            spec.run_id,
+        )
         row = _run_one_spec(cfg, registry, spec, train_df, dev_df, validation_df)
         _write_metrics(metrics_path, row)
         append_result_row(registry.learning_curve_results, row)
         rows.append(row)
+
     return rows
 
 

@@ -135,6 +135,8 @@ def finetune(
     """
     start = perf_counter()
     transformers.set_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     device = resolve_device(cfg.training.device)
     precision = resolve_precision(cfg.training.precision, device)
 

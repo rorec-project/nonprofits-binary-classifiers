@@ -2,7 +2,7 @@
 
 A reproducible, config-driven binary text classifier for US nonprofit missions. The pipeline labels short text records as religious (`1`) vs. non-religious (`0`) using LLM-as-primary annotation, aggregates noisy labels across a multi-model × multi-prompt ensemble, and is designed to fine-tune modern encoder models on the resulting silver dataset in a later stage. Designed for extensibility beyond the religious task to pregnancy centers, education, international aid, and other nonprofit sectors.
 
-> **Status:** Stages 01–10 are implemented: sampling, bake-off, annotation, QC/freeze, anchor sampling, training, evaluation, inference, prevalence, and visualization. Stage 11 is a script-only aggregation-comparison helper. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
+> **Status:** Stages 01–09 are built (sampling → bake-off → annotation → QC/freeze → anchor → training → evaluation → inference → prevalence). Stages 10–11 are script-only helpers (visualization, aggregation comparison). The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ Today, local/cloud symlinks stand in for DVC for every heavy, non-committed loca
 git clone https://github.com/rorec-project/nonprofits-binary-classifiers.git
 cd nonprofits-binary-classifiers
 
-# Install dependencies (uv manages Python 3.13 automatically)
+# Install dependencies (requires uv — https://docs.astral.sh/uv/getting-started/installation/)
 uv sync
 
 # Set secrets (OpenAI API key needed for the closed-reference annotator)
@@ -79,7 +79,7 @@ mkdir -p data/raw data/interim data/models data/processed/gold
 ```
 
 - `PathRegistry.ensure_dirs()` creates output directories such as `data/interim/`, `data/models/`, and `data/processed/gold/`, but it does **not** create `data/raw/` for you.
-- Stage 01 hard-fails if `data/raw/missions_cross_section.parquet` or `data/raw/bmf_unified_processed.parquet` is missing, unless you set `data.allow_synthetic: true` for smoke tests.
+- Stage 01 needs `data/raw/missions_cross_section.parquet` and `data/raw/bmf_unified_processed.parquet`. These are produced by the sibling repository at `../NonProfitData/` (see that project's build instructions). To run without them, set `data.allow_synthetic: true` in your config for smoke tests.
 - Move any existing committed gold artifacts into `data/processed/gold/` before running the human checkpoints.
 - If your heavy silver artifacts still live behind the old processed-tree cloud symlink, re-point that local symlink so manifests, bake-off outputs, and annotation stores live under `data/interim/` instead. Moving gold alone does not move the large silver-side artifacts.
 
@@ -174,7 +174,7 @@ With the slate confirmed, run:
 uv run python scripts/run_pipeline.py --stages 03,04
 ```
 
-- **Stage 03** labels the full silver pool plus the gold holdouts used by QC/canary checks, using only the models confirmed in `production_slate.json`. It writes `annotation_store.csv` (resumable by `(EIN2, source_id)`).
+- **Stage 03** labels the full silver pool plus the gold holdouts used by QC/canary checks, using only the models confirmed in `production_slate.json`. It writes `annotation_store.csv` (resumable by `(EIN2, source_id)` — if the process crashes mid-run, simply re-run; completed rows are skipped automatically).
 - **Stage 04** aggregates the labels, measures agreement against the human-coded `validation` split, and writes a frozen `silver_labels.csv` that excludes every gold `EIN2` from the training pool.
 
 > **Gate 1 (G1, again):** Stage 04 also checks that every `validation` row in `gold_to_code.csv` has a valid `0/1` label.
@@ -275,6 +275,20 @@ See `docs/RUNNING_ON_UCLOUD.md` for:
 ## Legacy pipeline
 
 The original flat-script pipeline (`generate_training_data.py`, `split_data.py`, and the five Jupyter notebooks) has been moved verbatim to `archive/legacy-pipe/` for reference. It is not executed by the new pipeline.
+
+## Troubleshooting
+
+**`command not found: uv`** — Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `pip install uv`, `brew install uv`).
+
+**`FileNotFoundError: data/raw/missions_cross_section.parquet`** — The upstream parquet comes from the sibling `NonProfitData` project at `../NonProfitData/`. For smoke testing without it, use `--config config/smoke.yaml` or set `data.allow_synthetic: true` in your config.
+
+**Pipeline stops at G1/G2 gate** — This is expected. Fill the human coding template (G1) or confirm the production slate (G2) as described in the operator guide above, then re-run. No GPU/API work was wasted.
+
+**Stage 03 crashes mid-run** — Just re-run. The annotation store is keyed by `(EIN2, source_id)`; completed rows are skipped automatically. Use `--no-resume` on `scripts/03_annotate.py` to start fresh.
+
+**`uv sync` fails with Python version error** — Make sure your uv is up to date (`uv --version`, `uv self update`). The project requires Python 3.13.
+
+**OpenAI API errors** — Check that `OPENAI_API_KEY` is set in `.env` and the key has access to the model IDs in your config/slate. Rate-limit errors trigger automatic retries with backoff.
 
 ## Dependencies
 
