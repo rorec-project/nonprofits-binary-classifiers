@@ -2,7 +2,7 @@
 
 A reproducible, config-driven binary text classifier for US nonprofit missions. The pipeline labels short text records as religious (`1`) vs. non-religious (`0`) using LLM-as-primary annotation, aggregates noisy labels across a multi-model × multi-prompt ensemble, and is designed to fine-tune modern encoder models on the resulting silver dataset in a later stage. Designed for extensibility beyond the religious task to pregnancy centers, education, international aid, and other nonprofit sectors.
 
-> **Status:** Stages 01–04 are implemented: sampling, bake-off, annotation, and QC/freeze. Stages 05–11 are roadmap work: anchor sample, training, evaluation, inference-at-scale, prevalence, visualization, and aggregation comparison. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
+> **Status:** Stages 01–10 are implemented: sampling, bake-off, annotation, QC/freeze, anchor sampling, training, evaluation, inference, prevalence, and visualization. Stage 11 is a script-only aggregation-comparison helper. The legacy flat-script pipeline has been moved to `archive/legacy-pipe/` and is preserved for reference but not executed.
 
 ## Architecture
 
@@ -25,11 +25,13 @@ src/binary_classifier/
     aggregate.py       # Majority vote default; other aggregation arms are gated
   qc/
     agreement.py       # Validation gate: κ/α reporting + minority-F1 CI floor
+    aggregation_compare.py # Stage 11 decision-support comparison report
 scripts/
   01_build_sample.py   # Stage 01: construct silver + gold + prompt/validation/test/monitor manifests
   02_bakeoff_prompts.py # Stage 02: model×prompt bake-off on prompt-dev
   03_annotate.py       # Stage 03: full model×prompt matrix labeling over silver ∪ gold
   04_quality_check.py  # Stage 04: QC gate + freeze silver-only labels
+  11_aggregation_compare.py # Stage 11: script-only aggregation comparison
   run_pipeline.py      # Orchestrator: chains 01→04
 config/
   religious_missions.yaml   # First task config (entity=missions, field=LONGEST_MISSION)
@@ -206,7 +208,7 @@ uv run python scripts/run_pipeline.py --stages 01,02,03,04
 
 - **Entity-agnostic:** `entity` and `field` are config parameters, not hard-coded.
 - **Reproducibility:** one global `SEED`; every stochastic step is seeded.
-- **Weak-supervision-ready:** the long/tidy label store keeps model×prompt votes so future aggregation arms can be evaluated against the human holdout before adoption.
+- **Weak-supervision-ready:** the long/tidy label store keeps model×prompt votes so stage 11 can compare gated Dawid-Skene and CROWDLAB arms against majority vote on the human holdout before any human adoption decision.
 - **Rule layer:** LOW-quality / bare-label missions are handled by a high-precision rule layer at inference, not dropped.
 - **EIN2 everywhere:** the upstream join key is carried through every artifact.
 
@@ -216,7 +218,7 @@ The current sampling frame is the HIGH+MEDIUM quality strata only: `Q >= 3.0`. L
 
 This framing is deliberate: the current pipeline optimizes annotation and QC on text that is informative enough for LLM review, while keeping a clear hook for the later all-nonprofits prevalence estimator.
 
-## Roadmap (not built yet)
+## Roadmap and script-only extensions
 
 The detailed decision record lives in
 `.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
@@ -245,10 +247,13 @@ training sweep with the staged plan below.
   per-NTEE-stratum calibration where prior-shift assumptions are fragile.
 - **Stage 10 — visualization:** produce auditable n-gram log-odds bars plus
   metric and calibration plots.
-- **Stage 11 — aggregation comparison:** evaluate cleanlab/crowd-kit,
-  uncertainty-weighted aggregation, and classifier-assisted evidence-checking as
-  gated comparison arms; adopt only if they beat majority vote on the human
-  held-out data.
+- **Stage 11 — aggregation comparison:** script-only decision support that writes
+  `interim/aggregation_compare.json`, comparing majority vote with configured
+  Dawid-Skene and CROWDLAB arms on the human validation set. Majority remains
+  the default; a non-majority arm is eligible only if its minority-F1 CI lower
+  bound beats the majority point estimate. Adoption is a human decision, never
+  an automatic config switch, and it invalidates frozen `silver_labels.csv` plus
+  downstream trained artifacts, so stages 04→06 must be re-run.
 
 > **Visualization note:** stage 10 is a script-only renderer
 > (`uv run python scripts/10_visualize.py --config ...`) that writes PNG and SVG

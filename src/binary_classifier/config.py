@@ -382,6 +382,20 @@ class QCConfig(BaseModel):
     abstain_on_fabricated_positive: bool = False
 
 
+class AggregationConfig(BaseModel):
+    """Weak-label aggregation configuration.
+
+    Attributes:
+        method: Production aggregation method used to produce silver labels.
+        comparison_arms: Optional non-production aggregation arms to run for
+            method-comparison diagnostics.
+
+    """
+
+    method: Literal["majority", "dawid_skene", "crowdlab"] = "majority"
+    comparison_arms: list[str] = Field(default_factory=list)
+
+
 TrainingArm = Literal["hard", "pruned", "class_weighted"]
 BaselineName = Literal["tfidf_logreg", "minilm_logreg"]
 
@@ -510,6 +524,7 @@ class BinaryClassifierConfig(BaseModel):
         annotation: LLM annotation hyperparameters.
         data: Data-loading behaviour (synthetic opt-in).
         qc: Quality-control gate thresholds.
+        aggregation: Silver-label aggregation method and comparison arms.
         training: Fine-tuning, baseline, and learning-curve settings.
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.
@@ -531,6 +546,7 @@ class BinaryClassifierConfig(BaseModel):
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     qc: QCConfig = Field(default_factory=QCConfig)
+    aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)

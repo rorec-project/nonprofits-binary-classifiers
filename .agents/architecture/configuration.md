@@ -52,7 +52,7 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 
 No source edits, provided the upstream parquet exposes the chosen `field`.
 
-## Roadmap hooks (documented, not built)
+## Roadmap hooks and script-only extensions
 
 - The active staged roadmap is recorded in
   `.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
@@ -78,10 +78,12 @@ No source edits, provided the upstream parquet exposes the chosen `field`.
   per-NTEE-stratum calibration.
 - **Stage 10 — visualization:** replace exploratory word clouds with auditable
   n-gram log-odds bars and metric/calibration plots.
-- **Stage 11 — aggregation comparison:** keep uncertainty-weighted aggregation,
-  cleanlab/crowd-kit alternatives, and classifier-assisted evidence verification
-  as gated comparison arms that must beat majority vote on the human held-out
-  set before adoption.
+- **Stage 11 — aggregation comparison:** script-only decision support that compares
+  majority vote with configured Dawid-Skene and CROWDLAB arms on the human
+  validation set. Majority remains the default; a non-majority arm is eligible
+  only if its minority-F1 CI lower bound beats the majority point estimate, and
+  human adoption invalidates frozen `silver_labels.csv` and requires re-running
+  stages 04→06.
 
 ## Related
 

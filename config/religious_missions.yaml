@@ -76,6 +76,10 @@ qc:
   kappa_threshold: 0.70
   f1_ci_floor: 0.70
 
+aggregation:
+  method: majority
+  comparison_arms: []
+
 training:
   dev_fraction: 0.1
   targets: soft

@@ -4,7 +4,9 @@ Later PRs extend this file through stages 09–11.
 """
 
 import json
+import runpy
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -16,6 +18,7 @@ from binary_classifier.evaluation.evaluate import run_evaluation
 from binary_classifier.inference import predict as predict_mod
 from binary_classifier.inference.predict import run_inference
 from binary_classifier.prevalence.estimate import run_prevalence
+from binary_classifier.qc.aggregation_compare import run_aggregation_compare
 from binary_classifier.train import data as train_data_mod
 from binary_classifier.train import sweep
 from binary_classifier.train.trainer import run_training
@@ -106,6 +109,23 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
     assert tiny_registry.prevalence_report.exists()
     assert tiny_registry.prevalence_by_ntee.exists()
 
+    stage10 = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "10_visualize.py"),
+    )
+    stage10["load_missions"] = lambda cfg: missions
+    stage10["run_visualization"](tiny_config, tiny_registry)
+
+    assert (tiny_registry.figures_dir / "documentation_curve.png").exists()
+    assert (tiny_registry.figures_dir / "prevalence_forest.png").exists()
+
+    run_aggregation_compare(tiny_config, tiny_registry)
+
+    assert tiny_registry.aggregation_compare.exists()
+    compare_report = json.loads(tiny_registry.aggregation_compare.read_text())
+    assert set(compare_report["arms"]) == {"majority"}
+    assert compare_report["arms"]["majority"]["n_scored"] == 8
+    assert "re-run stages 04→06" in compare_report["adoption"]["message"]
+
     with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
         run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())
 
@@ -168,6 +188,28 @@ def _write_stage04_training_artifacts(registry) -> None:
             )
     registry.silver_labels.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(silver_rows).to_csv(registry.silver_labels, index=False)
+
+    for i in range(24, 32):
+        ein2 = f"A{i:04d}"
+        label = i % 2
+        for source in range(3):
+            records.append(
+                LabelRecord(
+                    EIN2=ein2,
+                    source_id=f"m{source}:p0",
+                    source_type=SourceType.LLM_PROMPT,
+                    model_id=f"m{source}",
+                    prompt_id="p0",
+                    temperature=0.0,
+                    seed=42,
+                    binary_label=BinaryLabel.RELIGIOUS
+                    if label
+                    else BinaryLabel.NONRELIGIOUS,
+                    label=float(label),
+                    confidence=0.9,
+                )
+            )
+
     AnnotationStore(registry.annotation_store).append_many(records)
 
 
