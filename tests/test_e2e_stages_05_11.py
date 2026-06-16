@@ -15,6 +15,7 @@ from binary_classifier.evaluation import evaluate as evaluate_mod
 from binary_classifier.evaluation.evaluate import run_evaluation
 from binary_classifier.inference import predict as predict_mod
 from binary_classifier.inference.predict import run_inference
+from binary_classifier.prevalence.estimate import run_prevalence
 from binary_classifier.train import data as train_data_mod
 from binary_classifier.train import sweep
 from binary_classifier.train.trainer import run_training
@@ -42,6 +43,9 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
     tiny_config.evaluation.acceptance.min_pr_auc = 0.5
     tiny_config.evaluation.acceptance.min_minority_f1_ci_lower = 0.0
     tiny_config.evaluation.acceptance.max_ece = 1.0
+    tiny_config.prevalence.cross_checks = ["emq"]
+    tiny_config.prevalence.ntee_min_n = 2
+    tiny_config.q_thresholds.MEDIUM = 0.0
 
     missions = _missions_frame()
     monkeypatch.setattr(anchor_mod, "load_missions", lambda cfg: missions)
@@ -96,6 +100,11 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
     assert set(predictions["EIN2"].astype(str)) == set(missions["EIN2"].astype(str))
     monitor_scores = json.loads(tiny_registry.monitor_scores.read_text())
     assert monitor_scores["metadata"]["n_monitor"] == 8
+
+    run_prevalence(tiny_config, tiny_registry)
+
+    assert tiny_registry.prevalence_report.exists()
+    assert tiny_registry.prevalence_by_ntee.exists()
 
     with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
         run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())

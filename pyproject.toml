@@ -14,11 +14,13 @@ dependencies = [
   "numpy>=1.26.0",
   "openai>=1.0.0",
   "pandas>=3.0.3",
+  "ppi-python>=0.2.3",
   "pydantic>=2.0.0",
   "pydantic-settings>=2.0.0",
   "pyarrow>=15.0.0",
   "python-dotenv>=1.0.0",
   "pyyaml>=6.0",
+  "quapy>=0.2.0,<0.3",
   "scikit-learn>=1.9.0",
   "sentencepiece>=0.2.0",
   "torch>=2.7.0",
@@ -95,6 +97,7 @@ exclude = ["archive/**", ".agents/**", "tests/**", "*.ipynb"]
 
 [tool.deptry.package_module_name_map]
 crowd-kit = ["crowdkit"]
+ppi-python = ["ppi_py"]
 pyyaml = ["yaml"]
 python-dotenv = ["dotenv"]
 scikit-learn = ["sklearn"]

@@ -125,3 +125,11 @@ inference:
   device: auto
   route_low_to_rules: true
   rule_ambiguous_to_classifier: true
+
+prevalence:
+  alpha: 0.05
+  cross_checks: [emq, kdey]
+  use_design_weights: true
+  per_ntee: true
+  ntee_min_n: 10
+  low_tier_sensitivity: true

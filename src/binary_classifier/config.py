@@ -217,6 +217,38 @@ class InferenceConfig(BaseModel):
     rule_ambiguous_to_classifier: bool = True
 
 
+def _default_prevalence_cross_checks() -> list[Literal["emq", "kdey"]]:
+    """Return the default prevalence cross-check estimators."""
+    return ["emq", "kdey"]
+
+
+class PrevalenceConfig(BaseModel):
+    """Population-prevalence estimation configuration.
+
+    Attributes:
+        alpha: Significance level used for prevalence confidence intervals.
+        cross_checks: Secondary quantification estimators reported alongside the
+            primary prevalence estimate.
+        use_design_weights: Whether anchor-sample design weights are used when
+            estimating prevalence.
+        per_ntee: Whether prevalence is also reported by NTEE major group.
+        ntee_min_n: Minimum labeled/inferred rows required for an NTEE subgroup
+            estimate.
+        low_tier_sensitivity: Whether to report sensitivity bounds for
+            LOW-quality missions routed through the rule layer.
+
+    """
+
+    alpha: float = 0.05
+    cross_checks: list[Literal["emq", "kdey"]] = Field(
+        default_factory=_default_prevalence_cross_checks,
+    )
+    use_design_weights: bool = True
+    per_ntee: bool = True
+    ntee_min_n: int = 10
+    low_tier_sensitivity: bool = True
+
+
 class TestUnlock(BaseModel):
     """A human-confirmed frozen-test unlock artifact.
 
@@ -481,6 +513,7 @@ class BinaryClassifierConfig(BaseModel):
         training: Fine-tuning, baseline, and learning-curve settings.
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.
+        prevalence: Population-prevalence estimation settings.
 
     """
 
@@ -501,6 +534,7 @@ class BinaryClassifierConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
+    prevalence: PrevalenceConfig = Field(default_factory=PrevalenceConfig)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

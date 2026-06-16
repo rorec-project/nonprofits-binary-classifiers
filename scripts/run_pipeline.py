@@ -40,6 +40,7 @@ _STAGE_MODULES = {
     "06": ("binary_classifier.train.trainer", "run_training"),
     "07": ("binary_classifier.evaluation.evaluate", "run_evaluation"),
     "08": ("binary_classifier.inference.predict", "run_inference"),
+    "09": ("binary_classifier.prevalence.estimate", "run_prevalence"),
 }
 
 # Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
@@ -53,7 +54,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
         "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor → "
-        "06 train → 07 evaluate → 08 infer) "
+        "06 train → 07 evaluate → 08 infer → 09 prevalence) "
         "with human gates.",
     )
     parser.add_argument(
@@ -234,6 +235,11 @@ def run_pipeline(
     if "08" in requested:
         print("Running stage 08 ...")
         _run_stage("08", cfg, registry, annotate_limit, infer_limit, force)
+
+    # Stage 09 — prevalence estimates from frozen evaluation and full predictions.
+    if "09" in requested:
+        print("Running stage 09 ...")
+        _run_stage("09", cfg, registry, annotate_limit, infer_limit, force)
 
 
 # ── Main entrypoint ───────────────────────────────────────────────────────────
