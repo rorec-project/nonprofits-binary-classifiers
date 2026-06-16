@@ -124,7 +124,7 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
     compare_report = json.loads(tiny_registry.aggregation_compare.read_text())
     assert set(compare_report["arms"]) == {"majority"}
     assert compare_report["arms"]["majority"]["n_scored"] == 8
-    assert "re-run stages 04→06" in compare_report["adoption"]["message"]
+    assert "Diagnostic only" in compare_report["sensitivity"]["message"]
 
     with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
         run_evaluation(tiny_config, tiny_registry, predictor=_TextPredictor())

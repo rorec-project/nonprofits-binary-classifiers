@@ -133,11 +133,16 @@ def compute_oof_pred_probs(
     return registry.oof_pred_probs
 
 
-def _default_finetune(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Lazily import and call the encoder fine-tuning implementation."""
-    from binary_classifier.train.encoder import finetune
+def _default_finetune(*args: Any, **kwargs: Any) -> Any:
+    """Lazily import and call the encoder OOF predictor implementation.
 
-    return finetune(*args, **kwargs)
+    Cross-fit scoring needs a predictor (``predict_proba``), not a metrics row,
+    so this defaults to :func:`binary_classifier.train.encoder.finetune_predictor`
+    rather than ``finetune``.
+    """
+    from binary_classifier.train.encoder import finetune_predictor
+
+    return finetune_predictor(*args, **kwargs)
 
 
 def _validated_frame(frame: pd.DataFrame) -> pd.DataFrame:

@@ -115,6 +115,22 @@ def _run_stage(
         func(cfg, registry)
 
 
+def _run_stage_06(cfg, registry) -> None:
+    """Run stage 06 as two phases: selection sweep, then final-seed refit.
+
+    The cell recommendation is computed automatically from validation PR-AUC, so
+    the orchestrator runs the final-seed refit immediately after the sweep,
+    leaving ``selection_report.json`` with a real checkpoint SHA. Promoting that
+    skeleton to ``selected_model.json`` and creating ``test_unlock.json`` (gate
+    G3) remain human steps before stage 07.
+    """
+    module = importlib.import_module("binary_classifier.train.trainer")
+    print("Running stage 06 (selection sweep) ...")
+    module.run_training(cfg, registry)
+    print("Running stage 06 (final-seed refit) ...")
+    module.run_training(cfg, registry, sweep=False, final=True)
+
+
 def _report_gate(title: str, problems: list[str], hint: str | None = None) -> None:
     """Print a gate failure to stderr."""
     print(
@@ -192,11 +208,18 @@ def run_pipeline(
             )
             sys.exit(_GATE_EXIT)
 
-    # Stages 03–06 — annotation, QC freeze, anchor sampling, and training.
-    for stage_id in ("03", "04", "05", "06"):
+    # Stages 03–05 — annotation, QC freeze, and anchor sampling.
+    for stage_id in ("03", "04", "05"):
         if stage_id in requested:
             print(f"Running stage {stage_id} ...")
             _run_stage(stage_id, cfg, registry, annotate_limit, infer_limit, force)
+
+    # Stage 06 — two-phase: the selection sweep writes the recommendation, then
+    # the final-seed refit trains the recommended cell so selection_report.json
+    # carries a real checkpoint SHA. Copying selected_model.json and creating
+    # test_unlock.json (gate G3) remain human steps before stage 07.
+    if "06" in requested:
+        _run_stage_06(cfg, registry)
 
     # Gate G4 (anchor labels) — before future anchor-dependent stages.
     anchor_stages = requested & {"07", "09"}

@@ -74,7 +74,7 @@ def main() -> None:
         cfg.training.sweep_seeds = seeds
         cfg.training.final_seeds = seeds
 
-    sweep = True if args.sweep is None else bool(args.sweep)
+    sweep = not args.final if args.sweep is None else bool(args.sweep)
     run_training(
         cfg,
         registry,

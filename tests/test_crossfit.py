@@ -195,3 +195,63 @@ def _registry(tiny_config, root) -> PathRegistry:
     registry = PathRegistry.from_config(tiny_config, root=root)
     registry.ensure_dirs()
     return registry
+
+
+def test_run_training_computes_oof_when_pruned_configured(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    """Stage 06 wires cross-fit OOF when the pruned arm / CROWDLAB needs it.
+
+    Guards H1: without this the genuine cross-fit OOF was never produced, so the
+    pruned arm fell back to the vote-share proxy and stage-11 CROWDLAB could not
+    run. The fine-tune stub stands in for the real encoder; this test exercises
+    the gating and seam, not the model.
+    """
+    import binary_classifier.train.trainer as trainer_mod
+
+    frame = pd.DataFrame(
+        {
+            "EIN2": [f"S{i:03d}" for i in range(8)],
+            "text": ["church"] * 4 + ["food"] * 4,
+            "p_pos": [0.9] * 4 + [0.1] * 4,
+            "hard_label": [1, 1, 1, 1, 0, 0, 0, 0],
+            "ntee_major_group": ["A"] * 8,
+        }
+    )
+    validation = pd.DataFrame(
+        {"EIN2": ["S000"], "text": ["church"], "human_label": [1]}
+    )
+    monkeypatch.setattr(trainer_mod, "build_training_frame", lambda cfg, reg: frame)
+    monkeypatch.setattr(
+        trainer_mod, "load_human_split", lambda cfg, reg, split: validation
+    )
+    monkeypatch.setattr(trainer_mod, "build_run_matrix", lambda *a, **k: [])
+    monkeypatch.setattr(trainer_mod, "execute_run_matrix", lambda *a, **k: [])
+
+    captured: dict = {}
+
+    def fake_oof(cfg, registry, df, *, finetune_fn=None):
+        captured["called"] = True
+        captured["finetune_fn"] = finetune_fn
+        captured["rows"] = len(df)
+        return registry.oof_pred_probs
+
+    monkeypatch.setattr(
+        "binary_classifier.train.crossfit.compute_oof_pred_probs", fake_oof
+    )
+
+    stub = object()
+    tiny_config.training.arms = ["pruned"]
+    trainer_mod.run_training(tiny_config, tiny_registry, oof_finetune_fn=stub)
+    assert captured.get("called") is True
+    assert captured["finetune_fn"] is stub
+    assert captured["rows"] > 0
+
+    # No pruned arm and no CROWDLAB comparison -> OOF is not computed.
+    captured.clear()
+    tiny_config.training.arms = []
+    tiny_config.aggregation.comparison_arms = []
+    trainer_mod.run_training(tiny_config, tiny_registry)
+    assert "called" not in captured

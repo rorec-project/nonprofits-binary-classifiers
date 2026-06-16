@@ -183,7 +183,7 @@ def finetune(
             load_best_model_at_end=True,
             metric_for_best_model=cfg.training.metric_for_best_model,
             greater_is_better=cfg.training.greater_is_better,
-            warmup_steps=cfg.training.warmup_fraction,
+            warmup_ratio=cfg.training.warmup_fraction,
             learning_rate=cfg.training.learning_rate,
             num_train_epochs=cfg.training.epochs,
             per_device_train_batch_size=cfg.training.batch_size,
@@ -251,6 +251,120 @@ def finetune(
         (run_dir / "metrics.json").write_text(json.dumps(row, indent=2))
         logger.info("Finished encoder fine-tune run %s", run_id)
         return row
+
+
+class _FoldPredictor:
+    """Trained-fold predictor exposing ``predict_proba(frame) -> (n, 2)``.
+
+    Wraps a fitted Hugging Face ``Trainer`` and its tokenizer so cross-fit OOF
+    scoring can score a held-out fold without re-implementing tokenization.
+    """
+
+    def __init__(self, trainer: Trainer, tokenizer: Any, max_length: int) -> None:
+        self._trainer = trainer
+        self._tokenizer = tokenizer
+        self._max_length = max_length
+
+    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+        """Return ``(n, 2)`` class probabilities for ``frame['text']``."""
+        dataset = Dataset.from_dict(
+            {"text": frame["text"].fillna("").astype(str).tolist()},
+        )
+        tokenized = _tokenize_dataset(
+            dataset, self._tokenizer, max_length=self._max_length
+        )
+        predictions = self._trainer.predict(cast(Any, tokenized)).predictions
+        p1 = _positive_probs(predictions)
+        return np.column_stack([1.0 - p1, p1])
+
+
+def finetune_predictor(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    encoder: EncoderArm,
+    train_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    *,
+    targets: str,
+    arm: str,
+    train_fraction: float,
+    seed: int,
+    run_root: Path | str | None = None,
+) -> _FoldPredictor:
+    """Fine-tune an encoder and return an out-of-fold predictor.
+
+    Unlike :func:`finetune` (which returns a metrics row for the model-selection
+    sweep), this trains on ``train_df`` and returns a predictor exposing
+    ``predict_proba(frame) -> (n, 2)`` so cross-fit OOF scoring
+    (:func:`binary_classifier.train.crossfit.compute_oof_pred_probs`) can score
+    each held-out fold. ``eval_df`` and ``train_fraction`` are accepted only for
+    call-shape parity with the sweep fine-tune signature.
+
+    Args:
+        cfg: Validated task configuration.
+        registry: Path registry that owns run-artifact directories.
+        encoder: Hugging Face encoder arm to fine-tune.
+        train_df: Silver training frame with ``text`` and target columns.
+        eval_df: Held-out fold frame (unused during training; scored by the
+            caller through the returned predictor).
+        targets: ``"soft"`` for ``p_pos`` targets or ``"hard"`` for labels.
+        arm: Training-data arm name.
+        train_fraction: Fraction of available training rows (unused here).
+        seed: Explicit run seed.
+        run_root: Optional override for the run-artifact root.
+
+    Returns:
+        A :class:`_FoldPredictor` wrapping the fitted model and tokenizer.
+
+    """
+    del eval_df, train_fraction
+    transformers.set_seed(seed)
+    device = resolve_device(cfg.training.device)
+    precision = resolve_precision(cfg.training.precision, device)
+
+    tokenizer: Any = AutoTokenizer.from_pretrained(encoder.id)
+    _assert_cls_sep_startup(tokenizer)
+    model: Any = AutoModelForSequenceClassification.from_pretrained(
+        encoder.id,
+        num_labels=2,
+    )
+    model.to(device)
+
+    train_dataset = _dataset_from_frame(
+        train_df,
+        tokenizer,
+        max_length=encoder.max_length,
+        targets=targets,
+        arm=arm,
+    )
+    runs_base = Path(run_root) if run_root is not None else registry.runs_dir
+    output_dir = runs_base / "oof" / f"{_model_slug(encoder.id)}-{arm}-s{seed}"
+    args = TrainingArguments(
+        output_dir=str(output_dir),
+        num_train_epochs=cfg.training.epochs,
+        per_device_train_batch_size=cfg.training.batch_size,
+        learning_rate=cfg.training.learning_rate,
+        warmup_ratio=cfg.training.warmup_fraction,
+        weight_decay=cfg.training.weight_decay,
+        bf16=(precision == "bf16"),
+        report_to="none",
+        disable_tqdm=True,
+        save_strategy="no",
+        eval_strategy="no",
+        seed=seed,
+        data_seed=seed,
+    )
+    class_weights = _class_weights(train_df) if arm == "class_weighted" else None
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=train_dataset,
+        data_collator=DataCollatorWithPadding(tokenizer=cast(Any, tokenizer)),
+        processing_class=tokenizer,
+        compute_loss_func=_build_loss_func(class_weights=class_weights),
+    )
+    trainer.train()
+    return _FoldPredictor(trainer, tokenizer, encoder.max_length)
 
 
 def compute_metrics(eval_pred: transformers.EvalPrediction) -> dict[str, float]:

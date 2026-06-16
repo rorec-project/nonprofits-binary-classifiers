@@ -128,6 +128,25 @@ def test_stage_05_runs_with_force(tiny_config, tiny_registry, monkeypatch) -> No
     assert calls == [("05", True)]
 
 
+def test_stage_06_runs_sweep_then_final(tiny_config, tiny_registry, monkeypatch):
+    # Coded validation labels satisfy the G1 gate for stage 06.
+    _write_coded_template(tiny_registry)
+    calls: list[tuple[bool, bool]] = []
+
+    def fake_run_training(cfg, registry, *, sweep=True, final=False, **kwargs):
+        calls.append((sweep, final))
+
+    monkeypatch.setattr(
+        "binary_classifier.train.trainer.run_training",
+        fake_run_training,
+    )
+
+    rp.run_pipeline(tiny_config, tiny_registry, {"06"})
+
+    # Orchestrated stage 06 is two-phase: selection sweep, then final-seed refit.
+    assert calls == [(True, False), (False, True)]
+
+
 def test_stage_07_with_test_labels_exits_at_g4(
     tiny_config,
     tiny_registry,

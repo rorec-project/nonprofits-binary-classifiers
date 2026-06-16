@@ -167,7 +167,7 @@ def test_finetune_builds_training_args_and_run_layout(
     assert args["output_dir"] == str(tiny_registry.checkpoints_dir / "fake__encoder" / "default" / "s123")
     assert args["eval_strategy"] == "epoch"
     assert args["save_strategy"] == "epoch"
-    assert args["warmup_steps"] == tiny_config.training.warmup_fraction
+    assert args["warmup_ratio"] == tiny_config.training.warmup_fraction
     assert args["metric_for_best_model"] == "pr_auc"
     assert args["greater_is_better"] is True
     assert args["bf16"] is False
@@ -183,6 +183,90 @@ def test_finetune_builds_training_args_and_run_layout(
     run_dir = tmp_path / "runs" / row["run_id"]
     assert (run_dir / "train.log").exists()
     assert (run_dir / "metrics.json").exists()
+
+
+def test_finetune_predictor_uses_configured_warmup(
+    monkeypatch,
+    tmp_path,
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """OOF fold training keeps scheduler warmup aligned with normal fine-tuning."""
+    captured = {}
+
+    class FakeTokenizer:
+        cls_token_id = 101
+        sep_token_id = 102
+
+        def encode(self, text, add_special_tokens=True):
+            del text
+            return [101, 7, 102] if add_special_tokens else [7]
+
+        def __call__(self, texts, truncation=True, max_length=256):
+            del truncation, max_length
+            return {
+                "input_ids": [[101, 5, 102] for _ in texts],
+                "attention_mask": [[1, 1, 1] for _ in texts],
+            }
+
+    class FakeModel:
+        def to(self, device):
+            captured["device"] = device
+            return self
+
+    class FakeTrainingArguments:
+        def __init__(self, **kwargs):
+            captured["training_args"] = kwargs
+
+    class FakeTrainer:
+        def __init__(self, **kwargs):
+            captured["trainer_kwargs"] = kwargs
+
+        def train(self):
+            captured["trained"] = True
+
+    monkeypatch.setattr(
+        encoder_mod.AutoTokenizer,
+        "from_pretrained",
+        lambda model_id: FakeTokenizer(),
+    )
+    monkeypatch.setattr(
+        encoder_mod.AutoModelForSequenceClassification,
+        "from_pretrained",
+        lambda model_id, num_labels: FakeModel(),
+    )
+    monkeypatch.setattr(encoder_mod, "DataCollatorWithPadding", lambda tokenizer: tokenizer)
+    monkeypatch.setattr(encoder_mod, "TrainingArguments", FakeTrainingArguments)
+    monkeypatch.setattr(encoder_mod, "Trainer", FakeTrainer)
+    tiny_config.training.device = "cpu"
+    tiny_config.training.precision = "fp32"
+    tiny_config.training.warmup_fraction = 0.17
+
+    predictor = encoder_mod.finetune_predictor(
+        tiny_config,
+        tiny_registry,
+        tiny_config.training.encoders[0].model_copy(update={"id": "fake/encoder"}),
+        _frame(6),
+        _frame(2, start=10),
+        targets="soft",
+        arm="default",
+        train_fraction=1.0,
+        seed=123,
+        run_root=tmp_path / "runs",
+    )
+
+    args = captured["training_args"]
+    assert args["output_dir"] == str(
+        tmp_path / "runs" / "oof" / "fake__encoder-default-s123"
+    )
+    assert args["warmup_ratio"] == tiny_config.training.warmup_fraction
+    assert args["save_strategy"] == "no"
+    assert args["eval_strategy"] == "no"
+    assert args["bf16"] is False
+    assert captured["trainer_kwargs"]["processing_class"].cls_token_id == 101
+    assert callable(captured["trainer_kwargs"]["compute_loss_func"])
+    assert captured["trained"] is True
+    assert isinstance(predictor, encoder_mod._FoldPredictor)
 
 
 def _frame(n_rows: int, start: int = 0) -> pd.DataFrame:
