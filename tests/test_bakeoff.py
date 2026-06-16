@@ -4,7 +4,12 @@ import pandas as pd
 import pytest
 
 from binary_classifier.annotate.bakeoff_prompts import run_bakeoff
-from binary_classifier.annotate.schema import BinaryLabel, LabelRecord, SourceType
+from binary_classifier.annotate.schema import (
+    AnnotationStore,
+    BinaryLabel,
+    LabelRecord,
+    SourceType,
+)
 from binary_classifier.config import BakeoffCandidate, load_slate
 
 
@@ -72,6 +77,17 @@ def test_bakeoff_emits_scores_and_unconfirmed_slate(tiny_config, tiny_registry, 
     for r in results:
         assert isinstance(r["scores"]["accuracy"], float)
         assert r["scores"]["n_valid"] == 3
+        # The imbalanced bundle is now computed and drives selection.
+        bundle = r["scores"]["metrics"]
+        assert isinstance(bundle, dict)
+        assert "cohens_kappa" in bundle
+        assert "lower" in bundle["bootstrap_ci"]["minority_f1"]
+
+    # Selection is on κ + minority-F1 CI (freeze-gate criteria), not accuracy;
+    # the legacy accuracy benchmark is reported but no longer drives the slate.
+    assert out["proposed_slate"]["kappa_threshold"] == tiny_config.qc.kappa_threshold
+    assert out["proposed_slate"]["f1_ci_floor"] == tiny_config.qc.f1_ci_floor
+    assert "agreement_threshold" in out["proposed_slate"]
 
     # Proposed slate is written, unconfirmed, and production is NOT written.
     assert tiny_registry.proposed_slate.exists()
@@ -114,3 +130,47 @@ def test_bakeoff_vllm_arm_degrades_without_aborting(tiny_config, tiny_registry, 
     assert "error" in by_model[("gemma", "v1")]["scores"]
     # Proposed slate is built from the surviving (scored) arm.
     assert any(m["id"] == "m1" for m in out["proposed_slate"]["models"])
+
+
+def test_bakeoff_deduplicates_predictions_before_scoring(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+) -> None:
+    """Stale duplicate source rows do not inflate prompt-dev metrics."""
+    _write_template(tiny_registry)
+    store_path = tmp_path / "bakeoff_store.csv"
+    AnnotationStore(store_path).append_many(
+        [
+            LabelRecord(
+                EIN2="00-1",
+                source_id="m1__v1",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="m1",
+                prompt_id="v1",
+                temperature=0.0,
+                binary_label=BinaryLabel.NONRELIGIOUS,
+            ),
+            LabelRecord(
+                EIN2="00-1",
+                source_id="m1__v1",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="m1",
+                prompt_id="v1",
+                temperature=0.0,
+                binary_label=BinaryLabel.RELIGIOUS,
+            ),
+        ]
+    )
+
+    out = run_bakeoff(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=[_prompts(tmp_path)[0]],
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        annotator_factory=_factory(),
+        store_path=store_path,
+    )
+
+    assert out["results"][0]["scores"]["n_total"] == 3
+    assert out["results"][0]["scores"]["n_valid"] == 3

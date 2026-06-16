@@ -15,12 +15,14 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from binary_classifier.annotate.annotators import Annotator
 from binary_classifier.annotate.annotators.factory import make_annotator
 from binary_classifier.annotate.schema import AnnotationStore
 from binary_classifier.config import BakeoffCandidate, BinaryClassifierConfig
+from binary_classifier.metrics import compute_metric_bundle
 from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
@@ -95,7 +97,6 @@ def run_bakeoff(
 
     store = AnnotationStore(store_path)
     results: list[dict] = []
-    threshold = cfg.qc.agreement_threshold
 
     groups: list[tuple[BakeoffCandidate, Path, str, str]] = []
     for spec in candidates:
@@ -154,8 +155,17 @@ def run_bakeoff(
         else:
             try:
                 pred_df = store.to_frame()
-                pred_df = pred_df[pred_df["source_id"] == source_id][["EIN2", "label"]]
-                scores = _score_vs_human(pred_df, human_df)
+                pred_df = pred_df[pred_df["source_id"] == source_id]
+                pred_df = pred_df.drop_duplicates(
+                    subset=["EIN2", "source_id"],
+                    keep="last",
+                )[["EIN2", "label"]]
+                scores = _score_vs_human(
+                    pred_df,
+                    human_df,
+                    seed=int(cfg.SEED),
+                    n_resamples=int(cfg.evaluation.bootstrap_resamples),
+                )
             except Exception as exc:
                 logger.warning(
                     "Bake-off arm %s scoring failed: %s",
@@ -176,7 +186,12 @@ def run_bakeoff(
         )
         logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
 
-    proposed = _build_proposed_slate(results, threshold)
+    proposed = _build_proposed_slate(
+        results,
+        kappa_threshold=cfg.qc.kappa_threshold,
+        f1_ci_floor=cfg.qc.f1_ci_floor,
+        agreement_threshold=cfg.qc.agreement_threshold,
+    )
 
     # Write the full bundle and the proposed (unconfirmed) slate. Do NOT write
     # production_slate.json — that is the human's gate-G2 step.
@@ -238,23 +253,64 @@ def _load_coded_prompt_dev(human_labels_path: Path, limit: int | None) -> pd.Dat
     return sub
 
 
-def _build_proposed_slate(results: list[dict], threshold: float) -> dict:
+def _build_proposed_slate(
+    results: list[dict],
+    *,
+    kappa_threshold: float,
+    f1_ci_floor: float,
+    agreement_threshold: float,
+) -> dict:
     """Build the unconfirmed proposed slate from scored results.
 
-    Selects every (model, prompt) combo whose accuracy clears ``threshold``;
-    if none clear, falls back to the single best-scoring combo.
+    Selects every (model, prompt) combo on the same criteria the stage-04
+    freeze gate enforces: Cohen's κ ≥ ``kappa_threshold`` AND the bootstrap
+    minority-F1 CI-lower ≥ ``f1_ci_floor``. If no combo clears, falls back to
+    the single best combo ranked by minority-F1 (point estimate). Combos with a
+    missing/degenerate metric bundle are skipped rather than selected.
+
+    ``agreement_threshold`` (the legacy raw-accuracy benchmark) is reported for
+    continuity but no longer drives selection.
+
+    Args:
+        results: Scored bake-off results.
+        kappa_threshold: Minimum Cohen's κ to clear (``cfg.qc.kappa_threshold``).
+        f1_ci_floor: Minimum bootstrap minority-F1 CI-lower to clear
+            (``cfg.qc.f1_ci_floor``).
+        agreement_threshold: Legacy raw-accuracy benchmark, reported only.
+
+    Returns:
+        Proposed-slate dict with ``confirmed``, ``models``, ``selected``, and the
+        reported (non-driving) ``agreement_threshold``.
+
     """
-    scored = [
-        r
-        for r in results
-        if isinstance(r["scores"].get("accuracy"), (int, float))
-        and r["scores"].get("accuracy") is not None
-    ]
-    clearing = [r for r in scored if r["scores"]["accuracy"] >= threshold]
+
+    def _bundle(r: dict) -> dict | None:
+        scores = r["scores"]
+        bundle = scores.get("metrics")
+        return bundle if isinstance(bundle, dict) else None
+
+    scored = [r for r in results if _bundle(r) is not None]
+
+    def _clears(r: dict) -> bool:
+        bundle = _bundle(r)
+        assert bundle is not None
+        kappa = bundle["cohens_kappa"]
+        ci_lower = bundle["bootstrap_ci"]["minority_f1"]["lower"]
+        kappa_pass = bool(np.isfinite(kappa) and kappa >= kappa_threshold)
+        f1_ci_pass = bool(np.isfinite(ci_lower) and ci_lower >= f1_ci_floor)
+        return kappa_pass and f1_ci_pass
+
+    def _minority_f1(r: dict) -> float:
+        bundle = _bundle(r)
+        assert bundle is not None
+        f1 = bundle["f1"]
+        return f1 if np.isfinite(f1) else float("-inf")
+
+    clearing = [r for r in scored if _clears(r)]
     if clearing:
         selected = clearing
     elif scored:
-        selected = [max(scored, key=lambda r: r["scores"]["accuracy"])]
+        selected = [max(scored, key=_minority_f1)]
     else:
         selected = []
 
@@ -271,19 +327,60 @@ def _build_proposed_slate(results: list[dict], threshold: float) -> dict:
                 },
             )
 
-    return {"confirmed": False, "models": models, "selected": selected}
+    return {
+        "confirmed": False,
+        "models": models,
+        "selected": selected,
+        "kappa_threshold": kappa_threshold,
+        "f1_ci_floor": f1_ci_floor,
+        "agreement_threshold": agreement_threshold,
+    }
+
+
+def _bakeoff_minority_class(y_true: "np.ndarray") -> int:
+    """Return the minority class, choosing the positive class on ties.
+
+    Args:
+        y_true: Ground-truth label vector (0/1).
+
+    Returns:
+        ``1`` when the positive class is no larger than the negative class
+        (including ties), else ``0``. Mirrors the freeze/stage-11 tie rule
+        without importing a private helper.
+
+    """
+    counts = np.bincount(y_true.astype(int), minlength=2)
+    if counts[1] <= counts[0]:
+        return 1
+    return 0
 
 
 def _score_vs_human(
     pred_df: pd.DataFrame,
     human_df: pd.DataFrame,
+    *,
+    seed: int,
+    n_resamples: int,
 ) -> dict:
-    """Compute agreement metrics between predictions and human labels.
+    """Score predictions against human labels on the prompt-dev overlap.
 
-    Returns a dict with accuracy, precision, recall, f1, and abstain rate.
-    The fuller imbalanced bundle (MCC, balanced accuracy, bootstrap CIs) is
-    Phase 2 (T2.1).
+    Keeps the legacy flat accuracy/precision/recall/f1/abstain-rate keys for
+    continuity and adds the imbalanced bundle under ``metrics`` (minority
+    P/R/F1, MCC, balanced accuracy, PR-AUC, Cohen's κ, and the bootstrap
+    minority-F1 CI) so the bake-off can select on the same quantities the
+    stage-04 freeze gate enforces.
+
+    Args:
+        pred_df: Predictions with ``EIN2`` and ``label`` (may be NaN/abstain).
+        human_df: Human labels with ``EIN2`` and ``human_label``.
+        seed: Bootstrap seed (``cfg.SEED``).
+        n_resamples: Bootstrap resamples (``cfg.evaluation.bootstrap_resamples``).
+
+    Returns:
+        Score dict, or an ``error`` dict when there is no human overlap.
+
     """
+    pred_df = pred_df.drop_duplicates(subset=["EIN2"], keep="last")
     merged = pred_df.merge(human_df, on="EIN2", how="inner")
     if merged.empty:
         return {"error": "no overlap with human labels"}
@@ -299,6 +396,9 @@ def _score_vs_human(
             "recall": None,
             "f1": None,
             "abstain_rate": abstain_rate,
+            "metrics": None,
+            "n_valid": 0,
+            "n_total": len(merged),
         }
 
     tp = int(((valid["label"] == 1.0) & (valid["human_label"] == 1.0)).sum())
@@ -315,12 +415,32 @@ def _score_vs_human(
         else 0.0
     )
 
+    # Imbalanced bundle — selection metrics matching the freeze gate. A single
+    # class present (or too few valid rows) can make the bundle degenerate;
+    # guard so a bad combo is skipped at selection rather than crashing here.
+    y_true = valid["human_label"].astype(int).to_numpy()
+    y_pred = valid["label"].astype(int).to_numpy()
+    metrics: dict | None
+    try:
+        metrics = compute_metric_bundle(
+            y_true,
+            y_pred,
+            y_score=None,
+            minority_class=_bakeoff_minority_class(y_true),
+            seed=seed,
+            n_resamples=n_resamples,
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade, do not abort the bake-off
+        logger.warning("Imbalanced metric bundle failed: %s", exc)
+        metrics = None
+
     return {
         "accuracy": accuracy,
         "precision": precision,
         "recall": recall,
         "f1": f1,
         "abstain_rate": abstain_rate,
+        "metrics": metrics,
         "n_valid": len(valid),
         "n_total": len(merged),
     }
