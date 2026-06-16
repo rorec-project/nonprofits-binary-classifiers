@@ -33,9 +33,14 @@ mise.*.toml
 !.opencode/agents/ralph-orchestrator.md
 CLAUDE.md
 
+# Generated on UCloud at the project drive root (repo root).
+/env.sh
+/devenv.sh
+/outputs/
+/devtools/
+
 # Data: heavy/cloud artifacts ignored; symlinks stand in for DVC until we adopt it.
 /data/*
 !/data/processed/
 /data/processed/*
 !/data/processed/gold/
-# Note: line-4 *.parquet is global — any future .parquet under gold/ is still ignored.

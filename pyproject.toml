@@ -36,6 +36,8 @@ dev = [
     "ipykernel>=7.2.0",
     "pytest>=9.0.3",
     "requests>=2.34.2",
+    "ruff>=0.10.0",
+    "ty>=0.0.1a1",
 ]
 
 [build-system]
