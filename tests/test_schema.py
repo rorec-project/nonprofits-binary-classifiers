@@ -353,6 +353,40 @@ def test_already_done_uses_cached_set(tmp_path) -> None:
     assert not store.already_done("99-999", "m1__v1")
 
 
+def test_resume_keys_normalize_ein2_dtype_and_whitespace(tmp_path) -> None:
+    """CSV dtype inference and whitespace do not change resume keys."""
+    path = tmp_path / "store.csv"
+    pd.DataFrame(
+        [
+            {
+                "EIN2": 123,
+                "source_id": "m1__v1",
+                "source_type": "llm_prompt",
+                "label": 1.0,
+                "confidence": 0.9,
+                "model_id": "m1",
+                "prompt_id": "v1",
+                "temperature": 0.0,
+                "seed": 42,
+                "run_timestamp": "2024-01-01T00:00:00+00:00",
+                "raw_response": "{}",
+                "reason": "test",
+                "domains_present": None,
+                "evidence_spans": None,
+                "boundary_notes": None,
+                "binary_label": "religious",
+                "system_fingerprint": None,
+            }
+        ]
+    ).to_csv(path, index=False)
+
+    store = AnnotationStore(path)
+
+    assert store.done_pairs() == {("123", "m1__v1")}
+    assert store.already_done(" 123 ", "m1__v1")
+    assert store.records_for_ein2(" 123 ")[0].EIN2 == "123"
+
+
 def test_done_pairs_reads_only_two_columns(tmp_path) -> None:
     """done_pairs should not require loading the full dataframe."""
     path = tmp_path / "store.csv"

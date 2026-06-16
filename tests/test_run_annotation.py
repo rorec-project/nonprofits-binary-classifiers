@@ -7,6 +7,7 @@ import pytest
 
 from binary_classifier.annotate.run_annotation import (
     CANARY_AUDIT_FILENAME,
+    resolve_production_selection,
     resolve_production_specs,
     run_annotation,
     run_annotation_matrix,
@@ -86,6 +87,7 @@ def _keyword_stub_factory(_cfg, spec, prompt_id, prompt_text):
 
 
 def _write_prompts(tmp_path) -> list:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     paths = []
     for stem in ("v1", "v2", "v3"):
         p = tmp_path / f"{stem}.txt"
@@ -178,6 +180,65 @@ def test_resume_skips_done_no_duplicates(tmp_path) -> None:
     # 2 rows × 3 prompts = 6, no duplicates after resume.
     assert len(frame) == 6
     assert not frame.duplicated(subset=["EIN2", "source_id"]).any()
+
+
+def test_resume_normalizes_ein2_dtype_drift(tmp_path) -> None:
+    """A CSV-inferred numeric EIN2 still matches a string EIN2 on resume."""
+    prompts = _write_prompts(tmp_path)
+    specs = [BakeoffCandidate(id="m1", provider="vllm")]
+    store_path = tmp_path / "store.csv"
+
+    run_annotation_matrix(
+        df=pd.DataFrame({"EIN2": [123], "text": ["m a"]}),
+        specs=specs,
+        prompt_paths=prompts,
+        store_path=store_path,
+        annotator_factory=_stub_factory,
+        checkpoint_every=10,
+    )
+    store = run_annotation_matrix(
+        df=pd.DataFrame({"EIN2": [" 123 "], "text": ["m a"]}),
+        specs=specs,
+        prompt_paths=prompts,
+        store_path=store_path,
+        annotator_factory=_stub_factory,
+        checkpoint_every=10,
+        resume=True,
+    )
+
+    frame = store.to_frame()
+    assert len(frame) == 3
+    assert set(frame["EIN2"]) == {"123"}
+    assert not frame.duplicated(subset=["EIN2", "source_id"]).any()
+
+
+def test_no_resume_replaces_existing_store(tmp_path) -> None:
+    """A start-from-scratch re-run does not append to stale labels."""
+    prompts = _write_prompts(tmp_path)
+    specs = [BakeoffCandidate(id="m1", provider="vllm")]
+    store_path = tmp_path / "store.csv"
+
+    run_annotation_matrix(
+        df=pd.DataFrame({"EIN2": ["00-old", "00-keep"], "text": ["a", "b"]}),
+        specs=specs,
+        prompt_paths=prompts,
+        store_path=store_path,
+        annotator_factory=_stub_factory,
+        checkpoint_every=10,
+    )
+    store = run_annotation_matrix(
+        df=pd.DataFrame({"EIN2": ["00-new"], "text": ["c"]}),
+        specs=specs,
+        prompt_paths=prompts,
+        store_path=store_path,
+        annotator_factory=_stub_factory,
+        checkpoint_every=10,
+        resume=False,
+    )
+
+    frame = store.to_frame()
+    assert len(frame) == 3
+    assert set(frame["EIN2"]) == {"00-new"}
 
 
 def test_run_annotation_includes_gold_validation_for_stage04_gate(
@@ -369,10 +430,15 @@ def test_run_annotation_canary_empty_pool_overlap_raises(
 # ── Confirmed production slate (gate G2 backstop) ────────────────────────────
 
 
-def _write_slate(registry, confirmed: bool, models: list[dict]) -> None:
+def _write_slate(
+    registry,
+    confirmed: bool,
+    models: list[dict],
+    selected: list[dict] | None = None,
+) -> None:
     registry.production_slate.parent.mkdir(parents=True, exist_ok=True)
     registry.production_slate.write_text(
-        json.dumps({"confirmed": confirmed, "models": models})
+        json.dumps({"confirmed": confirmed, "models": models, "selected": selected or []})
     )
 
 
@@ -406,3 +472,57 @@ def test_resolve_production_specs_empty_raises(tiny_registry) -> None:
     _write_slate(tiny_registry, confirmed=True, models=[])
     with pytest.raises(ValueError, match="no models"):
         resolve_production_specs(tiny_registry)
+
+
+def test_run_annotation_uses_selected_model_prompt_pairs(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    """Selected bake-off pairs constrain stage-03 production annotation."""
+    _write_prompts(tiny_registry.prompts_dir)
+    _write_annotation_inputs(
+        registry=tiny_registry,
+        cfg=tiny_config,
+        silver_ein2s=["00-S1"],
+        gold_rows=[{"EIN2": "00-V1", "split": "validation"}],
+    )
+    _write_slate(
+        tiny_registry,
+        confirmed=True,
+        models=[
+            {"id": "m1", "provider": "vllm"},
+            {"id": "m2", "provider": "vllm"},
+        ],
+        selected=[
+            {"model_id": "m1", "prompt_id": "v2"},
+            {"model_id": "m2", "prompt_id": "v1"},
+        ],
+    )
+    monkeypatch.setattr(
+        "binary_classifier.annotate.run_annotation.make_annotator",
+        _keyword_stub_factory,
+    )
+
+    store = run_annotation(
+        cfg=tiny_config,
+        registry=tiny_registry,
+        checkpoint_every=100,
+    )
+
+    frame = store.to_frame()
+    assert set(frame["source_id"]) == {"m1__v2", "m2__v1"}
+    assert len(frame) == 4
+
+
+def test_run_annotation_rejects_invalid_selected_pairs(tiny_registry) -> None:
+    """A malformed selected slate must not fall back to all default prompts."""
+    _write_slate(
+        tiny_registry,
+        confirmed=True,
+        models=[{"id": "m1", "provider": "vllm"}],
+        selected=[{"model_id": "typo", "prompt_id": "v1"}],
+    )
+
+    with pytest.raises(ValueError, match="invalid model/prompt"):
+        resolve_production_selection(tiny_registry)

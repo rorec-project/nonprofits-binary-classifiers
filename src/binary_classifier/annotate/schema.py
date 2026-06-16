@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -90,6 +90,15 @@ def build_json_schema() -> dict[str, Any]:
 # ── Pydantic model ───────────────────────────────────────────────────────────
 
 
+def normalize_ein2(value: Any) -> Any:
+    """Normalize annotation join keys for resume-safe comparisons."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value)).strip()
+    return str(value).strip()
+
+
 class LabelRecord(BaseModel):
     """Canonical record produced by every annotator.
 
@@ -160,6 +169,12 @@ class LabelRecord(BaseModel):
         description="Raw JSON string returned by the LLM.",
     )
 
+    @field_validator("EIN2", mode="before")
+    @classmethod
+    def _normalize_ein2(cls, value: Any) -> Any:
+        """Keep persisted annotation keys stable across CSV/parquet dtypes."""
+        return normalize_ein2(value)
+
     # ── Computed fields ────────────────────────────────────────────────────
 
     def compute_numeric_label(self) -> float | None:
@@ -224,7 +239,7 @@ class LabelRecord(BaseModel):
             return val
 
         return cls(
-            EIN2=row["EIN2"],
+            EIN2=normalize_ein2(row["EIN2"]),
             source_id=row["source_id"],
             source_type=SourceType(row["source_type"]),
             label=_clean(row.get("label")),
@@ -320,6 +335,7 @@ class AnnotationStore:
                 if col not in self._df.columns:
                     self._df[col] = None
             self._df = self._df[self.COLUMNS]
+            self._df["EIN2"] = self._df["EIN2"].map(normalize_ein2)
         else:
             self._df = pd.DataFrame(columns=self.COLUMNS)
         return self._df
@@ -343,7 +359,9 @@ class AnnotationStore:
             df = pd.read_parquet(self.path, columns=["EIN2", "source_id"])
         else:
             df = pd.read_csv(self.path, usecols=["EIN2", "source_id"])
-        self._done_set = set(zip(df["EIN2"], df["source_id"], strict=True))
+        self._done_set = set(
+            zip(df["EIN2"].map(normalize_ein2), df["source_id"], strict=True)
+        )
         return self._done_set
 
     # ── Public API ───────────────────────────────────────────────────────
@@ -353,7 +371,7 @@ class AnnotationStore:
 
         This is the resume key — fixes audit R-08.
         """
-        return (ein2, source_id) in self._build_done_set()
+        return (normalize_ein2(ein2), source_id) in self._build_done_set()
 
     def done_pairs(self) -> set[tuple[str, str]]:
         """Return a copy of the set of (EIN2, source_id) pairs already stored."""
@@ -375,7 +393,7 @@ class AnnotationStore:
             if self._df is not None:
                 self._df = pd.concat([self._df, row_df], ignore_index=True)
         if self._done_set is not None:
-            self._done_set.add((row["EIN2"], row["source_id"]))
+            self._done_set.add((normalize_ein2(row["EIN2"]), row["source_id"]))
 
     def append_many(self, records: list[LabelRecord]) -> None:
         """Append a batch of records efficiently."""
@@ -395,7 +413,9 @@ class AnnotationStore:
             if self._df is not None:
                 self._df = pd.concat([self._df, rows_df], ignore_index=True)
         if self._done_set is not None:
-            self._done_set.update((r["EIN2"], r["source_id"]) for r in rows)
+            self._done_set.update(
+                (normalize_ein2(r["EIN2"]), r["source_id"]) for r in rows
+            )
 
     def to_frame(self) -> pd.DataFrame:
         """Return a copy of the full store as a pandas DataFrame."""
@@ -411,5 +431,5 @@ class AnnotationStore:
     def records_for_ein2(self, ein2: str) -> list[LabelRecord]:
         """Return all records for a given EIN2."""
         df = self._load()
-        rows = df[df["EIN2"] == ein2].to_dict("records")
+        rows = df[df["EIN2"] == normalize_ein2(ein2)].to_dict("records")
         return [LabelRecord.from_flat_dict(r) for r in rows]

@@ -25,8 +25,12 @@ import pandas as pd
 from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.annotators import Annotator
 from binary_classifier.annotate.annotators.factory import make_annotator
-from binary_classifier.annotate.schema import AnnotationStore, LabelRecord
-from binary_classifier.config import BakeoffCandidate, load_slate
+from binary_classifier.annotate.schema import (
+    AnnotationStore,
+    LabelRecord,
+    normalize_ein2,
+)
+from binary_classifier.config import BakeoffCandidate, Slate, load_slate
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -70,7 +74,7 @@ def load_canary_ein2s(registry: "PathRegistry") -> set[str]:
     monitor = pd.read_csv(path)
     if "EIN2" not in monitor.columns:
         raise ValueError(f"{path} missing required EIN2 column.")
-    return set(monitor["EIN2"].dropna().astype(str))
+    return set(monitor["EIN2"].dropna().map(normalize_ein2))
 
 
 # Factory signature: (spec, prompt_id, prompt_text) -> Annotator.
@@ -78,6 +82,48 @@ AnnotatorFactory = Callable[[BakeoffCandidate, str, str], Annotator]
 
 
 # ── Confirmed-slate resolution (stage-03 backstop, gate G2) ──────────────────
+
+
+def _load_confirmed_production_slate(registry: "PathRegistry") -> Slate:
+    """Load and validate the human-confirmed production slate."""
+    path = registry.production_slate
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No confirmed production slate at {path}. Run stage 02, review "
+            f"{registry.bakeoff_results}, then copy {registry.proposed_slate} "
+            f"to {path} and set 'confirmed': true.",
+        )
+    slate = load_slate(path)
+    if not slate.confirmed:
+        raise ValueError(
+            f"{path} is not confirmed. Review the bake-off scores and set "
+            f"'confirmed': true before running stage 03.",
+        )
+    if not slate.models:
+        raise ValueError(f"{path} lists no models under 'models'.")
+    return slate
+
+
+def _selected_prompt_pairs(slate: Slate) -> set[tuple[str, str]] | None:
+    """Return selected ``(model_id, prompt_id)`` pairs when present."""
+    if not slate.selected:
+        return None
+    model_ids = {model.id for model in slate.models}
+    pairs: set[tuple[str, str]] = set()
+    invalid: list[dict[str, object]] = []
+    for item in slate.selected:
+        model_id = item.get("model_id") or item.get("id")
+        prompt_id = item.get("prompt_id")
+        if model_id in model_ids and prompt_id:
+            pairs.add((str(model_id), str(prompt_id)))
+        else:
+            invalid.append(dict(item))
+    if invalid:
+        raise ValueError(
+            "production_slate.selected contains invalid model/prompt entries: "
+            f"{invalid[:3]}",
+        )
+    return pairs
 
 
 def resolve_production_specs(registry: "PathRegistry") -> list[BakeoffCandidate]:
@@ -98,22 +144,15 @@ def resolve_production_specs(registry: "PathRegistry") -> list[BakeoffCandidate]
         ValueError: If the slate is unconfirmed or lists no models.
 
     """
-    path = registry.production_slate
-    if not path.exists():
-        raise FileNotFoundError(
-            f"No confirmed production slate at {path}. Run stage 02, review "
-            f"{registry.bakeoff_results}, then copy {registry.proposed_slate} "
-            f"to {path} and set 'confirmed': true.",
-        )
-    slate = load_slate(path)
-    if not slate.confirmed:
-        raise ValueError(
-            f"{path} is not confirmed. Review the bake-off scores and set "
-            f"'confirmed': true before running stage 03.",
-        )
-    if not slate.models:
-        raise ValueError(f"{path} lists no models under 'models'.")
-    return slate.models
+    return _load_confirmed_production_slate(registry).models
+
+
+def resolve_production_selection(
+    registry: "PathRegistry",
+) -> tuple[list[BakeoffCandidate], set[tuple[str, str]] | None]:
+    """Resolve confirmed models plus optional selected model-prompt pairs."""
+    slate = _load_confirmed_production_slate(registry)
+    return slate.models, _selected_prompt_pairs(slate)
 
 
 # ── Pipeline entrypoint ──────────────────────────────────────────────────────
@@ -145,12 +184,16 @@ def run_annotation(
     the final filter so direct programmatic calls get the same hard-fail
     behaviour when the monitor slice does not overlap the annotation pool.
     """
-    if prompt_paths is None:
-        prompt_paths = [
-            registry.prompts_dir / f"{stem}.txt" for stem in ("v1", "v2", "v3")
-        ]
+    selected_pairs: set[tuple[str, str]] | None = None
     if specs is None:
-        specs = resolve_production_specs(registry)
+        specs, selected_pairs = resolve_production_selection(registry)
+    if prompt_paths is None:
+        prompt_ids: tuple[str, ...] | list[str]
+        if selected_pairs is None:
+            prompt_ids = ("v1", "v2", "v3")
+        else:
+            prompt_ids = sorted({prompt_id for _, prompt_id in selected_pairs})
+        prompt_paths = [registry.prompts_dir / f"{stem}.txt" for stem in prompt_ids]
     if store_path is None:
         store_path = registry.annotation_store
     if checkpoint_every is None:
@@ -159,6 +202,8 @@ def run_annotation(
     # Load the annotation pool from the union of silver and gold manifests.
     silver_manifest = pd.read_csv(registry.silver_manifest)
     gold_manifest = pd.read_csv(registry.gold_manifest)
+    silver_manifest["EIN2"] = silver_manifest["EIN2"].map(normalize_ein2)
+    gold_manifest["EIN2"] = gold_manifest["EIN2"].map(normalize_ein2)
 
     # Validation and monitor rows live in gold, not necessarily silver. The QC
     # gate and canary therefore need the EIN2 union before text is joined.
@@ -177,8 +222,10 @@ def run_annotation(
     # Join text field from upstream
     if "text" not in annotation_manifest.columns:
         missions = pd.read_parquet(registry.missions_parquet)
+        missions = missions[["EIN2", cfg.field]].copy()
+        missions["EIN2"] = missions["EIN2"].map(normalize_ein2)
         annotation_manifest = annotation_manifest.merge(
-            missions[["EIN2", cfg.field]],
+            missions,
             on="EIN2",
             how="left",
         )
@@ -202,6 +249,7 @@ def run_annotation(
         annotator_factory=annotator_factory,
         checkpoint_every=checkpoint_every,
         resume=resume,
+        selected_pairs=selected_pairs,
         canary_only=canary_only,
         cfg=cfg,
         registry=registry,
@@ -216,6 +264,7 @@ def run_annotation_matrix(
     annotator_factory: AnnotatorFactory,
     checkpoint_every: int = 100,
     resume: bool = True,
+    selected_pairs: set[tuple[str, str]] | None = None,
     canary_only: bool = False,
     cfg: "BinaryClassifierConfig | None" = None,
     registry: "PathRegistry | None" = None,
@@ -235,6 +284,9 @@ def run_annotation_matrix(
             Annotator``. Injected for testability.
         checkpoint_every: Flush to disk every N records.
         resume: If ``True``, skip (EIN2, source_id) pairs already in the store.
+        selected_pairs: Optional confirmed ``(model_id, prompt_id)`` subset from
+            the bake-off slate. ``None`` preserves the legacy full cartesian
+            model x prompt run.
         canary_only: If ``True``, run only monitor-manifest canary rows and
             append a drift audit record.
         cfg: Configuration needed for canary fingerprint metadata.
@@ -245,7 +297,15 @@ def run_annotation_matrix(
         The populated ``AnnotationStore``.
 
     """
+    if not resume and store_path.exists():
+        store_path.unlink()
+        logger.info(
+            "Start-from-scratch: removed existing annotation store %s", store_path
+        )
+
     store = AnnotationStore(store_path)
+    df = df.copy()
+    df["EIN2"] = df["EIN2"].map(normalize_ein2)
 
     # Load prompt texts (keyed by file stem = the real prompt_id).
     prompt_texts: dict[str, str] = {p.stem: p.read_text() for p in prompt_paths}
@@ -260,7 +320,7 @@ def run_annotation_matrix(
             )
 
         canary_ein2s = load_canary_ein2s(registry)
-        pool_ein2s = set(df["EIN2"].dropna().astype(str))
+        pool_ein2s = set(df["EIN2"].dropna().map(normalize_ein2))
         canary_pool_ein2s = canary_ein2s & pool_ein2s
         if not canary_pool_ein2s:
             raise ValueError(
@@ -286,11 +346,30 @@ def run_annotation_matrix(
     if resume:
         existing_pairs = store.done_pairs()
 
+    if selected_pairs is not None:
+        available_pairs = {
+            (spec.id, prompt_id) for spec in specs for prompt_id in prompt_texts
+        }
+        missing_pairs = selected_pairs - available_pairs
+        if missing_pairs:
+            formatted = ", ".join(
+                f"{model_id}__{prompt_id}"
+                for model_id, prompt_id in sorted(missing_pairs)
+            )
+            raise ValueError(
+                f"Production slate selected prompt pairs are unavailable: {formatted}",
+            )
+
     # Build work groups by (spec, prompt_id).  Each group uses one annotator
     # instance (created once per pair, not once per row).
     groups: list[tuple[BakeoffCandidate, str, str, list[tuple[str, str]]]] = []
     for spec in specs:
         for prompt_id in prompt_texts:
+            if (
+                selected_pairs is not None
+                and (spec.id, prompt_id) not in selected_pairs
+            ):
+                continue
             prompt_text = prompt_texts[prompt_id]
             source_id = f"{spec.id}__{prompt_id}"
             rows: list[tuple[str, str]] = [
