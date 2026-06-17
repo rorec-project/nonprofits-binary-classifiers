@@ -86,22 +86,16 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
    GITHUB_TOKEN=ghp_...
    ANTHROPIC_API_KEY=sk-ant-...   # only if using the dev overlay
    ```
-   This is needed **before the first job** — `init.sh` reads it to seed the git
-   credential store so the repo can be cloned.
-7. **Prepare `config.sh`:** edit `DATA_DRIVE` and `PROJECT_DRIVE` in `utils/config.sh`
-   to match your UCloud drive names. Also update the matching fallback defaults in
-   `init.sh` (lines ~21-24) — these are used when `init.sh` runs as the
-   Initialization script before the repo is cloned.
+   This is needed **before the first job** — `init.sh` reads it to seed the git credential store so the repo can be cloned.
+7. **Prepare `config.sh`:** edit `DATA_DRIVE` and `PROJECT_DRIVE` in `utils/config.sh` to match your UCloud drive names. Also update the matching fallback defaults in `init.sh` (lines ~21-24) — these are used when `init.sh` runs as the Initialization script before the repo is cloned.
 
 ---
 
 ## 3. Bootstrap order (first job vs every later job)
 
-**First-ever job** (repo not cloned yet). The Initialization script runs `.env`
-first to authenticate git, then you clone and re-run:
+**First-ever job** (repo not cloned yet). The Initialization script runs `.env` first to authenticate git, then you clone and re-run:
 
-1. Start a **Terminal** job with **both Drives** attached; **enable SSH**; attach
-   `utils/init.sh` as the **Initialization** script.
+1. Start a **Terminal** job with **both Drives** attached; **enable SSH**; attach `utils/init.sh` as the **Initialization** script.
 
 2. The job starts and `init.sh` runs automatically:
    - Waits for `/work` to mount.
@@ -112,6 +106,7 @@ first to authenticate git, then you clone and re-run:
 3. SSH in using the port shown in the job progress view.
 
 4. Clone the repo (the credential store handles authentication):
+
    ```bash
    cd /work/<PROJECT_DRIVE>
    git init
@@ -119,19 +114,16 @@ first to authenticate git, then you clone and re-run:
    git fetch origin master
    git checkout master
    ```
+
    `git init` works even though `.env` already exists on the drive.
 
-5. Re-run `init.sh` manually — now it finds `config.sh` in the cloned repo and
-   proceeds with the full setup:
+5. Re-run `init.sh` manually — now it finds `config.sh` in the cloned repo and proceeds with the full setup:
    ```bash
    bash utils/init.sh
    ```
-   It sources `config.sh` (overrides the fallback defaults), runs `git pull`,
-   `uv sync`, creates the data symlinks, and writes `env.sh`.
+   It sources `config.sh` (overrides the fallback defaults), runs `git pull`, `uv sync`, creates the data symlinks, and writes `env.sh`.
 
-**Every later job:** attach `utils/init.sh` as the **Initialization** script. It
-detects the existing checkout, sources `config.sh` from the repo, pulls, syncs,
-and relinks.
+**Every later job:** attach `utils/init.sh` as the **Initialization** script. It detects the existing checkout, sources `config.sh` from the repo, pulls, syncs, and relinks.
 
 ---
 
@@ -154,6 +146,7 @@ Configuration lives in a single shared `utils/config.sh` (`DATA_DRIVE`, `PROJECT
 | `init.sh`         | UCloud (Initialization or manual) | Lean runtime: assert drives, export `HF_HOME`/`UV_*`, source `.env`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.           |
 | `devenv.sh`       | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs. |
 | `run.sh`          | UCloud (Batch param or SSH)       | Segment runner: `source env.sh` → `git pull` → run stages.                                                                                                                                   |
+| `tmux-session.sh` | UCloud (interactive SSH)          | tmux session manager: creates a detached session (named after the checkout dir) that survives SSH disconnects, runs stages, reports re-attach command. |
 | `sync-results.sh` | **Your laptop**                   | `rsync` processed outputs down over SSH.                                                                                                                                                     |
 
 ### Running stages — `run.sh`
@@ -186,8 +179,7 @@ ssh ucloud@ssh.cloud.sdu.dk -p <PORT>
 
 The `<PORT>` is shown in the **job progress view** after the job starts — look for a line like `SSH: Connected! Available at: ssh ucloud@ssh.cloud.sdu.dk -p <PORT>`.
 
-The SSH user is always `ucloud` (not your UCloud login name). Add an entry to
-`~/.ssh/config` so you can connect by alias and skip the username:
+The SSH user is always `ucloud` (not your UCloud login name). Add an entry to `~/.ssh/config` so you can connect by alias and skip the username:
 
 ```
 Host ucloud-job
@@ -270,18 +262,60 @@ Set `PROJECT_DRIVE` in the script to match `init.sh`.
 
 ---
 
-## 9. Operational notes
+## 9. Batch mode (headless on UCloud)
+
+UCloud jobs can be submitted with an optional **Batch mode** parameter that runs a script headlessly without SSH. The job starts, runs the script, and terminates on completion — no human connects. This is ideal for long-running CPU/GPU segments (e.g., stages 06→07→08 overnight).
+
+Attach **two scripts** at job submission:
+
+| Parameter | Value |
+|---|---|
+| **Initialization** | `utils/init.sh` |
+| **Batch mode** | `utils/run.sh` with the stage IDs as the script argument |
+
+**Prerequisites:** the repo must already be cloned on the project drive, manifests uploaded (per §2.3), and `.env` in place (per §2.6). SSH can be disabled since no human connects.
+
+`init.sh` runs first (drives, symlinks, `uv sync`), then `run.sh` executes the requested stages. If the repo is not yet cloned, `init.sh` exits gracefully with instructions — no wasted GPU time.
+
+---
+
+## 10. Operational notes
 
 - **Cost / wall-time hygiene (B200 is expensive).** Run CPU-only s `cpu-amd-zen5`, not the GPU node. Right-size wall-time. **Stop the job when idle** — UCloud bills running jobs, including idle interactive ones. Use per-stage resume (`--limit`, resume-by-`EIN2`) for long stages.
 - **Outbound network assumption.** Jobs need outbound internet for OpenAI, HF Hub, GitHub, npm, and Anthropic (overlay). Confirm on the first run.
 - **Repeatable submission.** Save the job parameters (machine type, both drives, `utils/init.sh` as Initialization, SSH enabled) as a reusable **job template**.
-- **Disk / quota growth.** HF cache, uv cache, checkpoints, and `.venv` accumulate on the drives. Watch quota; occasionally prune stale checkpoints
-  under `data/models`.
+- **Disk / quota growth.** HF cache, uv cache, checkpoints, and `.venv` accumulate on the drives. Watch quota; occasionally prune stale checkpoints under `data/models`.
 - **Secrets location.** `.env` lives on the project drive only; no secrets ever go on the shared corpus drive (other repos/people mount it).
 
 ---
 
-## 10. Verification (fresh job, end-to-end)
+## 11. tmux sessions (interactive resilience)
+
+tmux 3.4 is pre-installed in the Terminal Ubuntu app on UCloud. SSH connections can drop (network, laptop sleep), but the pipeline keeps running inside the tmux session — you reconnect and re-attach.
+
+Create a detached session and start the pipeline:
+
+```bash
+bash utils/tmux-session.sh "06,07,08"
+```
+
+Re-attach to see progress or check on it:
+
+```bash
+tmux attach -t bclass-pipeline
+```
+
+Kill a finished or stuck session:
+
+```bash
+bash utils/tmux-session.sh --kill
+```
+
+The `env.sh` auto-source works in new tmux windows (it is sourced via `~/.bashrc`), so the runtime environment is available. If you need to restart a pipeline run, kill the session first, then re-create.
+
+---
+
+## 12. Verification (fresh job, end-to-end)
 
 1. Start a Terminal/PyTorch job; attach **both** Drives; attach `utils/init.sh` as Initialization; enable SSH.
 2. SSH in; confirm env auto-loaded: `echo $HF_HOME` → the data drive; `ls -l data/raw` → `/work/<DATA_DRIVE>/raw`.
