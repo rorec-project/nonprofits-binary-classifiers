@@ -1,6 +1,6 @@
 # Pipeline Overview
 
-High-level map only. The pipeline is under **active development**, so this doc stays intentionally shallow — the **code, `config/*.yaml`, and the [README](../../README.md) are the source of truth** for specifics (exact I/O, columns, thresholds). Don't grow a deep copy here.
+High-level map only. The pipeline is under **active development**, so this doc stays intentionally shallow — the **code, `config/*.yaml`, and the [README](../../../README.md) are the source of truth** for specifics (exact I/O, columns, thresholds). Don't grow a deep copy here.
 
 ## Shape
 
@@ -22,7 +22,7 @@ Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate
 
 ## Status
 
-Stages 01–09 are built and wired into the orchestrator behind four human gates (G1 labels, G2 slate, G3 test unlock, G4 anchor labels); stages 10–11 are script-only helpers over the artifacts they produce and skip missing inputs. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–09 are built and wired into the orchestrator behind four human gates ([G1–G4](human-gates.md)); stages 10–11 are script-only helpers over the artifacts they produce and skip missing inputs. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
 
 ## Inputs
 
@@ -31,6 +31,8 @@ Cross-section parquets come from the sibling **`NonProfitData`** repo (expected 
 ## Related
 
 - [configuration.md](configuration.md) — config-driven design + retasking
-- [README](../../README.md) — full narrative
-- [docs/RUNNING_ON_UCLOUD.md](../../docs/RUNNING_ON_UCLOUD.md) — GPU runtime
-- [docs/audits/old_repo_auditing.md](../../docs/audits/old_repo_auditing.md) — legacy-pipeline audit (history)
+- [human-gates.md](human-gates.md) — G1–G4 checkpoint detail
+- [../operations/gotchas.md](../operations/gotchas.md) — data layout, local setup, roadmaps
+- [README](../../../README.md) — full narrative
+- [docs/RUNNING_ON_UCLOUD.md](../../../docs/RUNNING_ON_UCLOUD.md) — GPU runtime
+- [docs/audits/old_repo_auditing.md](../../../docs/audits/old_repo_auditing.md) — legacy-pipeline audit (history)
