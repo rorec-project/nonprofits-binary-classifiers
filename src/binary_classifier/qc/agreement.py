@@ -1,10 +1,25 @@
-"""Quality control and majority-vote freeze metrics for the annotation pipeline.
+"""Quality control and majority-vote freeze metrics for the annotation pipeline (stage 04).
 
 Provides LLM-vs-human agreement scoring and the validation freeze gate, plus a
 full sklearn metric bundle (confusion matrix, minority-class precision/recall/F1,
 MCC, balanced accuracy, Cohen's κ, Krippendorff alpha, PR-AUC when confidence scores
-exist, and bootstrap CIs). Also handles versioning and freezing of the final
-label artifact.
+exist, and bootstrap CIs). The freeze gate blocks on two chance-corrected
+thresholds: Cohen's κ ≥ config threshold (Cohen 1960; Landis & Koch 1977) and
+the bootstrap lower bound of minority-F1 ≥ config floor (SILICON,
+arXiv:2412.14461; Variance-Aware protocol, arXiv:2601.02370). Raw agreement is
+logged for continuity but is not the gate driver because it is prevalence-
+insensitive on a rare-positive task. Also handles versioning and freezing of the
+final label artifact.
+
+References:
+    - Cohen (1960), "A Coefficient of Agreement for Nominal Scales",
+      Educational and Psychological Measurement.
+    - Landis & Koch (1977), "The Measurement of Observer Agreement for
+      Categorical Data", Biometrics 33(1):159-174.
+    - Krippendorff (2004), "Content Analysis: An Introduction to Its
+      Methodology", 2nd ed. (Krippendorff's alpha).
+    - SILICON: Cheng, Mayya & Sedoc (2025), arXiv:2412.14461.
+    - Variance-Aware protocol: arXiv:2601.02370.
 
 .. note::
     Cohen's κ is sensitive to class imbalance and prevalence (the
@@ -33,6 +48,18 @@ if TYPE_CHECKING:
     from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ── Stage-04 freeze gate ───────────────────────────────────────────────────
+#
+# The agreement gate blocks the freeze unless Cohen's κ ≥ threshold and the
+# bootstrap minority-F1 CI lower bound ≥ floor.  This is a deliberate
+# variance-aware design for LLM weak-supervision risk (SILICON,
+# arXiv:2412.14461; Variance-Aware protocol, arXiv:2601.02370).  Raw agreement
+# is reported but does not drive the gate because it is prevalence-insensitive
+# (Landis & Koch 1977; Cohen 1960).  Evidence-span hallucination is checked
+# before aggregation so fabricated positives become abstentions rather than
+# silver labels.
 
 
 def run_quality_check(
@@ -245,6 +272,15 @@ def run_quality_check(
     }
 
 
+# ── Hallucination guard ────────────────────────────────────────────────────
+#
+# Evidence spans are the LLM's claimed verbatim justification for a label.
+# A positive label that cites text absent from the source record is a
+# hallucination; it must not contribute a positive vote to the weak-
+# supervision aggregate.  This guard runs *before* aggregation so fabricated
+# positives become abstentions rather than silver labels.
+
+
 def _abstain_fabricated_positive_labels(
     store_df: pd.DataFrame,
     registry: "PathRegistry",
@@ -290,6 +326,16 @@ def _abstain_fabricated_positive_labels(
     # Hallucination guard: unsupported positive evidence can create false
     # religious labels, so those positive votes abstain before majority voting.
     return abstain_fabricated_positives(store_df, ev["fabricated_records"])
+
+
+# ── Leak guard (gold exclusion) ────────────────────────────────────────────
+#
+# Stage 03 annotates silver *plus* gold so the validation gate has rows to
+# score.  The frozen training artifact (``silver_labels.csv``) must not contain
+# any gold-manifest EIN2s, because prompt-dev, validation, test, and monitor
+# rows are human-held-out.  This is an *exclusion* guard rather than a silver
+# keep-list: silver and gold are independent draws, so a held-out test row that
+# also appears in the silver manifest must still be dropped.
 
 
 def _exclude_gold_manifest_ein2s(
@@ -338,6 +384,16 @@ def _exclude_gold_manifest_ein2s(
     dropped = len(aggregated) - int(keep_mask.sum())
     logger.info("Excluded %d gold-manifest EIN2s before freezing", dropped)
     return aggregated.loc[keep_mask].copy()
+
+
+# ── Metric bundle computation ────────────────────────────────────────────────
+#
+# The full imbalanced bundle (confusion matrix, minority P/R/F1, MCC, balanced
+# accuracy, Cohen's κ, Krippendorff alpha, PR-AUC, bootstrap 95% CIs) is
+# computed on the validation overlap.  PR-AUC is the primary discriminative
+# metric; MCC and balanced accuracy summarize all confusion-matrix cells.  The
+# bootstrap CI on minority F1 drives the freeze-gate floor (SILICON,
+# arXiv:2412.14461; Variance-Aware protocol, arXiv:2601.02370).
 
 
 def _compute_metrics(valid: pd.DataFrame, seed: int, n_resamples: int) -> dict:

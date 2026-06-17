@@ -17,7 +17,7 @@ def test_prevalence_config_defaults_and_yaml_blocks() -> None:
     cfg = BinaryClassifierConfig()
 
     assert cfg.prevalence.alpha == 0.05
-    assert cfg.prevalence.cross_checks == ["emq", "kdey"]
+    assert cfg.prevalence.cross_checks == ["emq"]
     assert cfg.prevalence.use_design_weights is True
     assert cfg.prevalence.per_ntee is True
     assert cfg.prevalence.ntee_min_n == 10
@@ -26,7 +26,7 @@ def test_prevalence_config_defaults_and_yaml_blocks() -> None:
     production = load_config("config/religious_missions.yaml")
     smoke = load_config("config/smoke.yaml")
 
-    assert production.prevalence.cross_checks == ["emq", "kdey"]
+    assert production.prevalence.cross_checks == ["emq"]
     assert smoke.prevalence.alpha == 0.05
 
 

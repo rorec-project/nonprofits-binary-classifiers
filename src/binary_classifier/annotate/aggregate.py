@@ -1,12 +1,28 @@
-"""Label aggregation and denoising.
+"""Label aggregation and denoising for weak-supervision silver labels.
 
-Provides majority-vote aggregation as the default silver-label builder, plus
-drop-in Dawid-Skene and CROWDLAB comparison arms. Dawid-Skene (Dawid & Skene
-1979) is useful for diagnostics but remains a comparison method because this
-pipeline's model-by-prompt annotators are correlated LLM ensemble members.
-CROWDLAB requires classifier ``pred_probs`` from a later fine-tuning stage (Goh,
-Mueller et al. 2022; cleanlab multiannotator docs), so it still fails
-explicitly when those probabilities are not supplied.
+Stage 04 freezes silver labels by dispatching to a configurable aggregation
+method. Majority vote is the production default because it is robust to the
+high correlation typical of LLM-as-annotator ensembles: the model×prompt
+sources share architecture, training data, and tokenizer, so their errors are
+not conditionally independent (Ratner et al. 2016/2017,
+https://doi.org/10.14778/3157794.3157797; majority-vote-for-LLM evidence
+arXiv:2511.15714, arXiv:2601.22336). Dawid–Skene (Dawid & Skene 1979) and
+CROWDLAB (Goh, Mueller et al. 2022, arXiv:2210.06812) are provided as drop-in
+comparison arms. DS estimates worker reliability by EM, but the independence
+assumption is violated when annotators are correlated LLMs, so it remains a
+diagnostic only. CROWDLAB fuses multiple annotators with classifier
+``pred_probs`` and is gated on the later fine-tuning stage; calling it without
+probabilities fails explicitly rather than silently returning an empty result.
+
+References:
+    - Dawid & Skene (1979), "Maximum Likelihood Estimation of Observer
+      Error-Rates Using the EM Algorithm", Applied Statistics.
+    - Ratner et al. (2017), "Snorkel: Rapid Training Data Creation with Weak
+      Supervision", PVLDB. https://doi.org/10.14778/3157794.3157797
+    - Goh, Mueller et al. (2022), "CROWDLAB: Supervised Learning to Aggregate
+      Classification Labels", NeurIPS. arXiv:2210.06812
+    - Majority-vote robustness for LLM ensembles: arXiv:2511.15714,
+      arXiv:2601.22336.
 """
 
 import logging
@@ -27,6 +43,14 @@ SILVER_COLUMNS = [
 ]
 
 # ── Majority vote ────────────────────────────────────────────────────────────
+#
+# Majority vote is the production default for stage-04 silver-label freezing.
+# The model×prompt annotators are correlated LLM ensemble members (shared
+# architecture, training data, and tokenizer), so their errors violate the
+# conditional-independence assumption underlying Dawid–Skene EM and many
+# higher-order aggregators.  Majority vote is robust to this dependence
+# structure (Ratner et al. 2017, https://doi.org/10.14778/3157794.3157797;
+# majority-vote-for-LLM evidence arXiv:2511.15714, arXiv:2601.22336).
 
 
 def majority_vote(df: pd.DataFrame) -> pd.DataFrame:
@@ -93,6 +117,15 @@ def majority_vote(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── Drop-in comparison arms ──────────────────────────────────────────────────
+#
+# Dawid–Skene (Dawid & Skene 1979) and CROWDLAB (Goh, Mueller et al. 2022,
+# arXiv:2210.06812) are exposed as opt-in diagnostics, not production defaults.
+# DS assumes conditionally independent annotators; that assumption is violated
+# by correlated LLM ensemble errors, so its consensus can be optimistic.
+# CROWDLAB requires classifier ``pred_probs`` from a later fine-tuning stage,
+# so it is gated on stage 06 and cannot be used until ``pred_probs`` are
+# available.  Both arms are wired to the same output schema as majority vote so
+# stage-11 sensitivity comparisons are a drop-in swap.
 
 
 def _label_matrix(df: pd.DataFrame) -> pd.DataFrame:
@@ -285,6 +318,10 @@ def aggregate_crowdlab(
 
 
 # ── Unified aggregator ─────────────────────────────────────────────────────
+#
+# The production pipeline calls ``method="majority"`` by default.  DS and
+# CROWDLAB are wired identically so stage-11 sensitivity analyses can swap the
+# aggregation arm without changing downstream schemas.
 
 
 def aggregate_labels(
@@ -304,6 +341,9 @@ def aggregate_labels(
 
     Returns:
         Wide dataframe with one row per EIN2.
+
+    Raises:
+        ValueError: If ``method`` is not one of the supported strings.
 
     """
     if method == "majority":

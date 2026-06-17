@@ -1,4 +1,35 @@
-"""Composite prevalence estimators and Rogan--Gladen correction."""
+"""Composite prevalence estimators and Rogan--Gladen correction.
+
+This module provides two building blocks for the stage-09 prevalence estimator:
+
+1. **Rogan--Gladen correction** for observed prevalence when the labeling
+   mechanism (here, the deterministic rule layer applied to LOW-quality rows)
+   has imperfect sensitivity and specificity.
+2. **Composite stratum recombination** that merges HIGH+MEDIUM and LOW
+   sub-estimates with fixed corpus shares.
+
+The Rogan--Gladen formula (Rogan & Gladen, 1978,
+https://doi.org/10.1093/oxfordjournals.aje.a112510) is the standard
+epidemiological correction for prevalence under an imperfect diagnostic test.
+Forman (2008, https://doi.org/10.1007/s10618-008-0097-y) situates the same
+correction in the machine-learning quantification literature as Adjusted
+Classify-and-Count (ACC).
+
+The delta-method variance treats the three inputs as independent and propagates
+their uncertainties into the corrected prevalence.  The composite estimator
+applies fixed stratum shares rather than estimated ones, so variance comes only
+from the within-stratum estimates.
+
+References
+----------
+
+* Rogan, W. J., & Gladen, B. (1978). Estimating prevalence from the results of
+  a screening test. *American Journal of Epidemiology*, 107(1), 71--76.
+  https://doi.org/10.1093/oxfordjournals.aje.a112510
+* Forman, G. (2008). Quantifying Counts and Costs via Classification.
+  *Data Mining and Knowledge Discovery*, 17(2), 221--252.
+  https://doi.org/10.1007/s10618-008-0097-y
+"""
 
 from __future__ import annotations
 
@@ -7,7 +38,13 @@ from collections.abc import Mapping
 
 
 def rogan_gladen(p_obs: float, sens: float, spec: float) -> float:
-    """Correct observed prevalence for imperfect sensitivity/specificity.
+    """Correct observed prevalence for imperfect sensitivity and specificity.
+
+    Implements the Rogan--Gladen correction
+    (Rogan & Gladen, 1978, https://doi.org/10.1093/oxfordjournals.aje.a112510)
+    clipped to the unit interval.  The formula is standard in epidemiology
+    for de-biasing an observed prevalence when the test (here, the rule layer)
+    has known sensitivity and specificity.
 
     Args:
         p_obs: Observed positive share in the rule-labeled population.

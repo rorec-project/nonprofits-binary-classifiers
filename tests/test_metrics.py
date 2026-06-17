@@ -10,7 +10,7 @@ from binary_classifier.annotate.schema import (
     SourceType,
 )
 from binary_classifier.metrics import compute_metric_bundle
-from binary_classifier.qc.agreement import _compute_metrics, run_quality_check
+from binary_classifier.qc.agreement import _compute_metrics, _positive_class_score, run_quality_check
 
 
 def _seed_store(registry, rows, confidence=0.9) -> None:
@@ -84,13 +84,15 @@ def test_metric_bundle_matches_agreement_private_api() -> None:
         }
     )
 
-    old_api = _compute_metrics(valid, seed=123)
+    old_api = _compute_metrics(valid, seed=123, n_resamples=1000)
+    y_score = _positive_class_score(valid)
     new_api = compute_metric_bundle(
         valid["human_label"].to_numpy(),
         valid["silver_label"].to_numpy(),
-        y_score=valid["silver_confidence"].to_numpy(),
+        y_score=y_score,
         minority_class=old_api["minority_class"],
         seed=123,
+        n_resamples=1000,
     )
 
     assert old_api == new_api

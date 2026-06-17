@@ -151,6 +151,9 @@ class AcceptanceCriteria(BaseModel):
         min_minority_f1_ci_lower: Minimum lower confidence bound for minority
             F1 on the frozen test set.
         max_ece: Maximum expected calibration error on anchor OOF scores.
+            Kept as the sole acceptance gate for this pass (Brier/log-loss
+            are future work, out of scope). Retained per confirmed design
+            decision (DO NOT change).
 
     """
 
@@ -160,7 +163,12 @@ class AcceptanceCriteria(BaseModel):
 
 
 def _default_calibration_methods() -> list[Literal["platt", "temperature"]]:
-    """Return the default calibration method slate."""
+    """Return the default calibration method slate.
+
+    Platt scaling + temperature scaling are compared, then the best is
+    deployed. Kept per confirmed design decision: DO NOT reduce to
+    temperature-only; DO NOT add isotonic (overfits at anchor n=500).
+    """
     return ["platt", "temperature"]
 
 
@@ -218,8 +226,15 @@ class InferenceConfig(BaseModel):
 
 
 def _default_prevalence_cross_checks() -> list[Literal["emq", "kdey"]]:
-    """Return the default prevalence cross-check estimators."""
-    return ["emq", "kdey"]
+    """Return the default prevalence cross-check estimators.
+
+    PPI++ is the primary prevalence estimator (Angelopoulos 2023). EMQ
+    (vendored SLD, Saerens et al. 2002) is the single quantification
+    sensitivity check retained in the default path. KDEy (Moreo et al.
+    2021) is available as an opt-in extra under the ``quant`` dependency
+    group.
+    """
+    return ["emq"]
 
 
 class PrevalenceConfig(BaseModel):
@@ -396,13 +411,25 @@ BaselineName = Literal["tfidf_logreg", "minilm_logreg"]
 
 
 def _default_training_arms() -> list[TrainingArm]:
-    """Return the default training-data variants for the sweep."""
-    return ["hard", "pruned", "class_weighted"]
+    """Return the default training-data variants for the sweep.
+
+    Soft vote-share targets are the default (see ``training.targets``).
+    The ``pruned`` arm is dropped as redundant: soft labels already
+    down-weight the disagreement band that pruning removes
+    (arXiv:2605.20642). The ``pruned`` arm remains available as an
+    opt-in by overriding this default.
+    """
+    return ["hard", "class_weighted"]
 
 
 def _default_curve_fractions() -> list[float]:
-    """Return the default learning-curve fractions."""
-    return [0.25, 0.5, 1.0]
+    """Return the default learning-curve fractions.
+
+    The multi-fraction learning curve (0.25, 0.5, 1.0) is dropped in
+    favour of a single full-data run. This simplifies the sweep stage
+    while retaining the documented variance estimate.
+    """
+    return [1.0]
 
 
 def _default_sweep_seeds() -> list[int]:
@@ -411,7 +438,11 @@ def _default_sweep_seeds() -> list[int]:
 
 
 def _default_final_seeds() -> list[int]:
-    """Return the default final-refit seeds."""
+    """Return the default final-refit seeds.
+
+    Five seeds are required for the reported variance estimate.
+    Retained per confirmed design decision (DO NOT reduce below 5).
+    """
     return [42, 43, 44, 45, 46]
 
 

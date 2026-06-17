@@ -1,4 +1,45 @@
-"""Shared metric helpers for binary classifier validation."""
+"""Shared metric helpers for binary classifier validation.
+
+This module computes the full binary-classification metric bundle used in
+the quality-check gate (stage 04) and final evaluation (stage 07).  It
+includes confusion-matrix counts, minority-class precision/recall/F1, MCC,
+balanced accuracy, Cohen's κ, Krippendorff's α, PR-AUC, ROC-AUC, and
+bootstrap confidence intervals.
+
+Data provenance
+    Metrics are computed from human-coded validation or test labels and the
+corresponding silver-label predictions or model probabilities.
+
+Methodology
+    We report Matthews Correlation Coefficient (MCC) as the primary
+    agreement metric because it is informative even under strong class
+    imbalance (Chicco & Jurman, 2020).  PR-AUC and ROC-AUC are computed
+    when confidence scores are available; PR-AUC is preferred for imbalanced
+    settings because it does not reward trivial negative-class accuracy
+    (Davis & Goadrich, 2006; Saito & Rehmsmeier, 2015).  Bootstrap CIs
+    for accuracy and minority-F1 support the variance-aware freeze gate.
+    Threshold choice and expected-loss metrics follow Hernández-Orallo et
+    al. (2012).
+
+Key citations
+    * Davis & Goadrich (2006) — The relationship between precision-recall
+      and ROC curves.
+    * Saito & Rehmsmeier (2015) — The precision-recall plot is more
+      informative than the ROC plot when evaluating binary classifiers on
+      imbalanced datasets.
+    * Hernández-Orallo et al. (2012) — A unified view of performance
+      metrics: translating threshold choice into expected classification
+      loss.
+    * Chicco & Jurman (2020) — The Matthews correlation coefficient is
+      more informative than Cohen's kappa and Brier score in binary
+      classification assessment.
+
+DOIs
+    * Davis & Goadrich (2006): https://doi.org/10.1145/1143844.1143874
+    * Saito & Rehmsmeier (2015): https://doi.org/10.1371/journal.pone.0118432
+    * Hernández-Orallo et al. (2012): https://www.jmlr.org/papers/v13/hernandez-orallo12a.html
+    * Chicco & Jurman (2020): https://doi.org/10.1109/ACCESS.2021.3084050
+"""
 
 import numpy as np
 from sklearn.metrics import (
@@ -11,6 +52,19 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
     roc_auc_score,
 )
+
+
+# ---------------------------------------------------------------------------
+# Full metric bundle
+# ---------------------------------------------------------------------------
+# We report Matthews Correlation Coefficient (MCC) as the primary agreement
+# metric because it is informative even under strong class imbalance (Chicco
+# & Jurman, 2020).  PR-AUC and ROC-AUC are computed when confidence scores
+# are available; PR-AUC is preferred for imbalanced settings because it
+# does not reward trivial negative-class accuracy (Davis & Goadrich, 2006;
+# Saito & Rehmsmeier, 2015).  Threshold choice and expected-loss metrics
+# follow Hernández-Orallo et al. (2012).
+# ---------------------------------------------------------------------------
 
 
 def compute_metric_bundle(
@@ -30,6 +84,8 @@ def compute_metric_bundle(
         y_pred: Predicted labels aligned to ``y_true``.
         y_score: Optional score for the positive class. When provided, PR-AUC
             and ROC-AUC are computed on non-missing scores when possible.
+            PR-AUC is preferred for imbalanced settings (Davis & Goadrich,
+            2006; Saito & Rehmsmeier, 2015).
         minority_class: Class whose precision, recall, F1, and bootstrap F1 CI
             should be reported.
         seed: Seed for bootstrap resampling.
@@ -117,6 +173,16 @@ def compute_metric_bundle(
     return bundle
 
 
+# ---------------------------------------------------------------------------
+# Bootstrap confidence intervals
+# ---------------------------------------------------------------------------
+# We resample with replacement to produce percentile CIs for accuracy and
+# minority-class F1.  The minority-F1 lower bound is the variance-aware half
+# of the freeze gate, preventing a high point estimate from freezing labels
+# when validation uncertainty remains too wide.
+# ---------------------------------------------------------------------------
+
+
 def bootstrap_ci(
     y_true,
     y_pred,
@@ -181,6 +247,15 @@ def bootstrap_ci(
             "upper": float(np.percentile(f1s, upper_p)),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Inter-rater agreement
+# ---------------------------------------------------------------------------
+# Cohen's κ is the standard pairwise agreement metric for two complete raters.
+# Krippendorff's α is reported alongside κ because it extends naturally to
+# missing/abstaining annotators if the gate later admits those cells.
+# ---------------------------------------------------------------------------
 
 
 def _krippendorff_alpha_nominal_two_raters(

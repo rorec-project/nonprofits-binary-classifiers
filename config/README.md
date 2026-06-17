@@ -24,6 +24,61 @@ To retask the pipeline for a new classification task (e.g. "activities" instead 
 
 ---
 
+## What you actually decide
+
+This checklist covers the decisions you must make before a run. Everything else can be left at default.
+
+### 1. The retasking triple
+
+These three fields define the semantic task. Change them only when retasking the pipeline for a new classification problem.
+
+| Decision | YAML key | Default | If unsure |
+|---|---|---|---|
+| Entity name | `entity` | `missions` | Keep the default unless the upstream parquet changes |
+| Text column | `field` | `LONGEST_MISSION` | Must match a column in the upstream parquet; do not guess |
+| Positive class label | `label_name` | `religious` | Keep the default unless the semantic label changes |
+
+### 2. Confirm the model slate
+
+The default slate is calibrated for short nonprofit text. Override only if you have validated a better candidate.
+
+| Decision | YAML key | Default | If unsure |
+|---|---|---|---|
+| Production model | `model_slate.production` | `gpt-5-mini` | Use the default |
+| Bake-off candidates | `model_slate.bakeoff_candidates` | `gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it` | Use the default; comment out the Gemma entry if no vLLM server is available |
+
+### 3. The four human gates
+
+These artifacts are produced by the pipeline and confirmed by a human. They cannot be skipped; downstream stages exit gracefully if a gate is incomplete.
+
+| Gate | Artifact | What you decide | If unsure |
+|---|---|---|---|
+| G1 (labels) | `data/processed/gold/gold_to_code.csv` | Ensure every row in the required split has a complete `0/1` human label | Do not proceed until labels are complete; the pipeline will exit |
+| G2 (slate) | `data/processed/gold/production_slate.json` | Confirm the proposed model slate from stage 02 | Use the proposed slate unless you have a reason to change it |
+| G3 (test unlock) | `data/processed/gold/test_unlock.json` | Confirm the test unlock after the best model is selected in stage 06 | Match the checkpoint SHA; do not unlock prematurely |
+| G4 (anchor labels) | `data/processed/gold/anchor_to_code.csv` | Ensure every anchor row has a complete `0/1` human label | Do not proceed until labels are complete; prevalence on LOW-quality rows cannot be validated otherwise |
+
+---
+
+## What you can safely leave at default
+
+The following sections are already tuned for the production religious-missions task and work for most retasks without modification:
+
+- **`paths`** — Standard cookiecutter-data-science layout (`data/raw`, `data/interim`, `data/processed`, `data/models`).
+- **`q_thresholds`** — The Q rubric is entity-agnostic (`HIGH >= 5.0`, `MEDIUM >= 3.0`, `LOW >= 0.0`).
+- **`sample_sizes`** — `silver: 20000`, `gold: 450`, `prompt_dev: 50`, `monitor: 50` is the production standard.
+- **`anchor`** — `n: 500`, `oversample_low_factor: 1.5`, `min_stratum_frame: 200` is calibrated for prevalence estimation.
+- **`annotation`** — `temperature: 0.0`, `max_retries: 5`, `checkpoint_every: 100`, `guided_json: true` are best-practice defaults.
+- **`data`** — `allow_synthetic: false` is the production default; only set to `true` for smoke tests.
+- **`qc`** — `kappa_threshold: 0.70`, `f1_ci_floor: 0.70` is the validated freeze gate.
+- **`aggregation`** — `method: majority` with `comparison_arms: []` is the default production path.
+- **`training`** — `targets: soft`, `arms: [hard, class_weighted]`, `curve_fractions: [1.0]`, `final_seeds: [42, 43, 44, 45, 46]`, DeBERTa-v3 as primary encoder and ModernBERT as comparison are the research defaults.
+- **`evaluation`** — `calibration_methods: [platt, temperature]`, `threshold_policy: precision_floor`, `precision_floor: 0.80`, `max_ece: 0.05` are the validated acceptance gate.
+- **`inference`** — `batch_size: 512`, `route_low_to_rules: true`, `rule_ambiguous_to_classifier: true`.
+- **`prevalence`** — `cross_checks: [emq]`, `alpha: 0.05`, `use_design_weights: true`, `per_ntee: true`.
+
+---
+
 ## How Config Loading Works
 
 1. **YAML is read and parsed.** `load_config()` in `src/binary_classifier/config.py` reads the YAML file and parses it into a raw dictionary with `yaml.safe_load()`.
@@ -53,8 +108,6 @@ These are flat keys on the root `BinaryClassifierConfig` object, not nested unde
 | `field` | `str` | `"LONGEST_MISSION"` | Column name in the upstream parquet that contains the text to classify. Must exist in the source data. | Stage 01 (sampling) |
 | `label_name` | `str` | `"religious"` | Semantic label for the positive class (class `1`). Used in reports, plots, and threshold selection. | Stage 04 (QC), stage 06 (training), stage 07 (evaluation) |
 
-**Pydantic class:** `BinaryClassifierConfig` (line 503 of `config.py`)
-
 ---
 
 ### `paths`
@@ -67,8 +120,6 @@ Input and output directory roots. All paths are relative to the project root. `P
 | `paths.interim_dir` | `Path` | `data/interim` | Intermediate pipeline artifacts: manifests, bake-off scores, annotation stores. This is the primary cloud-symlink target in the pre-DVC setup. | Manifests, label stores, bake-off outputs, embeddings, OOF predictions |
 | `paths.processed_dir` | `Path` | `data/processed` | Final ready-to-train datasets. The `gold/` subdirectory is git-committed (human-coded labels, production slate, test unlock). `silver_labels.csv` is gitignored. | `silver_labels.csv`, evaluation reports, predictions, prevalence reports |
 | `paths.models_dir` | `Path` | `data/models` | Persisted fine-tuned model artifacts: training runs, checkpoints, selection reports. | `runs/`, `checkpoints/`, `selection_report.json` |
-
-**Pydantic class:** `PathsConfig` (line 19 of `config.py`)
 
 **PathRegistry properties** (in `src/binary_classifier/paths.py`) that use these roots:
 
@@ -88,6 +139,10 @@ Input and output directory roots. All paths are relative to the project root. `P
 | `test_evaluation` | `{processed_dir}/evaluation/test_evaluation.json` |
 | `predictions_parquet` | `{processed_dir}/predictions/predictions.parquet` |
 | `prevalence_report` | `{processed_dir}/prevalence/prevalence_report.json` |
+
+All config classes live in `src/binary_classifier/config.py`. All artifact path properties live in `src/binary_classifier/paths.py`.
+
+**Pydantic class:** `PathsConfig` (line 19 of `config.py`)
 
 ---
 
@@ -109,13 +164,13 @@ Controls which LLMs compete in the stage-02 bake-off and which model is the prod
 | `gpt-5-nano` | `openai` | `minimal` |
 | `google/gemma-3-27b-it` | `vllm` | `null` |
 
+**Note:** OpenAI ids in the default are floating aliases. Pin them to dated snapshots before a production run. The Gemma arm requires a vLLM server running during the bake-off; comment it out for a pure-OpenAI bake-off.
+
 **Pydantic classes:**
 
 - `BakeoffCandidate` (line 46 of `config.py`): `id: str`, `provider: Literal["openai", "vllm"]`, `reasoning_effort: str | None`
 - `ModelSlateConfig` (line 90 of `config.py`)
 - `Slate` (line 109 of `config.py`): Shape of `proposed_slate.json` and `production_slate.json` artifacts, with `confirmed: bool`, `models: list[BakeoffCandidate]`, and `selected: list[dict]`.
-
-**Note:** OpenAI ids in the default are floating aliases. Pin them to dated snapshots before a production run. The Gemma arm requires a vLLM server running during the bake-off; comment it out for a pure-OpenAI bake-off.
 
 ---
 
@@ -129,9 +184,9 @@ Quality-score thresholds for the computable rubric Q, which tiers mission descri
 | `q_thresholds.MEDIUM` | `float` | `3.0` | Minimum score for the MEDIUM tier: decent descriptions that are thin on one dimension. |
 | `q_thresholds.LOW` | `float` | `0.0` | Floor for the LOW tier: fragments or bare labels handled by the rule layer. |
 
-**Pydantic class:** `QThresholdsConfig` (line 294 of `config.py`)
-
 **Important:** The sampling frame in stage 01 is HIGH + MEDIUM only (`Q >= 3.0` with shipped defaults). LOW-quality rows are excluded from silver/gold sampling and are later handled by the high-precision rule layer during inference. Silver and gold datasets are **not** population-representative unless LOW is folded back in via the anchor sample.
+
+**Pydantic class:** `QThresholdsConfig` (line 309 of `config.py`)
 
 ---
 
@@ -146,7 +201,7 @@ Target sizes for sampling. These are **targets**, not hard limits -- actual size
 | `sample_sizes.prompt_dev` | `int` | `50` | Number of rows used for prompt development and the bake-off. These rows see every candidate prompt, so they must be kept small. | Stage 01, stage 02 |
 | `sample_sizes.monitor` | `int` | `50` | Held-out drift-monitor slice drawn from the gold allocation. `sample_sizes.gold` must be bumped by this amount to keep validation/test at their expected sizes. | Stage 01 |
 
-**Pydantic class:** `SampleSizesConfig` (line 309 of `config.py`)
+**Pydantic class:** `SampleSizesConfig` (line 324 of `config.py`)
 
 ---
 
@@ -160,7 +215,7 @@ Controls the stage-05 anchor sample, which covers the FULL frame including LOW-q
 | `anchor.oversample_low_factor` | `float` | `1.5` | Multiplier applied to the LOW-stratum sampling rate. Ensures enough LOW-quality rows appear in the anchor for prevalence validation. | Stage 05 |
 | `anchor.min_stratum_frame` | `int` | `200` | Minimum frame count for a stratum to be eligible for independent sampling. Strata below this threshold are collapsed into adjacent strata. | Stage 05 |
 
-**Pydantic class:** `AnchorConfig` (line 331 of `config.py`)
+**Pydantic class:** `AnchorConfig` (line 346 of `config.py`)
 
 ---
 
@@ -175,9 +230,9 @@ Hyperparameters for the LLM-as-primary labeler that runs across the full silver 
 | `annotation.checkpoint_every` | `int` | `100` | Number of rows annotated between checkpoints. The label store is flushed to disk at this interval for resumability. | Stage 03 |
 | `annotation.guided_json` | `bool` | `true` | Whether to use structured JSON output mode (function calling / guided decoding). When `true`, the annotator requests a structured JSON response; when `false`, falls back to raw text parsing. | Stage 02, stage 03 |
 
-**Pydantic class:** `AnnotationConfig` (line 339 of `config.py`)
-
 **Note:** Resume is keyed by `(EIN2, source_id)` rather than row count, ensuring idempotency across interrupted runs (addresses legacy audit issue R-08).
+
+**Pydantic class:** `AnnotationConfig` (line 354 of `config.py`)
 
 ---
 
@@ -189,7 +244,7 @@ Data-loading behaviour, primarily for smoke-test support.
 |---|---|---|---|---|
 | `data.allow_synthetic` | `bool` | `false` | When `false` (production default), a missing upstream parquet is a hard error. When `true`, a synthetic dataset is generated with a loud warning and a `data_source="synthetic"` stamp. Intended for local smoke-testing only. | Stage 01, stage 05 |
 
-**Pydantic class:** `DataConfig` (line 355 of `config.py`)
+**Pydantic class:** `DataConfig` (line 370 of `config.py`)
 
 ---
 
@@ -204,7 +259,7 @@ Quality-control gate thresholds for the stage-04 silver-label freeze.
 | `qc.f1_ci_floor` | `float` | `0.70` | Minimum lower bound of the bootstrap 95% confidence interval for minority-class F1 required to freeze silver labels. This is the deliberate new variance gate. | Stage 04 |
 | `qc.abstain_on_fabricated_positive` | `bool` | `false` | When `true`, any positive label (`binary_label == "religious"`) that carries a fabricated evidence span is treated as an abstain (`binary_label = None`) before aggregation. | Stage 04 |
 
-**Pydantic class:** `QCConfig` (line 369 of `config.py`)
+**Pydantic class:** `QCConfig` (line 384 of `config.py`)
 
 ---
 
@@ -217,7 +272,7 @@ Production aggregation method (stage 04) and diagnostic comparison arms (stage 1
 | `aggregation.method` | `Literal["majority"]` | `"majority"` | Production aggregation method. Intentionally majority-only; no other methods are currently supported for production. | Stage 04 |
 | `aggregation.comparison_arms` | `list[Literal["dawid_skene", "crowdlab"]]` | `[]` | Optional diagnostic comparison arms for the script-only stage 11 sensitivity analysis. These do **not** affect production labels. | Stage 11 |
 
-**Pydantic class:** `AggregationConfig` (line 252 of `config.py`)
+**Pydantic class:** `AggregationConfig` (line 267 of `config.py`)
 
 ---
 
@@ -229,8 +284,8 @@ Fine-tuning, baseline, and learning-curve configuration for stage 06.
 |---|---|---|---|
 | `training.dev_fraction` | `float` | `0.1` | Fraction of silver labels reserved for development during training-data construction. |
 | `training.targets` | `Literal["soft", "hard"]` | `"soft"` | Whether encoder training consumes soft aggregate scores (vote-share targets) or hard majority-vote labels. |
-| `training.arms` | `list[TrainingArm]` | `["hard", "pruned", "class_weighted"]` | Training-data variants included in the learning-curve sweep. Each arm produces a differently filtered version of the silver labels. |
-| `training.curve_fractions` | `list[float]` | `[0.25, 0.5, 1.0]` | Fractions of available training data used for learning-curve comparisons. |
+| `training.arms` | `list[TrainingArm]` | `["hard", "class_weighted"]` | Training-data variants included in the sweep. Default is `hard` and `class_weighted`; `pruned` is kept for opt-in but excluded by default because soft targets already down-weight the disagreement band that `pruned` removes. |
+| `training.curve_fractions` | `list[float]` | `[1.0]` | Fractions of available training data used for training. Default `[1.0]` runs a single full-data pass; the `{25,50,100}%` learning curve is dropped by default. |
 | `training.sweep_seeds` | `list[int]` | `[42, 43, 44]` | Random seeds for the model-selection sweep (encoder arms x curve fractions x seeds). |
 | `training.final_seeds` | `list[int]` | `[42, 43, 44, 45, 46]` | Random seeds for final model refits after the best cell is selected. |
 | `training.crossfit_folds` | `int` | `5` | Number of cross-fit folds for silver-label prediction during training-data construction. |
@@ -257,14 +312,14 @@ Fine-tuning, baseline, and learning-curve configuration for stage 06.
 | `microsoft/deberta-v3-base` | `primary` | `256` |
 | `answerdotai/ModernBERT-base` | `comparison` | `256` |
 
+**Relevant stages:** Stage 06.
+
 **Pydantic classes:**
 
-- `TrainingConfig` (line 439 of `config.py`): All training knobs.
-- `EncoderArm` (line 423 of `config.py`): `id: str`, `arm: Literal["primary", "comparison"]`, `max_length: int`.
-- `TrainingArm` type (line 394): `Literal["hard", "pruned", "class_weighted"]`.
-- `BaselineName` type (line 395): `Literal["tfidf_logreg", "minilm_logreg"]`.
-
-**Relevant stages:** Stage 06.
+- `TrainingConfig` (line 470 of `config.py`): All training knobs.
+- `EncoderArm` (line 454 of `config.py`): `id: str`, `arm: Literal["primary", "comparison"]`, `max_length: int`.
+- `TrainingArm` type (line 409): `Literal["hard", "pruned", "class_weighted"]`.
+- `BaselineName` type (line 410): `Literal["tfidf_logreg", "minilm_logreg"]`.
 
 ---
 
@@ -291,9 +346,9 @@ Evaluation, calibration, and frozen-test acceptance configuration for stage 07.
 | `evaluation.acceptance.min_minority_f1_ci_lower` | `float` | `0.70` | Minimum lower bound of the bootstrap confidence interval for minority-class F1 on the frozen test set. |
 | `evaluation.acceptance.max_ece` | `float` | `0.05` | Maximum expected calibration error on anchor out-of-fold scores. |
 
-**Pydantic class:** `EvaluationConfig` (line 172 of `config.py`), `AcceptanceCriteria` (line 146 of `config.py`).
-
 **Relevant stages:** Stage 07.
+
+**Pydantic class:** `EvaluationConfig` (line 180 of `config.py`), `AcceptanceCriteria` (line 146 of `config.py`).
 
 ---
 
@@ -309,7 +364,7 @@ Batch inference configuration for stage 08.
 | `inference.route_low_to_rules` | `bool` | `true` | Whether LOW-quality rows use the rule layer before classifier scoring. |
 | `inference.rule_ambiguous_to_classifier` | `bool` | `true` | Whether rule-layer abstentions on LOW-quality rows fall through to the classifier. |
 
-**Pydantic class:** `InferenceConfig` (line 199 of `config.py`).
+**Pydantic class:** `InferenceConfig` (line 207 of `config.py`).
 
 **Relevant stages:** Stage 08.
 
@@ -322,13 +377,13 @@ Population-prevalence estimation configuration for stage 09.
 | YAML Key | Type | Default | Description |
 |---|---|---|---|
 | `prevalence.alpha` | `float` | `0.05` | Significance level for prevalence confidence intervals (produces 95% CIs by default). |
-| `prevalence.cross_checks` | `list[Literal["emq", "kdey"]]` | `["emq", "kdey"]` | Secondary quantification estimators reported alongside the primary prevalence estimate. EMQ is the SLD implementation; KDEy is via the QuaPy library. |
+| `prevalence.cross_checks` | `list[Literal["emq", "kdey"]]` | `["emq"]` | Secondary quantification estimators reported alongside the primary prevalence estimate. EMQ (vendored SLD) is the single default quantification sensitivity check; KDEy via QuaPy is available for opt-in. |
 | `prevalence.use_design_weights` | `bool` | `true` | Whether anchor-sample design weights are used when estimating prevalence. |
 | `prevalence.per_ntee` | `bool` | `true` | Whether prevalence is also reported by NTEE major group (taxonomy code). |
 | `prevalence.ntee_min_n` | `int` | `10` | Minimum labeled or inferred rows required for an NTEE subgroup estimate to be reported. |
 | `prevalence.low_tier_sensitivity` | `bool` | `true` | Whether to report sensitivity bounds for LOW-quality missions routed through the rule layer. |
 
-**Pydantic class:** `PrevalenceConfig` (line 225 of `config.py`).
+**Pydantic class:** `PrevalenceConfig` (line 240 of `config.py`).
 
 **Relevant stages:** Stage 09.
 
@@ -347,12 +402,64 @@ Several YAML knobs control the human-gate artifacts that are validated by `valid
 
 ---
 
+## Worked Retasking Walkthrough: Missions → Activities
+
+Below is a concrete, step-by-step retasking from the default `missions` / `religious` task to an `activities` / `educational` task. No source code is edited.
+
+### Step 1: Copy the production config
+
+```bash
+cp config/religious_missions.yaml config/educational_activities.yaml
+```
+
+### Step 2: Change the retasking triple
+
+Edit the three root-level keys:
+
+```yaml
+entity: activities
+field: LONGEST_ACTIVITY
+label_name: educational
+```
+
+These are the only *required* changes. Everything else can stay at default.
+
+### Step 3: Review the model slate (optional)
+
+The default bake-off candidates (`gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it`) are text-agnostic. If the new `field` is still short nonprofit text, keep the slate. If you have no vLLM server, comment out the Gemma entry.
+
+### Step 4: Run the pipeline
+
+```bash
+uv run python scripts/run_pipeline.py --config config/educational_activities.yaml
+```
+
+Stage 01 will sample, write manifests, and emit a `gold_coding_template.csv`. Stop and fill the human labels (G1).
+
+### Step 5: Confirm the gates
+
+- **G1** — Fill `data/processed/gold/gold_to_code.csv` with `0/1` labels.
+- **G2** — After stage 02 proposes a slate, confirm `production_slate.json`.
+- **G3** — After stage 06 selects the best model, create `test_unlock.json` matching the checkpoint SHA.
+- **G4** — After stage 05 writes the anchor template, fill `anchor_to_code.csv`.
+
+Because `entity` changed, the pipeline will emit task-labeled artifacts under the configured `paths` roots.
+
+### Summary of changes
+
+| File | Lines changed | What changed |
+|---|---|---|
+| `config/educational_activities.yaml` | 3 root keys | `entity`, `field`, `label_name` |
+| `data/processed/gold/` | Human-written | Four gate artifacts |
+
+---
+
 ## Adding a New Classification Task
 
 1. Copy `config/religious_missions.yaml` to `config/<task>.yaml`.
 2. Set `entity` to the new entity name (e.g. `"activities"`).
 3. Set `field` to the text column in the upstream parquet (e.g. `"LONGEST_ACTIVITY"`).
-4. Set `label_name` to the positive-class label (e.g. `"pregnancy_center"`).
+4. Set `label_name` to the positive-class label (e.g. `"educational"`).
 5. Adjust `paths` if task-specific storage is desired.
 6. Optionally update `model_slate`, `sample_sizes`, `anchor`, or any other section.
 7. Run: `uv run python scripts/run_pipeline.py --config config/<task>.yaml`.

@@ -2,13 +2,16 @@
 
 import numpy as np
 import pandas as pd
-from cleanlab.filter import find_label_issues
+import pytest
 
 from binary_classifier.train import arms
 
 
 def test_pruned_arm_drops_cleanlab_issues_only_in_disagreement_band() -> None:
     """Pruning intersects cleanlab flags with the low-vote-share band."""
+    pytest.importorskip("cleanlab")
+    from cleanlab.filter import find_label_issues
+
     frame = _training_frame(100)
     noisy_indices = [7, 18, 41, 72]
     band_indices = [7, 18, 10, 11]
@@ -55,6 +58,7 @@ def test_class_weighted_arm_computes_inverse_frequency_weights() -> None:
 
 def test_each_arm_returns_training_schema_and_loss_spec() -> None:
     """Arm runners preserve EIN2-bearing training rows and expose loss specs."""
+    pytest.importorskip("cleanlab")
     frame = _training_frame(12)
     oof = _oof_probs(frame, noisy_indices=[])
 

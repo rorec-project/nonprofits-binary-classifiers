@@ -1,4 +1,4 @@
-"""Batch annotation runner with resume support.
+"""Batch annotation runner with resume support (stage 03).
 
 Runs the confirmed production model set × prompt matrix over the silver pool.
 Resume is keyed by (EIN2, source_id) — fixes audit R-08 and D1: the real
@@ -6,8 +6,30 @@ Resume is keyed by (EIN2, source_id) — fixes audit R-08 and D1: the real
 ``source_id = f"{model_id}__{prompt_id}"`` matches the resume key, keeping the
 three prompt variants distinct in the store.
 
+The design follows the LLM-as-annotator validation-first workflow: human-coded
+labels remain the reference standard, and LLM labels are treated as a weak-
+supervision source that must be validated before downstream use (Gilardi,
+Alizadeh & Kubli 2023, https://doi.org/10.1073/pnas.2305016120; Pangakis,
+Wolken & Fasching 2023, https://doi.org/10.48550/arXiv.2306.00176; Ziems et
+al. 2024, https://doi.org/10.1162/coli_a_00502).  Prompt variants are kept
+distinct in the store so inter-prompt disagreement can serve as an uncertainty
+feature (Pangakis & Wolken 2025, https://doi.org/10.1609/icwsm.v19i1.35883).
+
 The module can be imported and used programmatically, or invoked via
 ``scripts/03_annotate.py``.
+
+References:
+    - Gilardi, Alizadeh & Kubli (2023), "ChatGPT Outperforms Crowd Workers for
+      Text-Annotation Tasks", PNAS. https://doi.org/10.1073/pnas.2305016120
+    - Pangakis, Wolken & Fasching (2023), "Automated Annotation with
+      Generative AI Requires Validation", arXiv.
+      https://doi.org/10.48550/arXiv.2306.00176
+    - Ziems et al. (2024), "Can Large Language Models Transform Computational
+      Social Science?", Computational Linguistics.
+      https://doi.org/10.1162/coli_a_00502
+    - Pangakis & Wolken (2025), "Keeping Humans in the Loop: Human-Centered
+      Automated Annotation with Generative AI", ICWSM.
+      https://doi.org/10.1609/icwsm.v19i1.35883
 """
 
 import concurrent.futures
@@ -150,12 +172,32 @@ def resolve_production_specs(registry: "PathRegistry") -> list[BakeoffCandidate]
 def resolve_production_selection(
     registry: "PathRegistry",
 ) -> tuple[list[BakeoffCandidate], set[tuple[str, str]] | None]:
-    """Resolve confirmed models plus optional selected model-prompt pairs."""
+    """Resolve confirmed models plus optional selected model-prompt pairs.
+
+    Args:
+        registry: Path registry with the resolved ``production_slate`` path.
+
+    Returns:
+        Tuple of (confirmed model specs, optional selected model-prompt pairs).
+
+    Raises:
+        FileNotFoundError: If no production slate exists.
+        ValueError: If the slate is unconfirmed or lists no models.
+
+    """
     slate = _load_confirmed_production_slate(registry)
     return slate.models, _selected_prompt_pairs(slate)
 
 
 # ── Pipeline entrypoint ──────────────────────────────────────────────────────
+#
+# ``run_annotation`` is the canonical entrypoint for stage 03, called by both
+# ``scripts/03_annotate.py`` and the orchestrator.  It resolves the confirmed
+# production slate (gate G2), builds the silver+gold annotation pool, and
+# delegates to the matrix runner.  Gold rows are included because the stage-04
+# validation gate and the monitor canary both compare LLM labels against human
+# labels; annotating silver alone would leave those joins empty on independent
+# draws.
 
 
 def run_annotation(
@@ -183,6 +225,29 @@ def run_annotation(
     untouched, and must not be used for prompt tuning. The matrix runner owns
     the final filter so direct programmatic calls get the same hard-fail
     behaviour when the monitor slice does not overlap the annotation pool.
+
+    Args:
+        cfg: Validated task configuration.
+        registry: Path registry with resolved artifact paths.
+        limit: Optional row cap for the annotation pool (for smoke tests).
+        prompt_paths: Optional explicit prompt files; defaults to the slate's
+            selected prompts or the legacy ``v1``, ``v2``, ``v3`` set.
+        specs: Optional explicit model specs; defaults to the confirmed
+            production slate.
+        store_path: Optional explicit annotation-store path.
+        checkpoint_every: Flush to disk every N records.
+        resume: Skip (EIN2, source_id) pairs already present in the store.
+        canary_only: Run only the monitor-manifest canary slice for drift
+            audit.
+
+    Returns:
+        The populated ``AnnotationStore``.
+
+    Raises:
+        FileNotFoundError: If the production slate or monitor manifest is
+            missing when required.
+        ValueError: If the canary monitor slice does not overlap the pool.
+
     """
     selected_pairs: set[tuple[str, str]] | None = None
     if specs is None:
@@ -470,6 +535,13 @@ def run_annotation_matrix(
         )
 
     return store
+
+
+# ── Canary drift audit ────────────────────────────────────────────────────────
+#
+# The canary records a κ/α change test against the first run with the same
+# monitor-set hash (SILICON, arXiv:2412.14461; Variance-Aware protocol,
+# arXiv:2601.02370).  It is a drift monitor, not a prompt-selection target.
 
 
 def _record_canary_audit(

@@ -1,4 +1,59 @@
-"""Prediction-powered prevalence estimation wrapper."""
+"""Prediction-powered prevalence estimation wrapper.
+
+This module wraps ``ppi_py`` (Angelopoulos et al., 2023,
+https://doi.org/10.1126/science.adi6001) to provide a single-call
+prediction-powered inference (PPI) estimator for binary prevalence.
+PPI combines a small gold-label audit sample with calibrated classifier
+probabilities on a large unlabeled population to yield valid confidence
+intervals for the population mean without assuming the model is
+perfectly calibrated (Angelopoulos et al., 2023, arXiv:2311.01453).
+
+The wrapper enforces input validation (finite, non-empty, aligned arrays)
+and records the ``alpha`` actually used so that downstream report generation
+can reproduce the confidence level.  When design weights are supplied,
+they are passed directly to ``ppi_py`` as inverse-probability weights,
+preserving the Horvitz--Thompson (1952, https://doi.org/10.1080/01621459.1952.10483446)
+spirit of the difference estimator.  The PPI mean estimator is algebraically
+equivalent to the classical survey-sampling difference estimator
+(Cassel et al., 1976) and PPI++ corresponds to the generalized regression
+(GREG) estimator (Mozer, 2026, arXiv:2603.19160).
+
+Prevalence estimation from text classifiers is a well-studied problem in
+computational social science.  Hopkins & King (2010,
+https://doi.org/10.1111/j.1540-5907.2009.00428.x) showed that estimating
+aggregate proportions (prevalence) is a distinct task from document-level
+classification, and that direct estimation can outperform classify-and-count.
+Keith & O'Connor (2018, https://aclanthology.org/D18-1487/) introduced
+uncertainty-aware generative models for document-level prevalence inference.
+Gentzkow, Kelly & Taddy (2019, https://doi.org/10.1257/jel.20181020) provide the
+applied-economics text-as-data framework within which this pipeline sits.
+Meyer & Mittag (2017, https://doi.org/10.1016/j.jeconom.2017.06.012) formalize
+the econometric consequences of misclassification in binary choice models.
+
+References
+----------
+
+* Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T.
+  (2023). Prediction-Powered Inference. *Science*.
+  https://doi.org/10.1126/science.adi6001
+* Hopkins, D. J., & King, G. (2010). A Method of Automated Nonparametric
+  Content Analysis for Social Science. *American Journal of Political Science*.
+  https://doi.org/10.1111/j.1540-5907.2009.00428.x
+* Keith, K., & O'Connor, B. (2018). Uncertainty-Aware Generative Models for
+  Inferring Document Class Prevalence. *EMNLP*.
+  https://aclanthology.org/D18-1487/
+* Gentzkow, M., Kelly, B., & Taddy, M. (2019). Text as Data. *Journal of
+  Economic Literature*. https://doi.org/10.1257/jel.20181020
+* Meyer, B. D., & Mittag, N. (2017). Misclassification in Binary Choice Models.
+  *Journal of Econometrics*. https://doi.org/10.1016/j.jeconom.2017.06.012
+* Horvitz, D. G., & Thompson, D. J. (1952). A Generalization of Sampling
+  Without Replacement from a Finite Universe. *Journal of the American
+  Statistical Association*, 47(260), 663--685.
+  https://doi.org/10.1080/01621459.1952.10483446
+* Mozer, R. (2026). PPI is the Difference Estimator: Recognizing the Survey
+  Sampling Roots of Prediction-Powered Inference. arXiv:2603.19160.
+  https://doi.org/10.48550/arXiv.2603.19160
+"""
 
 import importlib
 import logging
@@ -13,6 +68,18 @@ logger = logging.getLogger(__name__)
 PPIResult: TypeAlias = dict[str, float | int | bool | None]
 
 
+# ---------------------------------------------------------------------------
+# PPI mean estimator
+# ---------------------------------------------------------------------------
+# The PPI mean estimator (Angelopoulos et al., 2023,
+# https://doi.org/10.1126/science.adi6001) corrects the naive classifier
+# mean on the unlabeled population by the mean residual on the labeled audit
+# sample.  This is the "difference estimator" framing in survey-sampling
+# terms (Mozer, 2026, arXiv:2603.19160).  We leave ``lam`` unset so that
+# ppi_py auto-tunes the PPI++ power-tuning parameter from the data.
+# ---------------------------------------------------------------------------
+
+
 def ppi_prevalence(
     y_labeled: Iterable[float],
     yhat_labeled: Iterable[float],
@@ -23,10 +90,15 @@ def ppi_prevalence(
 ) -> PPIResult:
     """Estimate population prevalence with prediction-powered inference.
 
-    The estimand is the mean of the binary label ``Y``. ``yhat`` inputs are
+    The estimand is the mean of the binary label ``Y``.  ``yhat`` inputs are
     calibrated probabilities for the positive class and are passed directly to
-    ``ppi_py``'s mean estimator. The PPI confidence-interval ``alpha`` is always
-    passed explicitly because the library default is 0.1.
+    ``ppi_py``'s mean estimator.  The PPI confidence-interval ``alpha`` is
+    always passed explicitly because the library default is 0.1.
+
+    This function implements the prediction-powered inference approach of
+    Angelopoulos et al. (2023, https://doi.org/10.1126/science.adi6001),
+    treating the classifier as a proxy and correcting the population mean
+    with the labeled residual.
 
     Args:
         y_labeled: Human labels for the labeled anchor rows, encoded as 0/1.
@@ -35,7 +107,7 @@ def ppi_prevalence(
             or target frame.
         alpha: Significance level for the returned confidence interval.
         w: Optional labeled-row weights, such as inverse-probability design
-            weights. When provided, these are passed to ``ppi_py`` as ``w``.
+            weights.  When provided, these are passed to ``ppi_py`` as ``w``.
 
     Returns:
         A dictionary containing the point estimate, confidence bounds, the
@@ -96,6 +168,15 @@ def ppi_prevalence(
         result["n_unlabeled"],
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Input validation helpers
+# ---------------------------------------------------------------------------
+# All helpers enforce the contract that PPI inputs are finite, non-empty,
+# aligned, and in the expected ranges.  Violations raise ValueError early
+# so that no library calls are wasted.
+# ---------------------------------------------------------------------------
 
 
 def _validate_alpha(alpha: float) -> float:
