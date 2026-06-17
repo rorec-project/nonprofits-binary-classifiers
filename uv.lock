@@ -2396,8 +2396,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
-    { name = "cleanlab" },
-    { name = "crowd-kit" },
     { name = "datasets" },
     { name = "evaluate" },
     { name = "matplotlib" },
@@ -2410,7 +2408,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "quapy" },
     { name = "scikit-learn" },
     { name = "sentencepiece" },
     { name = "torch" },
@@ -2418,6 +2415,13 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+diagnostics = [
+    { name = "cleanlab" },
+    { name = "crowd-kit" },
+]
+quant = [
+    { name = "quapy" },
+]
 serve = [
     { name = "vllm" },
 ]
@@ -2435,8 +2439,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=0.26.0" },
-    { name = "cleanlab", specifier = ">=2.9.0" },
-    { name = "crowd-kit", specifier = ">=1.4.2" },
+    { name = "cleanlab", marker = "extra == 'diagnostics'", specifier = ">=2.9.0" },
+    { name = "crowd-kit", marker = "extra == 'diagnostics'", specifier = ">=1.4.2" },
     { name = "datasets", specifier = ">=4.8.5" },
     { name = "evaluate", specifier = ">=0.4.6" },
     { name = "matplotlib", specifier = ">=3.10.9" },
@@ -2449,7 +2453,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "quapy", specifier = ">=0.2.0,<0.3" },
+    { name = "quapy", marker = "extra == 'quant'", specifier = ">=0.2.0,<0.3" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "torch", specifier = ">=2.7.0" },
@@ -2457,7 +2461,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=5.8.0,<6.0.0" },
     { name = "vllm", marker = "extra == 'serve'", specifier = ">=0.22.0" },
 ]
-provides-extras = ["serve", "tracking"]
+provides-extras = ["serve", "tracking", "diagnostics", "quant"]
 
 [package.metadata.requires-dev]
 dev = [

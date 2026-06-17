@@ -1,4 +1,36 @@
-"""Stage 07 frozen-test evaluation entrypoint."""
+"""Stage 07 frozen-test evaluation entrypoint.
+
+This module implements the final evaluation gate for the binary classifier
+pipeline. It loads a human-selected checkpoint, calibrates probabilities on
+the anchor set via cross-fitted Platt + temperature scaling, validates the
+LOW-tier rule layer, and produces a single one-shot frozen-test report that
+includes minority-class metrics, subgroup disparities, and calibration
+diagnostics. The acceptance gate is ``max_ece``-only for this pass; Brier and
+log-loss are reserved for future work.
+
+Data provenance
+    - Anchor labels: ``anchor_coding_template`` (human-coded 0/1, G4 gate).
+    - Frozen test: ``gold_coding_template`` split == ``test`` (human-coded 0/1,
+      G3 gate).
+    - Model checkpoint: ``selected_model.json`` with SHA-256 verification.
+
+Methodology and citations
+    - Precision-Recall AUC and minority-class F1 are the primary headline
+      metrics (Davis & Goadrich, 2006, DOI: 10.1145/1143844.1143874; Saito &
+      Rehmsmeier, 2015, DOI: 10.1371/journal.pone.0118432).
+    - The Matthews Correlation Coefficient (MCC) is reported as a balanced
+      summary statistic (Chicco & Jurman, 2020, DOI:
+      10.1186/s12864-019-6413-7).
+    - Threshold selection and expected-loss framing follow Hernández-Orallo,
+      Flach & Ferri (2012, https://www.jmlr.org/papers/v13/hernandez-orallo12a.html).
+    - Calibration uses Platt scaling + temperature scaling (see
+      ``calibration.py`` for full citation list).
+
+Note: Vickers-Elkin decision-curve analysis was intentionally removed because
+it is orthogonal to a prevalence-estimation study; the downstream deliverable is
+a calibrated, uncertainty-quantified population share (PPI++), not a clinical
+treat-vs-abstain decision.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +55,6 @@ from binary_classifier.evaluation.calibration import (
     calibration_metrics,
     crossfit_calibrate,
 )
-from binary_classifier.evaluation.decision_curve import net_benefit
 from binary_classifier.evaluation.subgroups import subgroup_report
 from binary_classifier.evaluation.thresholds import pick_threshold
 from binary_classifier.qc.preflight import (
@@ -69,13 +100,20 @@ def run_evaluation(
         ValueError: If required artifacts have malformed schemas.
 
     """
+    # Verify the selected checkpoint via SHA-256 to prevent accidental drift
+    # between the human-reviewed stage-06 choice and the model loaded here.
     selected = _load_and_verify_selected_model(registry)
     scorer = (
         predictor if predictor is not None else _load_checkpoint_predictor(selected)
     )
 
+    # G4 anchor-labels gate: prevalence estimates on LOW-quality rows cannot be
+    # validated without fully coded anchor labels, so we fail early.
     _raise_gate_problems("G4", _validate_anchor_labels(cfg, registry))
 
+    # Load the anchor set, score raw probabilities, and calibrate OOF.
+    # Cross-fitted calibration avoids overfitting the calibration mapping to the
+    # same data used to train it, which is critical when the anchor is small.
     logger.info("Loading anchor rows and scoring raw probabilities...")
     missions = load_missions(cfg)
     anchor = _load_anchor_frame(registry, missions)
@@ -115,10 +153,16 @@ def run_evaluation(
     _write_json(registry.calibrator_path, calibrator_payload)
     logger.info("Wrote calibrator to %s", registry.calibrator_path)
 
+    # Validate the LOW-tier rule layer on the anchor set. Rules are the only
+    # source of labels for LOW-quality rows, so their sensitivity/specificity
+    # must be quantified before prevalence estimation can use them.
     rule_report = _rule_validation(anchor)
     _write_json(registry.rule_validation, rule_report)
     logger.info("Wrote rule validation to %s", registry.rule_validation)
 
+    # G3 test-unlock gate: the frozen test must only be scored once per
+    # checkpoint to prevent leakage during model iteration. One-shot refusal
+    # forces explicit deletion before any re-run.
     _raise_gate_problems("G3", _validate_test_unlock(cfg, registry))
     if registry.test_evaluation.exists():
         raise RuntimeError(
@@ -128,6 +172,9 @@ def run_evaluation(
 
     test = _read_frozen_test_labels(registry, missions)
 
+    # Score the frozen test, apply the fitted calibrator, threshold, and
+    # compute the full metric bundle. All metrics are minority-class-oriented
+    # because the positive class (religious) is the rare outcome of interest.
     logger.info("Scoring frozen test split (%d rows)...", len(test))
     raw_test = _predict_positive_probabilities(scorer, test["mission_text"].tolist())
     method = cast(CalibrationMethod, calibrator_payload["method"])
@@ -140,6 +187,10 @@ def run_evaluation(
     y_true = test["human_label"].astype(int).to_numpy()
     y_pred = (calibrated_test >= threshold).astype(int)
 
+    # Primary metrics follow the imbalanced-text evaluation literature: PR-AUC
+    # and minority F1 as headline numbers, MCC as a balanced summary, and
+    # bootstrap CIs for uncertainty quantification (Davis & Goadrich 2006;
+    # Saito & Rehmsmeier 2015; Chicco & Jurman 2020).
     metric_bundle = metrics.compute_metric_bundle(
         y_true,
         y_pred,
@@ -377,6 +428,10 @@ def _calibrator_payload(
     }
 
 
+# The LOW-tier rule layer is evaluated separately because rules are the only
+# labels available for LOW-quality rows. Reporting sensitivity, specificity,
+# and precision on the anchor lets the prevalence stage decide whether the
+# rule layer is accurate enough to include LOW rows in the population estimate.
 def _rule_validation(anchor: pd.DataFrame) -> dict[str, Any]:
     low = anchor.loc[anchor["tier"].astype(str).str.upper() == "LOW"].copy()
     rule_labels = [apply_rule_label(text) for text in low["mission_text"].tolist()]
@@ -473,6 +528,10 @@ def _read_frozen_test_labels(
     return joined.reset_index(drop=True)
 
 
+# Assemble the one-shot frozen-test report. Decision-curve analysis was
+# intentionally omitted because the downstream deliverable is a calibrated
+# population-prevalence estimate (PPI++), not a clinical treat-vs-abstain
+# decision.
 def _test_report(
     cfg: "BinaryClassifierConfig",
     registry: "PathRegistry",
@@ -486,7 +545,6 @@ def _test_report(
     calibrator_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     report_df = test.rename(columns={"mission_text": "text"}).copy()
-    thresholds = [float(x) for x in np.linspace(0.05, 0.95, 19)]
     return {
         "metric_bundle": dict(metric_bundle),
         "subgroups": subgroup_report(
@@ -497,11 +555,6 @@ def _test_report(
             by=["ntee_major_group", "data_source"],
             length_bins=cfg.evaluation.length_bins,
             min_n=1,
-        ),
-        "decision_curve": net_benefit(
-            test["human_label"].astype(int).tolist(),
-            y_prob.astype(float).tolist(),
-            thresholds,
         ),
         "calibration_on_anchor_oof": dict(anchor_calibration),
         "acceptance": _acceptance_verdict(cfg, metric_bundle, anchor_calibration),
@@ -518,6 +571,9 @@ def _test_report(
     }
 
 
+# Acceptance gate is max_ece-only for this pass. Brier and log-loss are
+# reserved for future calibration work; the research deliverable is a
+# calibrated prevalence estimate, so ECE is the primary diagnostic.
 def _acceptance_verdict(
     cfg: "BinaryClassifierConfig",
     metric_bundle: Mapping[str, Any],

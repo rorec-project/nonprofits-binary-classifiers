@@ -1,4 +1,27 @@
-"""Threshold selection utilities for binary evaluation."""
+"""Threshold selection for binary classification decisions.
+
+This module selects operating thresholds from validation probabilities,
+supporting precision-floor and max-F1 policies.  Threshold selection is
+performed after calibration and before final evaluation, ensuring the
+deployed threshold satisfies the project's precision requirements.
+
+Data provenance
+    Thresholds are derived from validation-set probabilities (calibrated) and
+    human labels, then applied to the held-out test set.
+
+Methodology
+    Candidate thresholds are the unique observed probabilities.  Under the
+    precision-floor policy, the selector takes the highest-recall threshold
+    whose precision meets the floor; if no candidate meets the floor, it falls
+    back to the maximum-precision threshold.  This framing follows Forman
+    (2008), who treats threshold choice as an explicit cost/trade-off decision.
+
+Key citations
+    * Forman (2008) — Quantifying counts and costs via classification.
+
+DOI
+    * Forman (2008): https://doi.org/10.1007/s10618-008-0097-y
+"""
 
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -6,6 +29,18 @@ from typing import Any, Literal
 import numpy as np
 
 ThresholdPolicy = Literal["precision_floor", "max_f1"]
+
+
+# ---------------------------------------------------------------------------
+# Threshold selection
+# ---------------------------------------------------------------------------
+# Candidate thresholds are the unique observed probabilities.  The
+# precision-floor policy selects the highest-recall threshold whose precision
+# meets the floor, falling back to the maximum-precision threshold if the
+# floor is unattainable.  The max-F1 policy simply selects the threshold that
+# maximizes F1.  This follows Forman (2008), who treats threshold choice as
+# an explicit cost/trade-off decision rather than a fixed 0.5 cutoff.
+# ---------------------------------------------------------------------------
 
 
 def pick_threshold(
@@ -22,6 +57,9 @@ def pick_threshold(
     the highest-recall threshold whose precision meets the floor. If no
     candidate meets the floor, it falls back to the threshold with the maximum
     achieved precision and sets ``floor_unattainable`` to ``True``.
+
+    This framing follows Forman (2008), who treats threshold choice as an
+    explicit cost/trade-off decision rather than a fixed ``0.5`` cutoff.
 
     Args:
         probs: Positive-class probabilities aligned to ``labels``.

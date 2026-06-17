@@ -1,10 +1,38 @@
-"""Subgroup diagnostics for binary evaluation reports."""
+"""Subgroup diagnostics for binary evaluation reports.
+
+This module computes per-subgroup error rates and small-cell suppression
+flags for evaluation reports.  It supports grouping by categorical columns
+(e.g. NTEE major group) and by word-count bins.
+
+Data provenance
+    Subgroup reports are generated from the evaluation DataFrame (which
+carries ``EIN2``, ``text``, and any grouping columns) together with the
+    aligned ground-truth labels, predicted labels, and probabilities.
+
+Methodology
+    For each subgroup, we compute minority-class F1, false-positive rate
+    (FPR), and false-negative rate (FNR).  Subgroups with fewer than
+    ``min_n`` rows are suppressed: the subgroup identifier and ``n`` are
+    retained, but metric values are set to ``None``.  This prevents
+    unreliable point estimates from driving conclusions.
+"""
 
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Subgroup diagnostics
+# ---------------------------------------------------------------------------
+# We compute per-subgroup minority-F1, FPR, and FNR for categorical
+# groupings (e.g. NTEE major group) and word-count bins.  Subgroups with
+# fewer than ``min_n`` rows are suppressed: the identifier and ``n`` are
+# retained, but metric values are set to ``None``.  This prevents unreliable
+# point estimates from driving conclusions.
+# ---------------------------------------------------------------------------
 
 
 def subgroup_report(
@@ -152,6 +180,7 @@ def _length_bin_label(count: int, bins: Sequence[int]) -> str:
 
 
 def _rates(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    # Compute minority-class F1, FPR, and FNR from the confusion matrix.
     tp = int(np.sum((y_true == 1) & (y_pred == 1)))
     fp = int(np.sum((y_true == 0) & (y_pred == 1)))
     fn = int(np.sum((y_true == 1) & (y_pred == 0)))

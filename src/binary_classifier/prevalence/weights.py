@@ -1,4 +1,37 @@
-"""Design-weight and EIN2 alignment utilities for prevalence estimation."""
+"""Design-weight and EIN2 alignment utilities for prevalence estimation.
+
+This module implements the **sampling-design correction** for the anchor
+(labeled audit) sample.  Because the anchor is drawn with unequal
+probabilities (e.g. stratified by quality tier and NTEE major group), the
+standard PPI estimator would be biased if applied without weighting.  The
+design-weights function computes inverse-probability weights
+(Horvitz & Thompson, 1952, https://doi.org/10.1080/01621459.1952.10483446)
+so that the weighted PPI estimator is unbiased for the population mean.
+
+The PPI mean estimator is algebraically equivalent to the classical survey-
+sampling **difference estimator** (Cassel et al., 1976), and PPI++ corresponds
+to the generalized regression (GREG) estimator (Mozer, 2026,
+arXiv:2603.19160, https://doi.org/10.48550/arXiv.2603.19160).  Passing
+inverse-probability weights to ``ppi_py`` preserves the Horvitz--Thompson
+property that the weighted mean of the labeled residuals is an unbiased
+estimate of the population residual.
+
+The ``align_labels_predictions`` helper joins labeled anchor rows to scored
+predictions by the normalized ``EIN2`` join key, dropping mismatches and
+duplicates with explicit warnings so that prevalence estimation never proceeds
+on silently incomplete data.
+
+References
+----------
+
+* Horvitz, D. G., & Thompson, D. J. (1952). A Generalization of Sampling
+  Without Replacement from a Finite Universe. *Journal of the American
+  Statistical Association*, 47(260), 663--685.
+  https://doi.org/10.1080/01621459.1952.10483446
+* Mozer, R. (2026). PPI is the Difference Estimator: Recognizing the Survey
+  Sampling Roots of Prediction-Powered Inference. arXiv:2603.19160.
+  https://doi.org/10.48550/arXiv.2603.19160
+"""
 
 import logging
 from collections.abc import Iterable
@@ -6,6 +39,17 @@ from collections.abc import Iterable
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Inverse-probability design weights
+# ---------------------------------------------------------------------------
+# The anchor sample is drawn with unequal probabilities (e.g. stratified by
+# tier and NTEE major group).  Standard PPI would be biased without weighting.
+# We compute Horvitz--Thompson inverse-probability weights and normalize them
+# to mean one so that the weighted PPI estimator is unbiased for the population
+# mean (Horvitz & Thompson, 1952; Mozer, 2026).
+# ---------------------------------------------------------------------------
 
 
 def design_weights(
@@ -47,6 +91,17 @@ def design_weights(
     return weights
 
 
+# ---------------------------------------------------------------------------
+# EIN2 alignment
+# ---------------------------------------------------------------------------
+# Aligns labels, predictions, and design weights by normalized EIN2.  Missing
+# or blank EIN2 values are dropped with a warning.  Duplicate normalized EIN2
+# keys are rejected to prevent accidental many-to-many joins.  Labeled rows
+# without matching predictions are also dropped with a warning because
+# prevalence estimators need complete label/prediction pairs.
+# ---------------------------------------------------------------------------
+
+
 def align_labels_predictions(
     labeled_df: pd.DataFrame,
     predictions_df: pd.DataFrame,
@@ -60,8 +115,8 @@ def align_labels_predictions(
     """Align labels, predictions, and design weights by normalized EIN2.
 
     EIN2 values are converted to strings and stripped on both inputs before
-    joining. Rows with missing/blank EIN2 are dropped with a warning that
-    includes the dropped-row count. Labeled rows without predictions are also
+    joining.  Rows with missing/blank EIN2 are dropped with a warning that
+    includes the dropped-row count.  Labeled rows without predictions are also
     dropped with a warning because prevalence estimators need complete
     label/prediction pairs.
 
@@ -119,6 +174,11 @@ def align_labels_predictions(
     aligned[weight_col] = weights.to_numpy()
     aligned[ein_col] = aligned["_ein2_norm"]
     return aligned[[ein_col, label_col, *pred_cols, weight_col]].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _prediction_columns(prediction_cols: str | Iterable[str]) -> list[str]:

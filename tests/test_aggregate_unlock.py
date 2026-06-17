@@ -83,6 +83,7 @@ def test_crowdlab_pivot_nan_handling_and_prediction_drop(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """CROWDLAB treats explicit/missing votes as NaN and drops missing probs."""
+    pytest.importorskip("cleanlab")
     caplog.set_level(logging.WARNING)
     store = _store(n=4)
     probs = _pred_probs(n=3)
@@ -102,6 +103,8 @@ def test_crowdlab_pivot_nan_handling_and_prediction_drop(
 
 def test_unlocked_arms_match_majority_vote_schema() -> None:
     """Comparison arms are drop-in schema replacements for majority vote."""
+    pytest.importorskip("crowdkit")
+    pytest.importorskip("cleanlab")
     store = _store()
 
     assert list(majority_vote(store).columns) == SILVER_COLUMNS
@@ -119,6 +122,7 @@ def test_crowdlab_without_pred_probs_preserves_quarantine() -> None:
 
 def test_dawid_skene_small_n_end_to_end() -> None:
     """Dawid-Skene runs end-to-end on a small fabricated annotation store."""
+    pytest.importorskip("crowdkit")
     aggregated = aggregate_labels(_store(), method="dawid_skene")
 
     assert len(aggregated) == 20
@@ -128,6 +132,7 @@ def test_dawid_skene_small_n_end_to_end() -> None:
 
 def test_crowdlab_small_n_end_to_end() -> None:
     """CROWDLAB runs end-to-end on a small fabricated annotation store."""
+    pytest.importorskip("cleanlab")
     aggregated = aggregate_labels(_store(), method="crowdlab", pred_probs=_pred_probs())
 
     assert len(aggregated) == 20

@@ -1,4 +1,28 @@
-"""Training sweep enumeration, execution, and model-selection reports."""
+"""Training sweep enumeration, execution, and model-selection reports (stage 06).
+
+Enumerates the documentation-curve, arm-matrix, and final-seed runs that
+constitute the stage-06 experiment grid.  The selection report aggregates
+across seeds and recommends a cell (model, targets, arm) using validation
+PR-AUC with a tie-to-simpler rule (He et al. 2021/2023, DeBERTa-v3,
+arXiv:2006.03654; Warner et al. 2024, ModernBERT, arXiv:2412.13663).
+Baselines include a MiniLM embedding + logistic-regression arm (Reimers &
+Gurevych 2019, https://doi.org/10.18653/v1/D19-1410; Wang et al. 2020, MiniLM)
+and a TF-IDF + logistic-regression arm.  Noisy-label robustness is explored
+through soft targets, class-weighted CE, and the pruned arm (Zhu et al. 2022,
+https://doi.org/10.18653/v1/2022.insights-1.8; Wang et al. 2023).
+
+References:
+    - He et al. (2021), "DeBERTa: Decoding-enhanced BERT with Disentangled
+      Attention", ICLR. arXiv:2006.03654
+    - Warner et al. (2024), "ModernBERT: The Long-Pretraining、Short-Context
+      Revolution", arXiv:2412.13663
+    - Reimers & Gurevych (2019), "Sentence-BERT: Sentence Embeddings using
+      Siamese BERT-Networks", EMNLP-IJCNLP.
+      https://doi.org/10.18653/v1/D19-1410
+    - Zhu et al. (2022), "Is BERT Robust to Label Noise? A Study on Learning
+      with Noisy Labels in Text Classification", Insights.
+      https://doi.org/10.18653/v1/2022.insights-1.8
+"""
 
 from __future__ import annotations
 
@@ -69,6 +93,14 @@ class RunSpec:
     def cell_key(self) -> tuple[str, str, str]:
         """Return the model-selection cell key."""
         return (self.model, self.targets, self.arm)
+
+
+# ── Run-matrix enumeration ───────────────────────────────────────────────────
+#
+# The PR-2 grid documents data-size sensitivity (documentation curve), arm
+# comparisons (soft vs hard vs class-weighted vs pruned), and encoder
+# head-to-heads, then final-seed refits the recommended cell.  Baselines
+# (TF-IDF + logreg, MiniLM + logreg) anchor the lower bound of the sweep.
 
 
 def build_run_matrix(
@@ -172,6 +204,14 @@ def build_run_matrix(
                     ),
                 )
     return _filter_specs(specs, encoder)
+
+
+# ── Run execution and resume ─────────────────────────────────────────────────
+#
+# Baselines run in parallel (thread pool, max 2 workers); encoder fine-tunes
+# run sequentially to avoid GPU contention.  Each run writes a
+# ``metrics.json`` sentinel so resume is per-spec, not per-matrix.  The
+# orchestrator calls this after the run matrix has been enumerated.
 
 
 def execute_run_matrix(
@@ -285,6 +325,13 @@ def append_result_row(path: Path, row: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(_jsonable(dict(row)), sort_keys=True) + "\n")
+
+
+# ── Model selection report ───────────────────────────────────────────────────
+#
+# Aggregates per-cell metrics across seeds, computes mean ± SD and 95% CI,
+# and applies the tie-to-simpler rule.  The recommended cell is written to
+# ``selection_report.json`` and drives the final-seed refit.
 
 
 def write_selection_report(

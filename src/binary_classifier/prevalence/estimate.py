@@ -1,4 +1,110 @@
-"""Stage 09 prevalence estimation entrypoint."""
+"""Stage 09 prevalence estimation entrypoint.
+
+This module implements the **population-prevalence estimation** stage of the
+binary-classifier pipeline.  It consumes three upstream artifacts:
+
+* ``predictions_parquet`` (stage 07) -- calibrated probabilities and rule labels
+  for the full scored corpus, split into HIGH/MEDIUM and LOW quality tiers.
+* ``anchor_oof_scores`` + ``anchor_manifest`` (stage 06/08) -- human labels and
+  out-of-fold calibrated probabilities for the audit/anchor sample, joined by
+  ``EIN2``.
+* ``rule_validation`` (stage 07) -- sensitivity and specificity estimates for the
+  deterministic rule layer applied to LOW-quality rows.
+
+Methodology
+-----------
+
+The prevalence estimand is the population share of the positive class (religious
+missions) over the full scored corpus.  Because the pipeline splits rows into
+HIGH+MEDIUM (HM) and LOW tiers, the final estimate is a **composite** of two
+stratum-specific estimates weighted by fixed corpus shares.
+
+HIGH+MEDIUM tier
+    We use **Prediction-Powered Inference** (PPI; Angelopoulos et al., 2023,
+    https://doi.org/10.1126/science.adi6001) with a small gold-label audit
+    sample and calibrated classifier probabilities on the unlabeled population.
+    PPI treats the classifier as a proxy and corrects the population mean using
+    the labeled residual, yielding valid confidence intervals without assuming the
+    model is perfectly calibrated.  Design weights (inverse sampling probabilities)
+    can be incorporated to account for the non-uniform sampling of the anchor
+    (Horvitz & Thompson, 1952, https://doi.org/10.1080/01621459.1952.10483446).
+    The PPI mean estimator is algebraically equivalent to the classical
+    survey-sampling difference estimator (Cassel et al., 1976), and PPI++
+    corresponds to the generalized regression (GREG) estimator (Mozer, 2026,
+    arXiv:2603.19160).
+
+LOW tier
+    LOW-quality rows lack reliable classifier scores, so they are labeled by a
+    deterministic rule layer.  The observed rule-label prevalence is corrected
+    for misclassification using the **Rogan--Gladen** adjustment
+    (Rogan & Gladen, 1978, https://doi.org/10.1093/oxfordjournals.aje.a112510)
+    with sensitivity and specificity estimated on the anchor subset.
+    When the rule validation is degenerate (e.g. zero-denominator), the module
+    falls back to the uncorrected observed rate.
+
+Composite
+    The stratum estimates are recombined with fixed corpus shares and their
+    variances are propagated (Forman, 2008,
+    https://doi.org/10.1007/s10618-008-0097-y).
+
+Cross-checks
+    EMQ (Saerens et al., 2002, https://doi.org/10.1162/089976602753284446) and
+    KDEy (Moreo et al., 2021 via QuaPy) are run as sensitivity checks on the HM
+    tier only.  They are reported but do not override the primary PPI estimate.
+
+NTEE breakdown
+    When enabled, the same two-stage estimator is applied independently to each
+    NTEE major group.  Small groups are suppressed and fall back to an EMQ
+    estimate without confidence intervals.
+
+Prevalence estimation from text classifiers is a well-studied problem in
+computational social science.  Hopkins & King (2010,
+https://doi.org/10.1111/j.1540-5907.2009.00428.x) showed that estimating
+aggregate proportions (prevalence) is a distinct task from document-level
+classification, and that direct estimation can outperform classify-and-count.
+Keith & O'Connor (2018, https://aclanthology.org/D18-1487/) introduced
+uncertainty-aware generative models for document-level prevalence inference.
+Gentzkow, Kelly & Taddy (2019, https://doi.org/10.1257/jel.20181020) provide the
+applied-economics text-as-data framework within which this pipeline sits.
+Meyer & Mittag (2017, https://doi.org/10.1016/j.jeconom.2017.06.012) formalize
+the econometric consequences of misclassification in binary choice models.
+
+References
+----------
+
+* Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T.
+  (2023). Prediction-Powered Inference. *Science*.
+  https://doi.org/10.1126/science.adi6001
+* Hopkins, D. J., & King, G. (2010). A Method of Automated Nonparametric
+  Content Analysis for Social Science. *American Journal of Political Science*.
+  https://doi.org/10.1111/j.1540-5907.2009.00428.x
+* Keith, K., & O'Connor, B. (2018). Uncertainty-Aware Generative Models for
+  Inferring Document Class Prevalence. *EMNLP*.
+  https://aclanthology.org/D18-1487/
+* Gentzkow, M., Kelly, B., & Taddy, M. (2019). Text as Data. *Journal of
+  Economic Literature*. https://doi.org/10.1257/jel.20181020
+* Meyer, B. D., & Mittag, N. (2017). Misclassification in Binary Choice Models.
+  *Journal of Econometrics*. https://doi.org/10.1016/j.jeconom.2017.06.012
+* Horvitz, D. G., & Thompson, D. J. (1952). A Generalization of Sampling
+  Without Replacement from a Finite Universe. *Journal of the American
+  Statistical Association*, 47(260), 663--685.
+  https://doi.org/10.1080/01621459.1952.10483446
+* Mozer, R. (2026). PPI is the Difference Estimator: Recognizing the Survey
+  Sampling Roots of Prediction-Powered Inference. arXiv:2603.19160.
+  https://doi.org/10.48550/arXiv.2603.19160
+* Rogan, W. J., & Gladen, B. (1978). Estimating prevalence from the results of
+  a screening test. *American Journal of Epidemiology*, 107(1), 71--76.
+  https://doi.org/10.1093/oxfordjournals.aje.a112510
+* Forman, G. (2008). Quantifying Counts and Costs via Classification.
+  *Data Mining and Knowledge Discovery*, 17(2), 221--252.
+  https://doi.org/10.1007/s10618-008-0097-y
+* Saerens, M., Latinne, P., & Decaestecker, C. (2002). Adjusting the Outputs of
+  a Classifier to New a Priori Probabilities: A Simple Procedure.
+  *Neural Computation*, 14(1), 21--41.
+  https://doi.org/10.1162/089976602753284446
+* Moreo, A., Esuli, A., & Sebastiani, F. (2021). QuaPy: A Python-based open
+  source framework for quantification. *ACM SIGIR*.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +136,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Tier definitions and artifact schema
+# ------------------------------------
+# These constants define the columns expected in upstream stage-07/08 artifacts
+# and the quality tiers used to split the corpus.  HIGH and MEDIUM rows are
+# scored by the classifier; LOW rows are labeled by a deterministic rule layer.
+# The split is pre-determined in stage 01 (Q >= 3.0 for HM, Q < 3.0 for LOW).
 _HM_TIERS = {"HIGH", "MEDIUM"}
 _LOW_TIER = "LOW"
 _PREDICTION_COLUMNS = {
@@ -50,8 +162,25 @@ _ANCHOR_MANIFEST_COLUMNS = {"EIN2", "tier", "ntee_major_group", "sample_prob"}
 _MISSING = object()
 
 
+# ---------------------------------------------------------------------------
+# Prevalence result containers
+# ---------------------------------------------------------------------------
+# Small frozen dataclasses hold point estimates, variances, and confidence
+# bounds so that downstream report generation is type-safe and immutable.
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class _RuleMetric:
+    """A rule-metric point estimate with its variance and confidence bounds.
+
+    Attributes:
+        value: Point estimate (e.g. sensitivity or specificity).
+        variance: Delta-method or Wald variance.
+        ci_lower: Lower bound of the confidence interval.
+        ci_upper: Upper bound of the confidence interval.
+    """
+
     value: float
     variance: float
     ci_lower: float
@@ -70,6 +199,15 @@ def _assert_not_none(x: T | None, name: str = "") -> T:
 
 @dataclass(frozen=True)
 class _PrevalenceEstimate:
+    """A prevalence point estimate with its variance and confidence bounds.
+
+    Attributes:
+        estimate: Point estimate clipped to [0, 1].
+        variance: Non-negative variance.
+        ci_lower: Lower bound of the confidence interval, clipped to [0, 1].
+        ci_upper: Upper bound of the confidence interval, clipped to [0, 1].
+    """
+
     estimate: float
     variance: float
     ci_lower: float
@@ -83,6 +221,20 @@ class _PrevalenceEstimate:
             "ci_lower": self.ci_lower,
             "ci_upper": self.ci_upper,
         }
+
+
+# ---------------------------------------------------------------------------
+# Stage 09 entrypoint
+# ---------------------------------------------------------------------------
+# run_prevalence orchestrates the full prevalence estimation pipeline:
+# 1. Load and validate upstream artifacts.
+# 2. Compute HM prevalence via PPI (primary) and design-weighted PPI.
+# 3. Compute LOW prevalence via Rogan--Gladen or uncorrected observed rate.
+# 4. Recombine stratum estimates with fixed corpus shares.
+# 5. Run cross-checks (EMQ, KDEy) on the HM tier.
+# 6. Break down by NTEE major group.
+# 7. Write the JSON report and the per-NTEE CSV.
+# ---------------------------------------------------------------------------
 
 
 def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None:
@@ -121,12 +273,18 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
         len(anchor),
     )
 
+    # HM prevalence is estimated with PPI (Angelopoulos et al., 2023).
+    # Both unweighted and weighted (inverse-probability) variants are produced;
+    # the config selects which one is primary.
     hm = _estimate_hm(anchor_hm, hm_predictions, alpha=alpha, z_value=z_value)
     hm_primary_key = (
         "weighted_ppi" if cfg.prevalence.use_design_weights else "unweighted_ppi"
     )
     hm_primary = hm[hm_primary_key]
 
+    # LOW prevalence uses the Rogan--Gladen correction when sensitivity and
+    # specificity are available from stage-07 rule validation; otherwise it
+    # falls back to the uncorrected observed rule-label rate.
     low = _estimate_low(
         low_predictions,
         rule_validation,
@@ -150,6 +308,8 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
         z_value,
     )
 
+    # Quantification cross-checks (EMQ, KDEy) are run on the HM tier only.
+    # They are reported for diagnostic purposes but never override the PPI primary.
     cross_checks = _run_cross_checks(
         cfg.prevalence.cross_checks,
         anchor_hm,
@@ -186,6 +346,16 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
     )
     _write_json(registry.prevalence_report, report)
     logger.info("Wrote prevalence report to %s", registry.prevalence_report)
+
+
+# ---------------------------------------------------------------------------
+# Input loading and validation
+# ---------------------------------------------------------------------------
+# _load_inputs reads the four upstream artifacts, validates schemas, joins
+# anchor_oof_scores to anchor_manifest by EIN2, and normalizes tiers.
+# Any schema mismatch or duplicate EIN2 raises ValueError so that estimation
+# never runs on malformed data.
+# ---------------------------------------------------------------------------
 
 
 def _load_inputs(
@@ -230,6 +400,17 @@ def _load_inputs(
     if predictions.empty:
         raise ValueError("predictions_parquet must contain at least one row")
     return predictions, anchor, rule_validation
+
+
+# ---------------------------------------------------------------------------
+# HIGH+MEDIUM prevalence estimation (PPI)
+# ---------------------------------------------------------------------------
+# The HM tier contains rows with reliable classifier probabilities.  We apply
+# Prediction-Powered Inference (Angelopoulos et al., 2023) to the labeled
+# anchor (human labels + out-of-fold calibrated probabilities) and the unlabeled
+# corpus (calibrated probabilities only).  Both unweighted and design-weighted
+# PPI estimates are produced; the config selects the primary one.
+# ---------------------------------------------------------------------------
 
 
 def _estimate_hm(
@@ -295,8 +476,36 @@ def _estimate_hm(
     }
 
 
+# ---------------------------------------------------------------------------
+# LOW-tier prevalence estimation (Rogan--Gladen)
+# ---------------------------------------------------------------------------
+# LOW-quality rows lack reliable classifier scores, so they are labeled by a
+# deterministic rule layer.  The observed rule-label prevalence is corrected
+# for misclassification using the Rogan--Gladen formula
+# (Rogan & Gladen, 1978, https://doi.org/10.1093/oxfordjournals.aje.a112510)
+# with sensitivity and specificity from stage-07 validation.  When the rule
+# metrics are missing or degenerate (sens + spec - 1 <= 0), the module falls
+# back to the uncorrected observed rate to avoid a division-by-zero or
+# unstable correction.
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class _LowEstimate:
+    """A LOW-tier prevalence estimate with diagnostic metadata.
+
+    Attributes:
+        estimate: Prevalence point estimate and variance/CI bundle.
+        observed_prevalence: Raw rule-label prevalence before correction.
+        observed_variance: Variance of the observed rule-label prevalence.
+        n_rule_labeled: Number of LOW rows used.
+        sensitivity: Sensitivity metric, or None if unvalidated.
+        specificity: Specificity metric, or None if unvalidated.
+        sensitivity_band: Min/max RG estimate over sensitivity CI bounds,
+            or None if not computed.
+        corrected: Whether the Rogan--Gladen correction was applied.
+    """
+
     estimate: _PrevalenceEstimate
     observed_prevalence: float
     observed_variance: float
@@ -386,6 +595,18 @@ def _estimate_low(
     )
 
 
+# ---------------------------------------------------------------------------
+# Quantification cross-checks
+# ---------------------------------------------------------------------------
+# EMQ and KDEy are run on the HM tier as diagnostic checks.  They are not
+# used to produce the primary prevalence estimate but are recorded in the
+# JSON report for downstream review.  EMQ implements the Saerens-Latinne-
+# Decaestecker prior-shift EM loop (Saerens et al., 2002,
+# https://doi.org/10.1162/089976602753284446).  KDEy uses QuaPy's
+# KDEyML quantifier (Moreo et al., 2021).
+# ---------------------------------------------------------------------------
+
+
 def _run_cross_checks(
     requested: Iterable[str],
     anchor_hm: pd.DataFrame,
@@ -439,6 +660,16 @@ def _run_cross_checks(
         else:
             results[name] = {"status": "skipped", "reason": "unknown cross-check"}
     return results
+
+
+# ---------------------------------------------------------------------------
+# Subgroup prevalence by NTEE
+# ---------------------------------------------------------------------------
+# When enabled, the composite estimator is applied independently to each NTEE
+# major group.  Groups with fewer anchor rows than ntee_min_n are suppressed
+# and fall back to an EMQ estimate without a confidence interval.  This
+# prevents unstable PPI intervals from being reported as reliable.
+# ---------------------------------------------------------------------------
 
 
 def _prevalence_by_ntee(
@@ -528,6 +759,14 @@ def _prevalence_by_ntee(
     return pd.DataFrame(rows, columns=columns)
 
 
+# ---------------------------------------------------------------------------
+# Per-group composite estimation
+# ---------------------------------------------------------------------------
+# Re-applies the same two-stage (PPI + Rogan--Gladen) composite logic used
+# in the overall estimate to a single NTEE group.
+# ---------------------------------------------------------------------------
+
+
 def _group_composite_estimate(
     cfg: "BinaryClassifierConfig",
     group_anchor: pd.DataFrame,
@@ -568,6 +807,15 @@ def _group_composite_estimate(
         }
     )
     return _estimate_from_variance(point, variance, z_value)
+
+
+# ---------------------------------------------------------------------------
+# Suppressed NTEE fallback
+# ---------------------------------------------------------------------------
+# When an NTEE group is too small for PPI, we fall back to EMQ on the HM
+# tier and an uncorrected or Rogan--Gladen estimate on the LOW tier.  The
+# fallback is explicitly flagged as suppressed in the output CSV.
+# ---------------------------------------------------------------------------
 
 
 def _ntee_emq_fallback(
@@ -620,6 +868,15 @@ def _ntee_emq_fallback(
         return composite(estimates)[0]
     except ValueError:
         return math.nan
+
+
+# ---------------------------------------------------------------------------
+# Report generation
+# ---------------------------------------------------------------------------
+# Assembles the final JSON report from all sub-estimates, cross-checks, and
+# metadata.  The report schema is versioned so that downstream consumers can
+# detect structural changes.
+# ---------------------------------------------------------------------------
 
 
 def _report(
@@ -704,6 +961,14 @@ def _report(
     }
 
 
+# ---------------------------------------------------------------------------
+# Statistical utilities
+# ---------------------------------------------------------------------------
+# Helpers that convert between variance, confidence intervals, and point
+# estimates, always clipping to the unit interval.
+# ---------------------------------------------------------------------------
+
+
 def _estimate_from_variance(
     estimate: float, variance: float, z_value: float
 ) -> _PrevalenceEstimate:
@@ -738,6 +1003,17 @@ def _variance_from_ci(ci_lower: float, ci_upper: float, z_value: float) -> float
     return (width / (2.0 * z_value)) ** 2
 
 
+# ---------------------------------------------------------------------------
+# Rule-metric extraction
+# ---------------------------------------------------------------------------
+# _maybe_rule_metric parses the stage-07 rule-validation JSON and extracts
+# sensitivity or specificity as a _RuleMetric.  If the metric is missing,
+# null, or has a zero denominator, it returns None so that the LOW tier
+# falls back to the uncorrected observed rate rather than crashing on
+# float(None).
+# ---------------------------------------------------------------------------
+
+
 def _maybe_rule_metric(
     rule_validation: Mapping[str, Any],
     name: str,
@@ -747,7 +1023,7 @@ def _maybe_rule_metric(
     """Extract a rule metric, or ``None`` when it is absent or unvalidated.
 
     Stage 07 writes ``value: null`` (with null CI bounds) for a rule metric
-    whose denominator is zero — i.e. the anchor sample contains LOW rows but the
+    whose denominator is zero -- i.e. the anchor sample contains LOW rows but the
     rule layer covered none of them. Returning ``None`` here lets the LOW
     prevalence path fall back to the uncorrected observed rate instead of
     crashing on ``float(None)``.
@@ -819,6 +1095,15 @@ def _ci_bounds(metric: Mapping[str, Any], value: float) -> tuple[float, float]:
     return lower_value, upper_value
 
 
+# ---------------------------------------------------------------------------
+# Sensitivity band computation
+# ---------------------------------------------------------------------------
+# Propagates the Wilson confidence intervals for sensitivity and specificity
+# through the Rogan--Gladen formula to produce a plausible range for the
+# corrected LOW prevalence.  This is reported as a diagnostic sensitivity band.
+# ---------------------------------------------------------------------------
+
+
 def _low_sensitivity_band(
     p_obs: float,
     sensitivity: _RuleMetric,
@@ -836,6 +1121,15 @@ def _low_sensitivity_band(
     return {"lower": min(estimates), "upper": max(estimates)}
 
 
+# ---------------------------------------------------------------------------
+# Posterior matrix construction
+# ---------------------------------------------------------------------------
+# Converts a Series of calibrated probabilities into a (n, 2) posterior matrix
+# required by the EMQ and KDEy quantifiers: column 0 is P(negative), column 1
+# is P(positive).  Each row sums to 1.
+# ---------------------------------------------------------------------------
+
+
 def _posterior_matrix(probabilities: Iterable[Any]) -> list[list[float]]:
     probs = pd.to_numeric(pd.Series(list(probabilities)), errors="coerce")
     if probs.isna().any():
@@ -844,12 +1138,22 @@ def _posterior_matrix(probabilities: Iterable[Any]) -> list[list[float]]:
     return [[1.0 - p, p] for p in values]
 
 
+# ---------------------------------------------------------------------------
+# Tier filtering
+# ---------------------------------------------------------------------------
+
+
 def _high_medium(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.loc[frame["tier"].astype(str).str.upper().isin(_HM_TIERS)].copy()
 
 
 def _low(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.loc[frame["tier"].astype(str).str.upper() == _LOW_TIER].copy()
+
+
+# ---------------------------------------------------------------------------
+# Input validation helpers
+# ---------------------------------------------------------------------------
 
 
 def _require_file(path: "Path", name: str) -> None:
@@ -908,6 +1212,11 @@ def _rule_metric_dict(metric: _RuleMetric | None) -> dict[str, float] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Output serialization
+# ---------------------------------------------------------------------------
+
+
 def _write_json(path: "Path", payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n")
@@ -926,6 +1235,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, float):
         return None if math.isnan(value) else value
     return value
+
+
+# ---------------------------------------------------------------------------
+# Misc utilities
+# ---------------------------------------------------------------------------
 
 
 def _first_present(

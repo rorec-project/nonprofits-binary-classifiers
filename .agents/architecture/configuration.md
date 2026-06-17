@@ -46,7 +46,7 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 
 ### `aggregation`
 - `method` — Production Stage 04 aggregation method. This is intentionally majority-only.
-- `comparison_arms` — Optional Dawid-Skene/CROWDLAB arms for Stage 11 sensitivity diagnostics only; they are not production continuation methods.
+- `comparison_arms` — Optional Dawid-Skene/CROWDLAB arms for Stage 11 sensitivity diagnostics only; they are not production continuation methods. These require the `diagnostics` optional extra (`crowd-kit`, `cleanlab`).
 
 ## Retasking (new classification task)
 
@@ -66,27 +66,29 @@ training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
 - **Stage 05 — anchor sample:** add a representative anchor sample over the full
   frame, including LOW-quality rows, so population prevalence can be estimated
   without treating the HIGH+MEDIUM silver/gold frame as representative.
-- **Stage 06 — training:** train on the full silver pool by default, record only
-  a `{25%, 50%, 100%}` one-seed documentation curve, use soft vote-share targets
-  by default with hard majority vote as the check, and compare DeBERTa-v3-base
-  against ModernBERT-base plus TF-IDF/MiniLM baselines. Label smoothing,
-  focal/resampling, and confidence-weighted loss are intentionally skipped.
+- **Stage 06 — training:** train on the full silver pool by default
+  (`curve_fractions: [1.0]`), use soft vote-share targets by default with hard
+  majority vote as the check, and compare DeBERTa-v3-base against ModernBERT-base
+  plus TF-IDF/MiniLM baselines. Default arms are `[hard, class_weighted]`; `pruned`
+  is opt-in. Label smoothing, focal/resampling, and confidence-weighted loss are
+  intentionally skipped.
 - **Stage 07 — evaluation:** keep minority-class precision/recall/F1, MCC,
-  balanced accuracy, PR-AUC, bootstrap intervals, and calibration reporting,
-  then add decision-curve / net-benefit analysis where useful.
+  balanced accuracy, PR-AUC, bootstrap intervals, and calibration reporting.
 - **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows,
   route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist
   model-version metadata with positive-class probabilities.
 - **Stage 09 — prevalence:** estimate population share over all nonprofits with
   PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
-  arXiv:2311.01453), with a vendored SLD/EMQ implementation and KDEy via QuaPy
-  as cross-checks plus per-NTEE-stratum calibration.
+  arXiv:2311.01453). Cross-checks default to `[emq]` (vendored SLD/EMQ); KDEy
+  via QuaPy is opt-in under the `quant` extra. Per-NTEE-stratum calibration is
+  applied where prior-shift assumptions are fragile.
 - **Stage 10 — visualization:** replace exploratory word clouds with auditable
   n-gram log-odds bars and metric/calibration plots.
 - **Stage 11 — aggregation comparison:** script-only sensitivity diagnostics that compare
-   majority vote with configured Dawid-Skene and CROWDLAB arms on the human
-   validation set. Stage 04 production labels remain majority-only; Stage 11
-   does not continue production or activate a replacement aggregation method.
+   majority vote with configured Dawid-Skene and CROWDLAB arms (requires the
+   `diagnostics` extra) on the human validation set. Stage 04 production labels
+   remain majority-only; Stage 11 does not continue production or activate a
+   replacement aggregation method.
 
 ## Related
 

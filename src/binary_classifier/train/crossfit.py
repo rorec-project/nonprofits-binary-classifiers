@@ -1,4 +1,13 @@
-"""Out-of-fold prediction probabilities for stage 06 training rows."""
+"""Out-of-fold prediction probabilities for stage 06 training rows.
+
+Computes stratified K-fold OOF probabilities so that the ``pruned`` training
+arm can use calibrated confidence scores rather than raw vote-share proxies.
+The injected ``finetune_fn`` follows the encoder fine-tune call shape and
+returns a predictor with ``predict_proba(frame) -> (n, 2)``.  Stratification
+preserves the rare-positive class balance in each fold (standard practice in
+imbalanced binary text classification; see scikit-learn ``StratifiedKFold``
+docs and the imbalanced-evaluation synthesis).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +28,14 @@ logger = logging.getLogger(__name__)
 
 _OOF_COLUMNS = ["EIN2", "fold", "p0", "p1"]
 _REQUIRED_FRAME_COLUMNS = {"EIN2", "text", "hard_label"}
+
+
+# ── Stratified K-fold OOF scorer ─────────────────────────────────────────────
+#
+# Trains K models on stratified folds, scores each held-out fold, and writes
+# ``registry.oof_pred_probs`` with per-row ``p0, p1``.  The file is consumed by
+# the ``pruned`` training arm and by stage-11 CROWDLAB comparison.  Resume is
+# per-fold via Parquet shards so the full matrix never re-runs a completed fold.
 
 
 def compute_oof_pred_probs(

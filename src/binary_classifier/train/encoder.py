@@ -1,4 +1,29 @@
-"""Encoder fine-tuning utilities for stage 06 training runs."""
+"""Encoder fine-tuning utilities for stage 06 training runs.
+
+Fine-tunes task-specific encoder arms (e.g. DeBERTa-v3, ModernBERT) on silver
+labels produced by the LLM weak-supervision ensemble.  The design follows the
+short-text encoder paradigm: pre-trained Transformer → classification head →
+soft-label or hard-label cross-entropy with optional class weighting (He et
+al. 2021/2023, DeBERTa-v3, arXiv:2006.03654; Warner et al. 2024, ModernBERT,
+arXiv:2412.13663).  A MiniLM + logistic-regression baseline is provided via
+sentence-transformers (Reimers & Gurevych 2019,
+https://doi.org/10.18653/v1/D19-1410; Wang et al. 2020, MiniLM).  Noisy-label
+robustness is handled through soft targets and early stopping rather than
+hand-rolled loss reweighting (Zhu et al. 2022,
+https://doi.org/10.18653/v1/2022.insights-1.8; Wang et al. 2023).
+
+References:
+    - He et al. (2021), "DeBERTa: Decoding-enhanced BERT with Disentangled
+      Attention", ICLR. arXiv:2006.03654
+    - Warner et al. (2024), "ModernBERT: The Long-Pretraining、Short-Context
+      Revolution", arXiv:2412.13663
+    - Reimers & Gurevych (2019), "Sentence-BERT: Sentence Embeddings using
+      Siamese BERT-Networks", EMNLP-IJCNLP.
+      https://doi.org/10.18653/v1/D19-1410
+    - Zhu et al. (2022), "Is BERT Robust to Label Noise? A Study on Learning
+      with Noisy Labels in Text Classification", Insights.
+      https://doi.org/10.18653/v1/2022.insights-1.8
+"""
 
 from __future__ import annotations
 
@@ -98,6 +123,15 @@ def soft_ce(
         num_items_in_batch,
         class_weights=None,
     )
+
+
+# ── Main fine-tune entrypoint ────────────────────────────────────────────────
+#
+# Trains a single encoder arm, evaluates on dev + human validation, and returns
+# a metrics row conforming to the stage-06 ``results.jsonl`` schema.  Soft-label
+# targets (vote-share ``p_pos``) are the default because they preserve
+# annotator-confidence information and are more robust to label noise than
+# hard thresholds (Zhu et al. 2022, https://doi.org/10.18653/v1/2022.insights-1.8).
 
 
 def finetune(
@@ -365,6 +399,13 @@ def finetune_predictor(
     )
     trainer.train()
     return _FoldPredictor(trainer, tokenizer, encoder.max_length)
+
+
+# ── Checkpoint-selection metrics ─────────────────────────────────────────────
+#
+# PR-AUC is the primary metric because the task is rare-positive; MCC and
+# minority-F1 guard against prevalence-naïve optimisation.  This matches the
+# imbalanced-evaluation synthesis (see ``20260606-tech-imbalanced-text-evaluation``).
 
 
 def compute_metrics(eval_pred: transformers.EvalPrediction) -> dict[str, float]:

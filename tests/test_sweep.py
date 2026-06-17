@@ -22,8 +22,8 @@ def test_default_run_matrix_counts_and_final_resume(tiny_registry) -> None:
     specs = sweep.build_run_matrix(cfg, final=True, recommendation=recommendation)
 
     assert sum(spec.phase == "baseline" for spec in specs) == 2
-    assert sum(spec.phase == "curve" for spec in specs) == 6
-    assert sum(spec.phase == "sweep" for spec in specs) == 15
+    assert sum(spec.phase == "curve" for spec in specs) == 2
+    assert sum(spec.phase == "sweep" for spec in specs) == 12
     final_specs = [spec for spec in specs if spec.phase == "final"]
     assert len(final_specs) == 5
 

@@ -1,4 +1,39 @@
-"""Calibration utilities for anchor-set model probabilities."""
+"""Post-hoc probability calibration for anchor-set model scores.
+
+This module implements post-hoc calibration methods that transform raw
+positive-class probabilities into calibrated probabilities suitable for
+population-prevalence estimation (PPI++).  It is consumed by the stage-07
+evaluation and prevalence pipelines.
+
+Data provenance
+    Calibrators are fit on human-coded anchor labels (``anchor_to_code.csv``)
+    and applied to silver-label probabilities produced by the selected
+    production slate.
+
+Methodology
+    We compare Platt (logistic) scaling and temperature scaling on a
+    stratified cross-fit, selecting the winner by mean out-of-fold Brier score
+    with log-loss as tie-breaker.  Platt scaling is preferred as the default
+    because its intercept can absorb sample-enrichment or prior-shift offsets,
+    whereas temperature scaling is deliberately intercept-free and serves as a
+    comparison method.  Isotonic regression is excluded from the default
+    comparison because it can overfit small calibration sets (Zadrozny &
+    Elkan, 2002).
+
+Key citations
+    * Platt (1999) — Probabilistic outputs for SVMs.
+    * Zadrozny & Elkan (2002) — Transforming classifier scores into accurate
+      multiclass probability estimates.
+    * Guo et al. (2017) — On calibration of modern neural networks.
+    * Desai & Durrett (2020) — Calibration of pre-trained transformers.
+    * Silva Filho et al. (2023) — Classifier calibration: a survey.
+
+DOIs
+    * Zadrozny & Elkan (2002): https://doi.org/10.1145/775047.775151
+    * Guo et al. (2017): https://proceedings.mlr.press/v70/guo17a.html
+    * Desai & Durrett (2020): https://aclanthology.org/2020.emnlp-main.21/
+    * Silva Filho et al. (2023): https://doi.org/10.1007/s10994-023-06336-7
+"""
 
 from __future__ import annotations
 
@@ -21,11 +56,27 @@ _EPS = 1e-12
 _VALID_METHODS: set[str] = {"platt", "temperature"}
 
 
+# ---------------------------------------------------------------------------
+# Post-hoc calibration fitting
+# ---------------------------------------------------------------------------
+# We fit two parametric families on the logit of raw probabilities.  Platt
+# scaling (logistic regression on a single feature) has both slope and
+# intercept; the intercept is the reason it is the default choice under
+# sample-enrichment prior shifts (Platt, 1999; Zadrozny & Elkan, 2002).
+# Temperature scaling is a scalar divisor with no intercept, so it can only
+# stretch or compress the logit scale and cannot correct a prior shift
+# (Guo et al., 2017; Desai & Durrett, 2020).  It is included as a comparison
+# method in the cross-fit bake-off.
+# ---------------------------------------------------------------------------
+
+
 def fit_platt(scores: ScoreInput, labels: LabelInput) -> CalibrationParams:
     """Fit Platt scaling on the logit of input probabilities.
 
-    The fitted model is ``sigmoid(a * logit(score) + b)``. The intercept is the
-    parameter that can absorb sample-enrichment or prior-shift offsets.
+    The fitted model is ``sigmoid(a * logit(score) + b)``. The intercept ``b``
+    is the parameter that can absorb sample-enrichment or prior-shift offsets,
+    which is why Platt scaling is the default calibrator in this pipeline
+    (Platt, 1999; Zadrozny & Elkan, 2002).
 
     Args:
         scores: Raw positive-class probabilities.
@@ -54,8 +105,9 @@ def fit_temperature(scores: ScoreInput, labels: LabelInput) -> CalibrationParams
     """Fit scalar temperature scaling on the logit of input probabilities.
 
     The fitted model is ``sigmoid(logit(score) / T)``. It deliberately has no
-    intercept, so it is a comparison method rather than the default choice under
-    anchor-set prior shifts.
+    intercept, so it cannot correct a prior shift and is treated as a comparison
+    method rather than the default choice under anchor-set prior shifts
+    (Guo et al., 2017).
 
     Args:
         scores: Raw positive-class probabilities.
@@ -124,6 +176,18 @@ def apply_calibration(
     return calibrated.astype(float).tolist()
 
 
+# ---------------------------------------------------------------------------
+# Cross-fit model selection
+# ---------------------------------------------------------------------------
+# We stratified-cross-fit each candidate calibrator so that every row is
+# calibrated by parameters fit on *other* rows.  The winner is selected by
+# mean out-of-fold Brier score (log-loss as tie-breaker) and then refit on
+# the full anchor set for deployment.  Isotonic regression is omitted from
+# the default slate because it can overfit small calibration sets (Zadrozny
+# & Elkan, 2002; Silva Filho et al., 2023).
+# ---------------------------------------------------------------------------
+
+
 def crossfit_calibrate(
     scores: ScoreInput,
     labels: LabelInput,
@@ -136,9 +200,16 @@ def crossfit_calibrate(
     """Cross-fit calibration methods and select a deployed winner.
 
     For each method, every row is predicted only by a calibrator fit on rows from
-    other folds. The selected winner is the method with the lowest mean fold OOF
-    Brier score, with mean fold OOF log-loss as the tiebreaker. The selected
-    method is then refit on all anchor rows for deployment parameters.
+    other folds (out-of-fold, OOF). The selected winner is the method with the
+    lowest mean fold OOF Brier score, with mean fold OOF log-loss as the
+    tiebreaker. The selected method is then refit on all anchor rows for
+    deployment parameters.
+
+    Isotonic regression is deliberately omitted from the default comparison set
+    because it can overfit small calibration sets and produce non-monotonic
+    artifacts (Zadrozny & Elkan, 2002; Silva Filho et al., 2023).  If the anchor
+    set grows large enough, isotonic can be added as an additional candidate via
+    ``methods``.
 
     Args:
         scores: Raw positive-class probabilities for anchor rows.
@@ -232,6 +303,19 @@ def crossfit_calibrate(
         "ece_bins": int(ece_bins),
     }
     return oof_by_method[winner], report
+
+
+# ---------------------------------------------------------------------------
+# Calibration metrics
+# ---------------------------------------------------------------------------
+# Proper scoring rules (Brier, log-loss) and reliability diagnostics (ECE,
+# reliability curve) are used to compare calibrators and to validate the
+# deployed model.  We prefer Brier score for winner selection because it is
+# a proper scoring rule that is sensitive to both calibration and sharpness
+# (Silva Filho et al., 2023).  ECE is reported for visualization but is not
+# used for selection because equal-width binning can be unstable with small
+# samples.
+# ---------------------------------------------------------------------------
 
 
 def compute_brier(labels: LabelInput, probabilities: ScoreInput) -> float:
