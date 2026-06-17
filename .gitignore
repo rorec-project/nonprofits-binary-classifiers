@@ -24,13 +24,6 @@ mise.*.toml
 !.agents/notebooks
 !.agents/plans
 !.agents/stubs
-!.agents/ralph
-# Ralph runner: keep runner + state journals + DEVIATIONS tracked; transcripts and
-# runtime status files are ephemeral.
-.agents/ralph/logs/
-.agents/ralph/state/*.status
-!.opencode/agents/ralph-implementer.md
-!.opencode/agents/ralph-orchestrator.md
 CLAUDE.md
 
 # Generated on UCloud at the project drive root (repo root).
