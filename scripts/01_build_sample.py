@@ -17,6 +17,7 @@ import pandas as pd
 
 from binary_classifier.config import load_config
 from binary_classifier.data.sample import build_sample
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Orchestrate sample construction and run assertions."""
+    setup_logging(stem="01_build_sample")
+
     args = _parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)

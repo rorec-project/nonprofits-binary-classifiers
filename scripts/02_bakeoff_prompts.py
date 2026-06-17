@@ -4,11 +4,15 @@ Calls :func:`binary_classifier.annotate.bakeoff_prompts.run_bakeoff`.
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 from binary_classifier.annotate.bakeoff_prompts import run_bakeoff
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -63,9 +67,12 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    setup_logging(stem="02_bakeoff_prompts")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)
+    logger.info("[02] Running prompt bake-off...")
     run_bakeoff(
         cfg,
         registry,
@@ -75,6 +82,7 @@ def main() -> None:
         store_path=args.store_path,
         limit=args.limit,
     )
+    logger.info("[02] Done.")
 
 
 if __name__ == "__main__":

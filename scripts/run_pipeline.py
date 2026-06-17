@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.qc.preflight import validate_gates
 
@@ -125,22 +126,19 @@ def _run_stage_06(cfg, registry) -> None:
     G3) remain human steps before stage 07.
     """
     module = importlib.import_module("binary_classifier.train.trainer")
-    print("Running stage 06 (selection sweep) ...")
+    logging.info("Running stage 06 (selection sweep) ...")
     module.run_training(cfg, registry)
-    print("Running stage 06 (final-seed refit) ...")
+    logging.info("Running stage 06 (final-seed refit) ...")
     module.run_training(cfg, registry, sweep=False, final=True)
 
 
 def _report_gate(title: str, problems: list[str], hint: str | None = None) -> None:
-    """Print a gate failure to stderr."""
-    print(
-        f"\n✗ Gate {title} failed — stopping before any further work:",
-        file=sys.stderr,
-    )
+    """Log a gate failure."""
+    logging.error("Gate %s failed — stopping before any further work:", title)
     for p in problems:
-        print(f"  - {p}", file=sys.stderr)
+        logging.error("  - %s", p)
     if hint:
-        print(f"\n  Next: {hint}", file=sys.stderr)
+        logging.error("Next: %s", hint)
 
 
 def _gate_problems(cfg, registry, stages: set[str], prefix: str) -> list[str]:
@@ -167,7 +165,7 @@ def run_pipeline(
     """
     # Stage 01 — produces manifests + the human coding template.
     if "01" in requested:
-        print("Running stage 01 ...")
+        logging.info("Running stage 01 ...")
         _run_stage("01", cfg, registry, annotate_limit, infer_limit, force)
 
     # Gate G1 (labels) — before any model stage. Only the label gates are
@@ -189,7 +187,7 @@ def run_pipeline(
 
     # Stage 02 — bake-off; writes the *proposed* (unconfirmed) slate.
     if "02" in requested:
-        print("Running stage 02 ...")
+        logging.info("Running stage 02 ...")
         _run_stage("02", cfg, registry, annotate_limit, infer_limit, force)
 
     # Gate G2 (confirmed slate) — after 02, before 03. No annotation work has
@@ -211,7 +209,7 @@ def run_pipeline(
     # Stages 03–05 — annotation, QC freeze, and anchor sampling.
     for stage_id in ("03", "04", "05"):
         if stage_id in requested:
-            print(f"Running stage {stage_id} ...")
+            logging.info("Running stage %s ...", stage_id)
             _run_stage(stage_id, cfg, registry, annotate_limit, infer_limit, force)
 
     # Stage 06 — two-phase: the selection sweep writes the recommendation, then
@@ -251,17 +249,17 @@ def run_pipeline(
             )
             sys.exit(_GATE_EXIT)
 
-        print("Running stage 07 ...")
+        logging.info("Running stage 07 ...")
         _run_stage("07", cfg, registry, annotate_limit, infer_limit, force)
 
     # Stage 08 — full-corpus inference and monitor scoring; no human gate added.
     if "08" in requested:
-        print("Running stage 08 ...")
+        logging.info("Running stage 08 ...")
         _run_stage("08", cfg, registry, annotate_limit, infer_limit, force)
 
     # Stage 09 — prevalence estimates from frozen evaluation and full predictions.
     if "09" in requested:
-        print("Running stage 09 ...")
+        logging.info("Running stage 09 ...")
         _run_stage("09", cfg, registry, annotate_limit, infer_limit, force)
 
 
@@ -270,7 +268,8 @@ def run_pipeline(
 
 def main() -> None:
     """Run the requested pipeline stages in order."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging(stem="pipeline")
+
     args = _parse_args()
 
     cfg = load_config(args.config)

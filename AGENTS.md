@@ -12,6 +12,7 @@ Act as a **pragmatic ML research engineer**. You care about reproducibility (see
 - **Python 3.13 required** (`.python-version` pins it).
 - **Lint / format / type-check:** `uv run ruff check .`, `uv run ruff format .`, `uv run ty check`.
 - **`OPENAI_API_KEY`** must be set in a `.env` file (needed for stages 02–03).
+- **Logging** — each script writes to both stdout and a timestamped file under `logs/` via `setup_logging(stem="<script_name>")` from `src/binary_classifier/log_utils.py`. The `logs/` directory is gitignored. Check `logs/*.log` when debugging pipeline runs.
 
 ## Architecture docs
 

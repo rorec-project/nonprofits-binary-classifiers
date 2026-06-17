@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import logging
 from pathlib import Path
 
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.train.trainer import run_training
 
@@ -36,7 +36,10 @@ def _parse_args() -> argparse.Namespace:
         help="Run final seeds for the current selection-report winner.",
     )
     parser.add_argument(
-        "--encoder", type=str, default=None, help="Limit to encoder ID."
+        "--encoder",
+        type=str,
+        default=None,
+        help="Limit to encoder ID.",
     )
     parser.add_argument(
         "--subset",
@@ -62,7 +65,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Load config, apply CLI overrides, and call the package entrypoint."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging(stem="06_train")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)

@@ -4,11 +4,15 @@ Calls :func:`binary_classifier.qc.agreement.run_quality_check`.
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.qc.agreement import run_quality_check
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,10 +56,12 @@ def main() -> None:
     the same majority-vote freeze gate and fabricated-evidence abstention
     behavior.
     """
+    setup_logging(stem="04_quality_check")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)
-
+    logger.info("[04] Running quality check...")
     run_quality_check(
         cfg,
         registry,
@@ -63,6 +69,7 @@ def main() -> None:
         human_validation_path=args.human_validation,
         output_path=args.output,
     )
+    logger.info("[04] Done.")
 
 
 if __name__ == "__main__":

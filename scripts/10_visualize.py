@@ -18,6 +18,7 @@ import pandas as pd
 
 from binary_classifier.config import BinaryClassifierConfig, load_config
 from binary_classifier.data.load import load_missions
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.viz import (
     documentation_curve,
@@ -468,7 +469,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Load config and render available visualization figures."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging(stem="10_visualize")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)

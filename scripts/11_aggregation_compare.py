@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import logging
 from pathlib import Path
 
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.qc.aggregation_compare import run_aggregation_compare
 
@@ -27,7 +27,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Load config and call the diagnostic aggregation-comparison entrypoint."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging(stem="11_aggregation_compare")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from binary_classifier.config import load_config
 from binary_classifier.data.anchor import build_anchor
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Run stage 05 from the configured paths."""
+    setup_logging(stem="05_build_anchor")
+
     args = _parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)

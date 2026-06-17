@@ -8,11 +8,15 @@ frozen test set untouched, and must not be used for prompt tuning.
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 from binary_classifier.annotate.run_annotation import run_annotation
 from binary_classifier.config import load_config
+from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -73,9 +77,12 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    setup_logging(stem="03_annotate")
+
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)
+    logger.info("[03] Running annotation...")
     run_annotation(
         cfg,
         registry,
@@ -86,6 +93,7 @@ def main() -> None:
         resume=not args.no_resume,
         canary_only=args.canary,
     )
+    logger.info("[03] Done.")
 
 
 if __name__ == "__main__":
