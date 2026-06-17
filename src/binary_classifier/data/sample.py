@@ -66,7 +66,7 @@ def build_silver_pool(
     strata and caps for fat strata. Within each stratum, positive missions
     (religious-lexicon hit or rescued) are enriched to approximately
     ``target_positive_share``.
-    ``inclusion_prob`` is stored at the stratum × enrichment-cell level because
+    ``inclusion_prob`` is stored at the stratum x enrichment-cell level because
     positives and negatives are sampled at different rates; downstream design
     weights must invert that cell probability rather than a stratum marginal.
 
@@ -180,13 +180,19 @@ def build_gold_set(
 ) -> pd.DataFrame:
     """Construct the configured gold set from HIGH+MEDIUM missions.
 
-    The gold set is deliberately diverse: each stratum receives a mix of
-    clear positives, clear negatives, and boundary cases (saint-named
-    secular, spiritual-not-religious, generic ministry, faith-heritage).
-    Boundary cases are heuristically flagged so that they are intentionally
-    retained for human coding.
-    ``inclusion_prob`` records the quota-cell draw rate for audit diagnostics;
-    gold boundary-quota weights are diagnostic, not for population estimation.
+    The gold set is deliberately diverse: each stratum is partitioned into
+    disjoint quota cells — boundary cases (saint-named secular,
+    spiritual-not-religious, generic ministry, faith-heritage, rescue), then
+    clear positives and clear negatives among the rest — plus a filler draw
+    that tops the stratum up to its exact target. Because the cells are a true
+    partition the realized stratum size equals its target (no de-duplication
+    loss), so the gold set contains exactly ``target_size`` rows whenever every
+    stratum holds at least its per-stratum target.
+    ``quota_cell_rate`` records the realized per-quota-cell draw rate for audit
+    diagnostics only; it is NOT a valid design weight (the filler top-up makes
+    the marginal selection probability a two-stage quantity), so it must never
+    be inverted for population estimation — that is the design-weighted anchor
+    sample's role.
 
     Args:
         df: DataFrame with columns ``EIN2``, ``mission_text``,
@@ -197,7 +203,7 @@ def build_gold_set(
             human-coding frame follows the same YAML boundary as stage 01.
 
     Returns:
-        Sampled DataFrame with columns ``tier``, ``inclusion_prob``,
+        Sampled DataFrame with columns ``tier``, ``quota_cell_rate``,
         and ``is_positive_enriched``.
 
     """
@@ -217,7 +223,11 @@ def build_gold_set(
 
     rng = np.random.default_rng(seed=seed)
 
-    # Target ~15 per stratum (26 * 15 = 390), distribute remainder
+    # Target ~15 per stratum (26 * 15 = 390), distribute remainder. Equal-ish
+    # per-stratum allocation is intentional: gold is a coverage / diagnostic set,
+    # not a population sample, so proportional or Neyman allocation would be a
+    # category error here. ``base`` + the pool-size remainder already sums to
+    # exactly ``target_size``, so no apportionment correction is needed.
     n_strata = 26
     base_per_stratum = target_size // n_strata
     remainder = target_size % n_strata
@@ -234,31 +244,48 @@ def build_gold_set(
             continue
 
         n_target = base_per_stratum + (1 if stratum in extra_strata else 0)
+        # Never ask a stratum for more rows than it physically holds.
+        n_target = min(n_target, len(stratum_df))
 
         # Diversity targets per stratum
         n_boundary = max(1, math.ceil(n_target * 0.35))
         n_clear_pos = max(1, math.floor(n_target * 0.25))
         n_clear_neg = max(1, math.floor(n_target * 0.25))
-        n_other = n_target - n_boundary - n_clear_pos - n_clear_neg
 
-        # Draw from each category. Gold's boundary-quota weights are diagnostic
-        # only, not for population estimation, because this set deliberately
+        # Partition the stratum into DISJOINT quota cells under the priority
+        # boundary > positive > negative, so no row can fall into two cells and
+        # be drawn twice. The previous design crossed two *overlapping*
+        # partitions (positive/negative x boundary/other) and de-duplicated the
+        # concatenated draws; rows selected in both an A-cell and a B-cell
+        # (lexicon-positive boundary rows, or rescue rows that are both negative
+        # and boundary) collapsed to one, so the gold set landed under
+        # ``target_size``. A true partition realizes each quota exactly.
+        # The stored ``quota_cell_rate`` is diagnostic only, not a design weight
+        # for population estimation, because this set deliberately
         # over-represents ambiguous cases for human review.
-        pos_df = stratum_df[stratum_df["is_positive_enriched"]]
-        neg_df = stratum_df[~stratum_df["is_positive_enriched"]]
         bnd_df = stratum_df[stratum_df["boundary_type"] != "none"]
-        other_df = stratum_df[stratum_df["boundary_type"] == "none"]
+        rest_df = stratum_df[stratum_df["boundary_type"] == "none"]
+        pos_df = rest_df[rest_df["is_positive_enriched"]]
+        neg_df = rest_df[~rest_df["is_positive_enriched"]]
 
-        draws: list[pd.DataFrame] = []
-        draws.append(_safe_sample_with_inclusion_prob(pos_df, n_clear_pos, rng))
-        draws.append(_safe_sample_with_inclusion_prob(neg_df, n_clear_neg, rng))
-        draws.append(_safe_sample_with_inclusion_prob(bnd_df, n_boundary, rng))
-        draws.append(_safe_sample_with_inclusion_prob(other_df, n_other, rng))
+        draws: list[pd.DataFrame] = [
+            _safe_sample_with_cell_rate(bnd_df, n_boundary, rng),
+            _safe_sample_with_cell_rate(pos_df, n_clear_pos, rng),
+            _safe_sample_with_cell_rate(neg_df, n_clear_neg, rng),
+        ]
+        selected = pd.concat(draws, ignore_index=True)
 
-        stratum_sample = pd.concat(draws, ignore_index=True).drop_duplicates(
-            subset=["EIN2"],
-            keep="first",
-        )
+        # Filler tops the stratum up to exactly ``n_target`` from the
+        # not-yet-drawn remainder (disjoint from ``selected``, so still no
+        # dedup). Any quota cell that under-filled — a thin boundary or positive
+        # cell — rolls its shortfall into the filler count here, so the realized
+        # stratum size equals ``n_target`` whenever the stratum holds that many
+        # rows (guaranteed by the ``min`` clamp above).
+        n_fill = n_target - len(selected)
+        remainder_df = stratum_df[~stratum_df["EIN2"].isin(selected["EIN2"])]
+        filler = _safe_sample_with_cell_rate(remainder_df, n_fill, rng)
+
+        stratum_sample = pd.concat([selected, filler], ignore_index=True)
         sampled_rows.append(stratum_sample)
 
     gold = pd.concat(sampled_rows, ignore_index=True)
@@ -476,12 +503,20 @@ def _write_manifest(
     split_name: str | None,
     path: Path,
 ) -> None:
-    """Write a single manifest CSV with canonical columns."""
+    """Write a single manifest CSV with canonical columns.
+
+    Silver carries ``inclusion_prob`` (a valid per-cell inclusion probability);
+    the gold family carries ``quota_cell_rate`` (a diagnostic per-quota-cell draw
+    rate, not a design weight). The column the builder produced is preserved.
+    """
+    weight_col = (
+        "inclusion_prob" if "inclusion_prob" in df.columns else "quota_cell_rate"
+    )
     cols = [
         "EIN2",
         "ntee_major_group",
         "tier",
-        "inclusion_prob",
+        weight_col,
         "is_positive_enriched",
     ]
     if split_name is None and "split" in df.columns:
@@ -651,28 +686,35 @@ def _safe_sample(df: pd.DataFrame, n: int, rng: np.random.Generator) -> pd.DataF
     return df.sample(n=n, random_state=rng)
 
 
-def _safe_sample_with_inclusion_prob(
+def _safe_sample_with_cell_rate(
     df: pd.DataFrame,
     n: int,
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    """Sample a quota cell and attach its realized inclusion probability.
+    """Sample a gold quota cell and attach its realized per-cell draw rate.
 
-    Gold uses positive, negative, boundary, and filler quota cells to stress-test
-    human coding and prompt selection. The manifest therefore needs the draw
-    rate for the cell that selected the row, not a stratum-wide marginal rate.
+    Gold uses boundary, positive, negative, and filler quota cells to stress-test
+    human coding and prompt selection. The manifest records the draw rate for the
+    cell that selected the row as ``quota_cell_rate`` — a diagnostic audit
+    quantity, NOT a design weight: the filler cell is a second-stage top-up, so
+    ``quota_cell_rate`` is not a valid marginal inclusion probability and must
+    never be inverted for population estimation (that role belongs to the
+    design-weighted anchor sample).
     """
     sample = _safe_sample(df, n, rng).copy()
-    sample["inclusion_prob"] = _cell_inclusion_prob(df, n)
+    sample["quota_cell_rate"] = _cell_inclusion_prob(df, n)
     return sample
 
 
 def _cell_inclusion_prob(df: pd.DataFrame, n_target: int) -> float:
-    """Return the realized per-cell sampling probability.
+    """Return the realized per-cell sampling rate ``min(n, |cell|) / |cell|``.
 
-    Positive enrichment and boundary quotas sample cells within a stratum at
-    different rates. Persisting that cell-level probability lets downstream
-    estimators invert the manifest value when a design weight is appropriate.
+    Silver stores this as ``inclusion_prob``: each row falls in exactly one
+    pos/neg cell drawn without replacement, so the per-cell rate is its valid
+    first-order inclusion probability and a usable Horvitz--Thompson design
+    weight. Gold stores it as ``quota_cell_rate`` (diagnostic only) because the
+    filler top-up makes the marginal selection probability a two-stage quantity
+    this per-cell rate does not capture.
     """
     if df.empty or n_target <= 0:
         return 0.0

@@ -46,7 +46,7 @@ def _human_split_frame(n_rows: int) -> pd.DataFrame:
             "mission_text": [f"mission text {i}" for i in range(n_rows)],
             "ntee_major_group": [groups[i % len(groups)] for i in range(n_rows)],
             "tier": "HIGH",
-            "inclusion_prob": 1.0,
+            "quota_cell_rate": 1.0,
             "is_positive_enriched": [i % 2 == 0 for i in range(n_rows)],
         }
     )
@@ -78,6 +78,36 @@ def _one_stratum_enrichment_frame() -> pd.DataFrame:
         for i in range(16)
     ]
     return pd.DataFrame(positive_rows + negative_rows)
+
+
+def _full_coverage_frame(per_stratum: int = 20) -> pd.DataFrame:
+    """Build a 26-stratum frame with positive, negative, and boundary rows.
+
+    Each NTEE major group gets ``per_stratum`` HIGH rows split across the three
+    disjoint gold cells (clear positive, clear negative, boundary), so
+    build_gold_set can realize every per-stratum target and the gold set lands
+    on ``target_size`` exactly. The boundary slice is sized smaller than the
+    boundary quota at gold=450 so the test also exercises the
+    shortfall-rolls-into-filler path.
+    """
+    rows: list[dict] = []
+    for group in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        for i in range(per_stratum):
+            if i < 6:
+                text = f"church worship services for families {group}{i}"
+            elif i < 12:
+                text = f"youth ministry programs for the {group}{i} community"
+            else:
+                text = f"provide arts classes for families {group}{i}"
+            rows.append(
+                {
+                    "EIN2": f"{group}-{i:03d}",
+                    "mission_text": text,
+                    "ntee_major_group": group,
+                    "Q": 5.5,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _threshold_boundary_frame() -> pd.DataFrame:
@@ -201,11 +231,19 @@ def test_silver_inclusion_prob_uses_positive_negative_cell_rates() -> None:
     assert set(silver["inclusion_prob"]) != {10 / 20}
 
 
-def test_gold_inclusion_prob_uses_quota_cell_rates() -> None:
-    """Gold weights use quota-cell rates rather than one stratum marginal."""
+def test_gold_quota_cell_rate_uses_quota_cell_rates() -> None:
+    """Gold's ``quota_cell_rate`` reflects per-cell draw rates, not a marginal.
+
+    ``target_size=52`` puts the single stratum at ``n_target=2`` so the disjoint
+    clear-positive and clear-negative cells each draw exactly one row and the
+    filler quota is zero (the fixture has no boundary rows). That isolates the
+    two cell rates with no filler-cell rows muddying the per-cell rate. The
+    column is named ``quota_cell_rate`` (diagnostic), not ``inclusion_prob``,
+    because the gold filler top-up makes it an invalid design weight.
+    """
     gold = build_gold_set(
         _one_stratum_enrichment_frame(),
-        target_size=104,
+        target_size=52,
         seed=42,
         thresholds=QThresholdsConfig(),
     )
@@ -213,14 +251,15 @@ def test_gold_inclusion_prob_uses_quota_cell_rates() -> None:
     positives = gold[gold["is_positive_enriched"]]
     negatives = gold[~gold["is_positive_enriched"]]
 
+    assert "inclusion_prob" not in gold.columns
     assert len(positives) == 1
     assert len(negatives) == 1
-    assert _single_value(positives["inclusion_prob"]) == pytest.approx(1 / 4)
-    assert _single_value(negatives["inclusion_prob"]) == pytest.approx(1 / 16)
-    assert _single_value(positives["inclusion_prob"]) != _single_value(
-        negatives["inclusion_prob"]
+    assert _single_value(positives["quota_cell_rate"]) == pytest.approx(1 / 4)
+    assert _single_value(negatives["quota_cell_rate"]) == pytest.approx(1 / 16)
+    assert _single_value(positives["quota_cell_rate"]) != _single_value(
+        negatives["quota_cell_rate"]
     )
-    assert set(gold["inclusion_prob"]) != {4 / 20}
+    assert set(gold["quota_cell_rate"]) != {4 / 20}
 
 
 def test_build_silver_pool_uses_configured_q_thresholds() -> None:
@@ -248,6 +287,26 @@ def test_build_silver_pool_uses_configured_q_thresholds() -> None:
     assert "LOWISH-ROW" in set(default_silver["EIN2"])
     assert set(custom_silver["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
     assert tiers_by_ein["HIGHISH-ROW"] == "MEDIUM"
+
+
+def test_gold_set_hits_target_size_exactly() -> None:
+    """The quota-cell partition realizes the configured gold size exactly.
+
+    The cells partition each stratum (boundary > positive > negative) and filler
+    tops up from the disjoint remainder, so no row is drawn twice and no
+    de-duplication trims the gold set below ``target_size`` (the bug that left
+    the religious-missions gold pool at 444 instead of 450).
+    """
+    gold = build_gold_set(
+        _full_coverage_frame(per_stratum=20),
+        target_size=450,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+    )
+
+    assert len(gold) == 450
+    assert not gold["EIN2"].duplicated().any()
+    assert gold["ntee_major_group"].nunique() == 26
 
 
 def test_build_gold_set_uses_configured_q_thresholds() -> None:

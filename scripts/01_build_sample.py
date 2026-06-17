@@ -62,7 +62,14 @@ def main() -> int:
     validation = pd.read_csv(registry.validation_manifest)
     test = pd.read_csv(registry.test_manifest)
 
-    _run_assertions(silver, gold, prompt_dev, validation, test)
+    _run_assertions(
+        silver,
+        gold,
+        prompt_dev,
+        validation,
+        test,
+        expected_gold=cfg.sample_sizes.gold,
+    )
     logger.info("[01] Done.")
     return 0
 
@@ -73,9 +80,19 @@ def _run_assertions(
     prompt_dev: pd.DataFrame,
     validation: pd.DataFrame,
     test: pd.DataFrame,
+    expected_gold: int,
 ) -> None:
     """Run plan-specified checks and raise on failure."""
     errors: list[str] = []
+
+    # Gold pool must contain exactly the configured number of missions. The
+    # quota-cell partition in build_gold_set realizes each stratum target
+    # exactly, so a shortfall here means a stratum was exhausted or the cell
+    # logic regressed (a silent <target gold set is what this guards against).
+    if len(gold) != expected_gold:
+        errors.append(
+            f"Gold pool has {len(gold)} rows, expected {expected_gold}",
+        )
 
     # EIN2 uniqueness per split
     for name, df in [
@@ -99,8 +116,9 @@ def _run_assertions(
     if not (0.25 <= pos_share <= 0.50):
         errors.append(f"Silver positive share {pos_share:.2%} outside 25-50 % band")
 
-    # Gold has stratum + inclusion_prob
-    for col in ["stratum", "inclusion_prob"]:
+    # Gold has stratum + quota_cell_rate (diagnostic draw rate, not a design
+    # weight — silver carries inclusion_prob instead)
+    for col in ["stratum", "quota_cell_rate"]:
         if col not in gold.columns:
             errors.append(f"Gold manifest missing column {col}")
 

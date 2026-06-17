@@ -167,7 +167,7 @@ def run_evaluation(
     if registry.test_evaluation.exists():
         raise RuntimeError(
             f"Frozen-test evaluation already exists at {registry.test_evaluation}; "
-            "delete it explicitly to re-run."
+            "delete it explicitly to re-run.",
         )
 
     test = _read_frozen_test_labels(registry, missions)
@@ -481,13 +481,15 @@ def _rate_with_ci(successes: int, denominator: int) -> dict[str, Any]:
 
 
 def _wilson_ci(
-    successes: int, denominator: int, z: float = 1.959963984540054
+    successes: int,
+    denominator: int,
+    z: float = 1.959963984540054,
 ) -> dict[str, float]:
     p_hat = successes / denominator
     denom = 1.0 + z**2 / denominator
     centre = p_hat + z**2 / (2.0 * denominator)
     margin = z * np.sqrt(
-        (p_hat * (1.0 - p_hat) + z**2 / (4.0 * denominator)) / denominator
+        (p_hat * (1.0 - p_hat) + z**2 / (4.0 * denominator)) / denominator,
     )
     return {
         "lower": float(max(0.0, (centre - margin) / denom)),
@@ -523,7 +525,7 @@ def _read_frozen_test_labels(
     if missing_text.any():
         raise ValueError(
             "Could not join source mission text for "
-            f"{int(missing_text.sum())} frozen-test EIN2(s)."
+            f"{int(missing_text.sum())} frozen-test EIN2(s).",
         )
     return joined.reset_index(drop=True)
 
@@ -544,6 +546,15 @@ def _test_report(
     anchor_calibration: Mapping[str, Any],
     calibrator_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Assemble the frozen-test report (metrics, subgroups, acceptance verdict).
+
+    Caveat: these metrics are computed on the boundary- and positive-enriched
+    gold ``test`` split, a deliberately non-representative slice (~50 % positive
+    vs. the low population base rate). Because precision, PR-AUC, and F1 are not
+    prevalence-invariant, they characterise performance on hard/enriched cases,
+    not the deployment distribution; population-level performance is recovered
+    from the design-weighted anchor sample via PPI, not from this report.
+    """
     report_df = test.rename(columns={"mission_text": "text"}).copy()
     return {
         "metric_bundle": dict(metric_bundle),
