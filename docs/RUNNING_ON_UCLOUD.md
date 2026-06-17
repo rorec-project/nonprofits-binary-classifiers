@@ -79,22 +79,39 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
    ```
 
 5. **Gemma is gated:** accept the license for `google/gemma-3-27b-it` on huggingface.co and create an **HF token**.
-6. **Prepare `config.sh`:** edit `DATA_DRIVE` and `PROJECT_DRIVE` in `utils/config.sh` to match your UCloud drive names. This file is sourced by all utility scripts.
+6. **Create the secrets `.env`** on the project drive via the UCloud web file editor or upload. Use `.env.example` as the template. The file must be at `/work/<PROJECT_DRIVE>/.env`:
+   ```
+   OPENAI_API_KEY=sk-...
+   HF_TOKEN=hf_...
+   GITHUB_TOKEN=ghp_...
+   ANTHROPIC_API_KEY=sk-ant-...   # only if using the dev overlay
+   ```
+   This is needed **before the first job** — `init.sh` reads it to seed the git
+   credential store so the repo can be cloned.
+7. **Prepare `config.sh`:** edit `DATA_DRIVE` and `PROJECT_DRIVE` in `utils/config.sh`
+   to match your UCloud drive names. Also update the matching fallback defaults in
+   `init.sh` (lines ~21-24) — these are used when `init.sh` runs as the
+   Initialization script before the repo is cloned.
 
 ---
 
 ## 3. Bootstrap order (first job vs every later job)
 
-**First-ever job** (repo not cloned yet). You will set up the repo and secrets during the first job:
+**First-ever job** (repo not cloned yet). The Initialization script runs `.env`
+first to authenticate git, then you clone and re-run:
 
-1. Start a **Terminal** job with **both Drives** attached; enable SSH.
-2. SSH in (or open the web terminal).
-3. Clone the repo. If the drive mount is empty, clone directly:
-   ```bash
-   cd /work/<PROJECT_DRIVE>
-   git clone https://github.com/<user>/nonprofits-binary-classifiers.git .
-   ```
-   If `.env` or other files already exist on the drive, use `git init` instead:
+1. Start a **Terminal** job with **both Drives** attached; **enable SSH**; attach
+   `utils/init.sh` as the **Initialization** script.
+
+2. The job starts and `init.sh` runs automatically:
+   - Waits for `/work` to mount.
+   - Sources `/work/<PROJECT_DRIVE>/.env` — seeds the git credential store
+     with `GITHUB_TOKEN`.
+   - Detects no repo checkout (no `.git`), prints clone instructions, exits.
+
+3. SSH in using the port shown in the job progress view.
+
+4. Clone the repo (the credential store handles authentication):
    ```bash
    cd /work/<PROJECT_DRIVE>
    git init
@@ -102,20 +119,19 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
    git fetch origin master
    git checkout master
    ```
-4. Create `/work/<PROJECT_DRIVE>/.env` with your secrets. Use `.env.example` as the template:
-   ```
-   OPENAI_API_KEY=sk-...
-   HF_TOKEN=hf_...
-   GITHUB_TOKEN=ghp_...
-   ANTHROPIC_API_KEY=sk-ant-...   # only if using the dev overlay
-   ```
-5. Run `init.sh` — attach it as the **Initialization** script, or run it manually:
+   `git init` works even though `.env` already exists on the drive.
+
+5. Re-run `init.sh` manually — now it finds `config.sh` in the cloned repo and
+   proceeds with the full setup:
    ```bash
    bash utils/init.sh
    ```
-   It sets the runtime env, **seeds git's HTTPS credential store from `GITHUB_TOKEN`** (no token in URLs or shell history), writes `env.sh`, creates the symlinks, and syncs the Python env.
+   It sources `config.sh` (overrides the fallback defaults), runs `git pull`,
+   `uv sync`, creates the data symlinks, and writes `env.sh`.
 
-**Every later job:** attach `utils/init.sh` as the **Initialization** script. It detects the existing checkout and only `git pull`s, `uv sync`s, and relinks.
+**Every later job:** attach `utils/init.sh` as the **Initialization** script. It
+detects the existing checkout, sources `config.sh` from the repo, pulls, syncs,
+and relinks.
 
 ---
 

@@ -9,9 +9,10 @@
 # overlay (interactive SSH only), kept decoupled so GPU/batch jobs stay lean.
 #
 # Bootstrap order:
-#   First-ever job : Terminal + project drive attached → create the .env on the
-#                    project drive → authenticate git → clone the repo into the
-#                    project drive → `bash utils/init.sh`.
+#   First-ever job : create .env on the project drive (pre-job) → start Terminal
+#                    with this script as Initialization → it sources .env, seeds
+#                    git, detects no checkout, exits → SSH in → clone the repo
+#                    → `bash utils/init.sh`.
 #   Every later job: attach this script as Initialization. It detects the
 #                    existing checkout and only pulls + syncs + relinks.
 #
@@ -207,7 +208,7 @@ ls -l data data/processed
 # group by default (ruff + ty), so verification step 4 works out of the box.
 # Add `--extra serve` ONLY on the vLLM annotation job.
 if ! uv python install 3.13; then
-    echo "WARNING: 'uv python install 3.13' failed. 'uv sync' may fail if 3.13 is unavailable." >&2
+  echo "WARNING: 'uv python install 3.13' failed. 'uv sync' may fail if 3.13 is unavailable." >&2
 fi
 uv sync
 
