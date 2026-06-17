@@ -218,8 +218,7 @@ def _needs_oof(cfg: "BinaryClassifierConfig") -> bool:
     (stage 11 reads ``registry.oof_pred_probs``).
     """
     return (
-        "pruned" in cfg.training.arms
-        or "crowdlab" in cfg.aggregation.comparison_arms
+        "pruned" in cfg.training.arms or "crowdlab" in cfg.aggregation.comparison_arms
     )
 
 
