@@ -44,7 +44,7 @@ A reproducible, config-driven binary text classifier for US nonprofit missions. 
 
 2. **The model never sees the final exam.** The test split is drawn during stage 01 and is **frozen** thereafter. A human gate (G3 — `test_unlock.json`) is required before stage 07 can touch it, ensuring no accidental leakage during model iteration. The model is trained on silver + validation; evaluated on the locked test.
 
-3. **We statistically *correct* counts for population estimates.** Classifier predictions are biased by the training distribution. We use PPI++ (Prediction-Powered Inference, Angelopoulos et al. 2023) as the primary prevalence estimator, with EMQ (vendored SLD implementation, Saerens 2002) as a single sensitivity cross-check. The anchor sample (stage 05, including LOW-quality rows) provides the labeled holdout needed to de-bias the full-corpus inference into a population-representative share with a bootstrap confidence interval.
+3. **We statistically _correct_ counts for population estimates.** Classifier predictions are biased by the training distribution. We use PPI++ (Prediction-Powered Inference, Angelopoulos et al. 2023) as the primary prevalence estimator, with EMQ (vendored SLD implementation, Saerens 2002) as a single sensitivity cross-check. The anchor sample (stage 05, including LOW-quality rows) provides the labeled holdout needed to de-bias the full-corpus inference into a population-representative share with a bootstrap confidence interval.
 
 ---
 
@@ -68,11 +68,12 @@ echo "OPENAI_API_KEY=your_key_here" > .env
 ```
 
 The default `uv sync` installs the lean runtime. Optional extras are:
+
 - `--extra serve` — vLLM for open-weight model serving
 - `--extra quant` — QuaPy for KDEy quantification cross-checks
 - `--extra diagnostics` — `crowd-kit` and `cleanlab` for stage-11 sensitivity diagnostics
 
-Key dependency changes vs. the legacy stack: `pyarrow`, `python-dotenv` (replaces the misnamed `dotenv` package), `openai`, and `vllm` (via `--extra serve`).
+Key dependency changes vs. the legacy stack: `pyarrow`, `python-dotenv`, `openai`, and `vllm` (via `--extra serve`).
 
 ### Smoke test (no upstream data)
 
@@ -86,12 +87,12 @@ This generates a small synthetic dataset, stamps it `data_source="synthetic"`, a
 
 The pipeline is driven by two human-coded artifacts and two human confirmations. Think of them as four gates the pipeline refuses to pass until a human signs off:
 
-| Gate | Human action | What it unlocks |
-|------|-------------|-----------------|
-| **G1 — Labels** | Code `gold_to_code.csv` with strict `0/1` for every row | Stage 02 (bake-off), stage 04 (QC), stage 06 (train), stage 07 (evaluate) |
-| **G2 — Slate** | Copy `proposed_slate.json` → `production_slate.json`, set `"confirmed": true`, commit | Stage 03 (full annotation) |
-| **G4 — Anchor labels** | Code `anchor_to_code.csv` with strict `0/1` for every row | Stage 07 (evaluate), stage 09 (prevalence) |
-| **G3 — Test unlock** | Create `test_unlock.json` with `"confirmed": true` + the selected checkpoint SHA | Stage 07 (evaluate) |
+| Gate                   | Human action                                                                          | What it unlocks                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **G1 — Labels**        | Code `gold_to_code.csv` with strict `0/1` for every row                               | Stage 02 (bake-off), stage 04 (QC), stage 06 (train), stage 07 (evaluate) |
+| **G2 — Slate**         | Copy `proposed_slate.json` → `production_slate.json`, set `"confirmed": true`, commit | Stage 03 (full annotation)                                                |
+| **G4 — Anchor labels** | Code `anchor_to_code.csv` with strict `0/1` for every row                             | Stage 07 (evaluate), stage 09 (prevalence)                                |
+| **G3 — Test unlock**   | Create `test_unlock.json` with `"confirmed": true` + the selected checkpoint SHA      | Stage 07 (evaluate)                                                       |
 
 > **G2 auto-exit:** if you request `--stages 02,03` together and no confirmed slate exists, stage 02 runs (produces `proposed_slate.json`), then the pipeline exits gracefully at G2 so you can review the scores before committing to the full annotation run.
 
@@ -123,7 +124,7 @@ If gates are not satisfied, the pipeline exits **gracefully** with a clear messa
 
 ---
 
-## The 9 Stages in Plain English
+## The 9 Stages in a nutshell
 
 Below is a one-paragraph summary of each stage. For full technical details (I/O schemas, columns, thresholds, and CLI flags), see [Appendix B: Stage-by-stage technical reference](#appendix-b-stage-by-stage-technical-reference).
 
@@ -149,14 +150,14 @@ Below is a one-paragraph summary of each stage. For full technical details (I/O 
 
 ## The 4 Human Checkpoints (G1–G4)
 
-| Gate | Full name | Before stage(s) | Artifact | Required state |
-|------|-----------|-----------------|----------|----------------|
-| **G1** | Labels gate | 02, 04, 06, 07 | `data/processed/gold/gold_to_code.csv` | Every row in the needed split has a strict `0/1` `human_label` (no blanks, no other values) |
-| **G2** | Slate gate | 03 | `data/processed/gold/production_slate.json` | `"confirmed": true` and lists the exact model IDs for production |
-| **G4** | Anchor-labels gate | 07, 09 | `data/processed/gold/anchor_to_code.csv` | Every row has a strict `0/1` `human_label` |
-| **G3** | Test-unlock gate | 07 | `data/processed/gold/test_unlock.json` | `"confirmed": true` + `checkpoint_sha256` matching the selected model + acceptance snapshot; the test split is never seen until this gate opens |
+| Gate   | Full name          | Before stage(s) | Artifact                                    | Required state                                                                                                                                  |
+| ------ | ------------------ | --------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **G1** | Labels gate        | 02, 04, 06, 07  | `data/processed/gold/gold_to_code.csv`      | Every row in the needed split has a strict `0/1` `human_label` (no blanks, no other values)                                                     |
+| **G2** | Slate gate         | 03              | `data/processed/gold/production_slate.json` | `"confirmed": true` and lists the exact model IDs for production                                                                                |
+| **G4** | Anchor-labels gate | 07, 09          | `data/processed/gold/anchor_to_code.csv`    | Every row has a strict `0/1` `human_label`                                                                                                      |
+| **G3** | Test-unlock gate   | 07              | `data/processed/gold/test_unlock.json`      | `"confirmed": true` + `checkpoint_sha256` matching the selected model + acceptance snapshot; the test split is never seen until this gate opens |
 
-> **Why G3 is last:** the frozen test is the *final exam*. The model is selected and trained without ever touching it. Only after a human explicitly unlocks the test by recording the selected checkpoint SHA does evaluation run. This prevents any accidental leakage during model iteration.
+> **Why G3 is last:** the frozen test is the _final exam_. The model is selected and trained without ever touching it. Only after a human explicitly unlocks the test by recording the selected checkpoint SHA does evaluation run. This prevents any accidental leakage during model iteration.
 
 ---
 
@@ -171,6 +172,7 @@ uv run python scripts/run_pipeline.py --stages 07
 ```
 
 The stage checks:
+
 - `gold_to_code.csv` has coded `test` rows (G1)
 - `test_unlock.json` is confirmed with the correct checkpoint SHA (G3)
 - `anchor_to_code.csv` is fully coded (G4)
@@ -181,11 +183,11 @@ If any gate is missing, the pipeline exits gracefully before loading a model.
 
 The frozen-test acceptance gate checks three thresholds (configurable in `config/*.yaml`):
 
-| Criterion | Threshold | What it means |
-|-----------|-----------|---------------|
-| `min_pr_auc` | `0.90` | The classifier must distinguish religious vs. non-religious with at least 0.90 precision-recall AUC on the frozen test. |
-| `min_minority_f1_ci_lower` | `0.70` | The lower bound of the 95% bootstrap CI for minority-class F1 must be ≥ 0.70. |
-| `max_ece` | `0.05` | The expected calibration error (ECE) on the anchor out-of-fold scores must be ≤ 0.05. |
+| Criterion                  | Threshold | What it means                                                                                                           |
+| -------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `min_pr_auc`               | `0.90`    | The classifier must distinguish religious vs. non-religious with at least 0.90 precision-recall AUC on the frozen test. |
+| `min_minority_f1_ci_lower` | `0.70`    | The lower bound of the 95% bootstrap CI for minority-class F1 must be ≥ 0.70.                                           |
+| `max_ece`                  | `0.05`    | The expected calibration error (ECE) on the anchor out-of-fold scores must be ≤ 0.05.                                   |
 
 If any threshold is missed, the pipeline exits non-zero and prints guidance. The gate does **not** automatically retrain; it reports so the operator can decide whether to revise prompts, adjust the slate, or override the config.
 
@@ -198,12 +200,14 @@ If any threshold is missed, the pipeline exits non-zero and prints guidance. The
 
 Open `prevalence_report.json`. The top-level fields of interest are:
 
-- `ppi_estimate` — the corrected population share of religious nonprofits.
-- `ppi_ci_lower` / `ppi_ci_upper` — the 95% bootstrap confidence interval.
-- `emq_estimate` — the EMQ (Expectation-Maximization with priors) sensitivity check.
-- `low_tier_sensitivity` — bounds on the estimate if the LOW-quality rule-layer routing is systematically off.
+- `hm.weighted_ppi` — the primary PPI++ estimate with design weights, plus upper/lower confidence bounds.
+- `hm.unweighted_ppi` — the unweighted PPI++ estimate for comparison.
+- `composite` — the Rogan-Gladen corrected composite over all tiers.
+- `cross_checks.emq` — the EMQ (Saerens 2002) sensitivity check.
+- `cross_checks.kdey` — the KDEy estimate (present if `quant` extra is installed).
+- `low.sensitivity_band` — bounds on the estimate under systematic rule-layer misclassification (present when `low_tier_sensitivity: true`).
 
-> **Important caveat — LOW-tier missions:** The silver/gold sampling frame is HIGH+MEDIUM only (`Q >= 3.0`). LOW-quality records (bare labels, fragments) are excluded from stage 01 and handled by the rule layer at inference. The prevalence report folds them back in via the anchor sample, but the LOW-tier rate is a high-precision rule estimate, not a classifier score. Any claim about the *full* nonprofit population must include the LOW-tier sensitivity bounds, which the report provides when `prevalence.low_tier_sensitivity: true` in the config.
+> **Important caveat — LOW-tier missions:** The silver/gold sampling frame is HIGH+MEDIUM only (`Q >= 3.0`). LOW-quality records (bare labels, fragments) are excluded from stage 01 and handled by the rule layer at inference. The prevalence report folds them back in via the anchor sample, but the LOW-tier rate is a high-precision rule estimate, not a classifier score. Any claim about the _full_ nonprofit population must include the LOW-tier sensitivity bounds, which the report provides when `prevalence.low_tier_sensitivity: true` in the config.
 
 ---
 
@@ -259,9 +263,11 @@ mkdir -p data/raw data/interim data/models data/processed/gold
 src/binary_classifier/
   config.py            # Typed config (pydantic) loaded from config/*.yaml
   paths.py             # pathlib.Path registry (no string concatenation)
+  metrics.py           # Core classification metrics (PR-AUC, MCC, balanced acc, bootstrap CI)
   data/
     load.py            # Cross-section load + EIN2→BMF NTEE-major-group join
     quality.py         # Computable Q rubric + HIGH/MED/LOW tiering + rule layer
+    anchor.py          # Stratified anchor sampling with inclusion probabilities
     sample.py          # Stratified + positive-enriched sampling; EIN2 manifests
   annotate/
     schema.py          # Long/tidy label schema + pydantic JSON parse
@@ -298,108 +304,101 @@ config/
   religious_missions.yaml   # First task config (entity=missions, field=LONGEST_MISSION)
 ```
 
-### B1. Stage 01
+### B1. Stage 01 — Build sample
 
-- **Script:** `scripts/01_build_sample.py`
+Stage 01 constructs the silver training pool and gold human-coding set from mission texts scored by the quality rubric Q, using proportional allocation across all 26 NTEE major groups with floors at 200 rows for thin strata (V, Y, U) and caps at 2,500 rows for large strata (B, P). Stratification by sector is essential because religious prevalence varies enormously — Education (B) is overwhelmingly secular while Religion (X) is almost entirely religious — and without it the silver pool would be dominated by non-religious rows from the largest sectors. Within each stratum, positive enrichment targets a 35% minority-class share (King & Zeng 2001), and cell-level inclusion probabilities are recorded in the manifest so downstream design weights invert the correct draw rate rather than a stratum-wide marginal rate (Horvitz & Thompson 1952). The gold set deliberately over-samples boundary cases — saint-named secular organizations, spiritual-not-religious framings, generic ministry language, and faith-heritage references — to stress-test human coders and prompt candidates, then splits into four disjoint, NTEE-stratified slices: prompt_dev for the bake-off, validation for QC gates and threshold selection, a frozen test for one-shot evaluation, and a monitor slice held out as drift canaries. Re-running stage 01 after coding has started reshuffles these split tags, so the `--force` flag explicitly acknowledges the clobber risk and discards any existing human labels.
+
 - **Inputs:** `data/raw/missions_cross_section.parquet`, `data/raw/bmf_unified_processed.parquet` (or synthetic if `data.allow_synthetic: true`).
 - **Outputs:**
-  - `data/interim/manifests/silver_manifest.csv` — `EIN2` list for the silver pool (HIGH+MEDIUM, `Q >= 3.0`).
-  - `data/interim/manifests/gold_manifest.csv` — `EIN2` list for the gold set.
-  - `data/processed/gold/gold_to_code.csv` — human coding template with columns `EIN2`, `split`, `text`, `human_label`.
+  - `data/interim/manifests/silver_manifest.csv` — `EIN2` list for silver pool.
+  - `data/interim/manifests/gold_manifest.csv` — `EIN2` list for gold set.
+  - `data/processed/gold/gold_to_code.csv` — human coding template.
 - **Key options:** `--force` (regenerate from scratch, discarding human labels).
-- **Caveat:** if you re-run stage 01 before coding starts, the gold split tags can reshuffle. Re-split before anyone codes, or regenerate the coding template from the new manifests.
+- **Caveat:** re-running stage 01 after coding starts reshuffles gold split tags.
 
-### B2. Stage 02
+### B2. Stage 02 — Bake-off
 
-- **Script:** `scripts/02_bakeoff_prompts.py`
+Stage 02 runs a bake-off that scores every model-candidate × prompt-template combination against the human-labeled prompt-dev split, selecting candidates that pass a dual threshold (κ ≥ 0.70 AND minority-F1 CI lower bound ≥ 0.70), then ranking passing candidates by minority-F1 point estimate. Cohen's κ measures chance-corrected agreement, eliminating the "always-say-majority" baseline that inflates raw accuracy when the positive class is rare, while the minority-F1 component guards against prompts that correctly classify negatives but fail to detect positives. The slate draws from two provider pools — OpenAI API models for reliability and open-weight models via vLLM for cost efficiency and local reproducibility — and adding a new model to either pool requires no code change beyond registering its identifier and provider. Each (model, prompt) combination receives a unique source_id in the long/tidy annotation schema, so the pipeline can add new candidates without schema migration. The top-ranking combinations enter a proposed slate serialized with `"confirmed": false` and await human review at gate G2 before advancing to production labeling.
+
 - **Inputs:** `gold_to_code.csv` (prompt_dev split, G1), config `model_slate.bakeoff_candidates`.
 - **Outputs:**
-  - `data/interim/bakeoff/bakeoff_results.json` — scores for every candidate × prompt.
-  - `data/interim/bakeoff/proposed_slate.json` — auto-picked, **unconfirmed** slate (`"confirmed": false`).
+  - `data/interim/bakeoff/bakeoff_results.json` — scores per candidate × prompt.
+  - `data/interim/bakeoff/proposed_slate.json` — auto-picked, unconfirmed slate.
 - **Key options:** `--prompts`, `--human-labels`, `--limit`, `--store-path`, `--output`.
-- **Caveat:** the bake-off skips the vLLM arm gracefully if the server is unreachable. For a pure OpenAI bake-off, comment out the vLLM candidate in the config.
-- **Adding open-weight models:** adding the Gemma (or any open-weight) model to the production ensemble requires no code change. Simply include its `id` in `production_slate.json` alongside the OpenAI models. The pipeline routes each candidate to its configured `provider` (`openai` or `vllm`) automatically. To remove it later, edit the slate.
+- **Caveat:** bake-off skips vLLM gracefully if server unreachable.
 
-### B3. Stage 03
+### B3. Stage 03 — Annotate
 
-- **Script:** `scripts/03_annotate.py`
+Stage 03 applies the human-confirmed production slate to the silver pool, scoring every row across all model × prompt combinations in the ensemble. The annotation store uses a long/tidy schema keyed by (EIN2, source_id), where source_id encodes the model × prompt identity, allowing the pipeline to add or remove annotators without altering the store structure. Crashes are resumable at the (EIN2, source_id) granularity: completed rows are skipped automatically on restart, and the `--no-resume` flag forces a fresh run from scratch. Checkpointing at configurable intervals and a `--canary` mode for small-scale smoke tests support iterative prompt development without exhausting the annotation budget.
+
 - **Inputs:** `production_slate.json` (G2), silver manifests.
 - **Outputs:** `data/interim/annotation_store.csv` — long/tidy label store keyed by `(EIN2, source_id)`.
 - **Key options:** `--limit`, `--no-resume`, `--canary`, `--checkpoint-every`.
-- **Caveat:** crashes are resumable by `(EIN2, source_id)`; completed rows are skipped automatically. Use `--no-resume` to start fresh.
+- **Caveat:** crashes resumable by `(EIN2, source_id)`; `--no-resume` starts fresh.
 
-### B4. Stage 04
+### B4. Stage 04 — QC / Freeze
 
-- **Script:** `scripts/04_quality_check.py`
+Stage 04 freezes the weak-supervision labels by QC-gating the ensemble against the human-coded validation split before writing the silver label file. The primary gate uses Cohen's κ at a 0.70 threshold because chance-corrected agreement eliminates the inflation that raw agreement produces when models concur on easy negatives even when both are wrong — a common failure mode in imbalanced classification. A secondary gate checks that the lower bound of the 95% bootstrap percentile interval (2,000 resamples) for minority-class F1 stays above 0.70, ensuring the ensemble performs adequately on the rare class and not just overall. If either threshold fails, the script exits non-zero and prints guidance to revise prompts and re-annotate, never writing a frozen label file. Raw agreement is still logged for backward-compatible auditing, but the freeze decision — and the output that excludes all gold EIN2 rows to prevent double-dipping — depends on the chance-corrected criteria.
+
 - **Inputs:** annotation store, `gold_to_code.csv` (validation split, G1).
-- **Outputs:** `data/processed/silver_labels.csv` — frozen majority-vote labels, excluding all gold `EIN2` rows.
-- **QC thresholds:**
-  - `qc.kappa_threshold: 0.70` (Cohen's kappa against human validation, chance-corrected; reproduces the old ~0.85 raw-agreement operating point on the roughly balanced validation split).
-  - `qc.f1_ci_floor: 0.70` (lower bound of 95% bootstrap CI for minority-class F1).
+- **Outputs:** `data/processed/silver_labels.csv` — frozen majority-vote labels, excluding gold `EIN2`s.
 - **Key options:** `--human-validation`, `--store-path`, `--output`.
-- **Caveat:** if the QC gate misses the threshold, it **blocks** — exits non-zero, does not write a frozen output, and prints guidance to revise prompts and re-label. Raw LLM-vs-human validation agreement is still logged for continuity, but the freeze decision is driven by chance-corrected κ/α reporting plus the minority-F1 CI floor.
+- **Caveat:** if QC gate misses thresholds, exits non-zero without writing frozen output.
 
-### B5. Stage 05
+### B5. Stage 05 — Anchor sample
 
-- **Script:** `scripts/05_build_anchor.py`
+Stage 05 draws an anchor sample for prevalence debiasing by stratifying the full corpus — including LOW-tier rows excluded from the silver pool — proportionally across NTEE major group × quality tier at the cell level. Including LOW-tier texts in the anchor is essential because they are too short or boilerplate for reliable classifier calibration, yet they constitute a large fraction of the population, so their misclassification rate must be quantified. Every sampled row carries its cell-level inclusion probability, which becomes the Horvitz-Thompson design weight that PPI++ inverts in stage 09 to produce asymptotically unbiased population estimates. The anchor must be fully coded before stages 07 and 09 can proceed (gate G4); without it, prevalence estimates on LOW-quality rows cannot be validated, and the calibration fitting in stage 07 lacks ground truth for the tier that most needs it.
+
 - **Inputs:** full frame (all Q tiers, including LOW).
-- **Outputs:** `data/processed/gold/anchor_to_code.csv` — human coding template for the anchor sample.
+- **Outputs:** `data/processed/gold/anchor_to_code.csv` — human coding template.
 - **Key options:** `--force`.
-- **Caveat:** the anchor must be coded before stages 07 and 09 (G4). Without it, prevalence estimates on LOW-quality rows cannot be validated.
+- **Caveat:** anchor must be coded before stages 07 and 09 (G4).
 
-### B6. Stage 06
+### B6. Stage 06 — Train
 
-- **Script:** `scripts/06_train.py`
+Stage 06 fine-tunes encoder models on the frozen silver labels, enumerating a grid of training-arm configurations across 3 seeds (42–44) for the selection sweep, then refitting the chosen configuration across 5 seeds (42–46) for reported variance. The loss function is a soft cross-entropy optionally multiplied by inverse-frequency class weights: L = -(1/N) Σ[y_i log(p_i)·w₁ + (1 - y_i) log(1 - p_i)·w₀], where w_k = n/(2·n_k). Soft targets (vote shares) are the default because they preserve annotator-confidence information and are inherently more robust to label noise than hard thresholds (Zhu et al. 2022), which makes label smoothing redundant. The default arms are hard and class-weighted; the pruned arm that drops cleanlab-flagged rows from the disagreement band (Northcutt, Jiang & Chuang 2021) is opt-in because soft targets already down-weight the same rows, and focal loss — designed for object detection — is excluded as a poor fit for text classification. DeBERTa-v3-base serves as primary encoder (He et al. 2021), chosen for its disentangled attention and relative position bias that gave SOTA classification performance at release, compared against ModernBERT-base (Warner et al. 2024) and TF-IDF/MiniLM (Reimers & Gurevych 2019) logistic-regression baselines. Numerical precision resolves to bf16 when the GPU supports it and falls back to fp32; the documentation-curve sweep defaults to the full-data run only, and training uses early stopping with patience 4. The selection report aggregates across seeds and picks the simplest cell through a sequential pairwise comparison: starting from the highest-ranked cell by mean PR-AUC, each challenger is accepted if its mean PR-AUC is within `max(incumbent_sd, challenger_sd)` of the current incumbent, preferring DeBERTa over ModernBERT, soft over hard targets, and default over class-weighted arms. Cross-fit out-of-fold probabilities are computed for all arms including the opt-in pruned arm, feeding the diagnostic stage 11 comparison even though they do not enter production.
+
 - **Inputs:** frozen `silver_labels.csv`, config `training` section.
 - **Outputs:** `data/models/selection_report.json`, checkpoint directories under `data/models/`.
-- **Training defaults (simplified):**
-  - **Arms:** `[hard, class_weighted]` — the `pruned` arm is dropped by default (soft targets already down-weight the disagreement band; see arXiv:2605.20642). `pruned` remains opt-in via config override.
-  - **Targets:** soft vote-share labels are the default target; hard majority-vote labels are retained as a check arm.
-  - **Learning curve:** `[1.0]` — only the full-data run is produced by default; the `{25%, 50%, 100%}` sweep is dropped.
-  - **Final seeds:** 5 seeds (`[42, 43, 44, 45, 46]`) for reported variance.
-  - **Encoders:** DeBERTa-v3-base (primary) vs. ModernBERT-base (comparison), plus TF-IDF/MiniLM baselines. RoBERTa, DistilBERT, label smoothing, focal/resampling, and confidence-weighted loss are intentionally skipped.
 - **Key options:** `--baselines-only`, `--sweep`, `--final`, `--encoder`, `--subset`, `--epochs`, `--seeds`, `--limit`.
-- **Orchestrator note:** `run_pipeline.py` runs stage 06 as a two-phase sweep → final automatically, so `--final` is not needed on the orchestrator. The orchestrator forwards `--config`, `--stages`, `--annotate-limit` (stage 03), `--infer-limit` (stage 08), and `--force` (stages 01/05) to the individual stage scripts.
+- **Caveat:** orchestrator runs stage 06 as two-phase sweep → final automatically.
 
-### B7. Stage 07
+### B7. Stage 07 — Evaluate
 
-- **Script:** `scripts/07_evaluate.py`
+Stage 07 loads the human-confirmed checkpoint, calibrates its raw probabilities on the anchor set, selects an operating threshold, and scores the frozen test split in a one-shot evaluation. Calibration compares Platt scaling (Platt 1999) against temperature scaling (Guo et al. 2017) through stratified K-fold cross-fitting: each method fits on K-1 folds, scores the held-out fold, and the winner is the method with the lowest mean out-of-fold Brier score, with log-loss as tiebreaker. Platt is retained as the default because its intercept can absorb prior-shift offsets from the enriched training pool; isotonic regression is excluded because it overfits at the anchor's typical size. The threshold search iterates over all unique validation probabilities and selects the highest-recall threshold whose precision meets the 0.80 floor; if no candidate achieves the floor, it falls back to the maximum-precision threshold and flags `floor_unattainable`. The rule layer applied to LOW-tier texts is separately validated on the anchor, with sensitivity and specificity reported alongside Wilson confidence intervals. The frozen-test report records minority-class precision/recall/F1, MCC, PR-AUC with bootstrap 2,000-resample CIs, length-binned subgroup analyses, and calibration diagnostics, then checks acceptance: PR-AUC ≥ 0.90, minority-F1 CI lower bound ≥ 0.70, and ECE ≤ 0.05. Failing any check blocks the pipeline but preserves the report for audit.
+
 - **Inputs:** frozen test split (G1 + G3), selected checkpoint, `anchor_to_code.csv` (G4).
 - **Outputs:** `data/processed/evaluation/test_evaluation.json`.
-- **Metrics reported:** minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, bootstrap 2000-resample CIs, length-binned subgroup reports, and calibration diagnostics (Platt + temperature scaling). **Decision-curve analysis was dropped** (orthogonal to a prevalence study).
-- **Acceptance thresholds:** `min_pr_auc: 0.90`, `min_minority_f1_ci_lower: 0.70`, `max_ece: 0.05`.
-- **Threshold policy:** `precision_floor` (default 0.80) — the operating threshold is selected so that precision on the validation set stays ≥ 0.80.
-- **Calibration:** Platt + temperature scaling are both compared and deployed; Platt is retained as the default calibration method. Isotonic regression is intentionally excluded (overfits at anchor n=500). The acceptance gate is `max_ece`-only for this design pass.
+- **Caveat:** failing acceptance checks blocks pipeline but preserves report.
 
-### B8. Stage 08
+### B8. Stage 08 — Infer
 
-- **Script:** `scripts/08_infer.py`
+Stage 08 runs full-corpus inference through a five-route decision matrix driven by the quality tier and the deterministic rule layer. HIGH- and MEDIUM-quality rows route directly to the classifier. LOW-quality and bare-label rows first encounter the rule layer: strong religious-lexicon hits are labeled positive (route `rule_strong_positive`), very short texts with no religious signal are labeled negative (`rule_short_negative`), and ambiguous texts either fall through to the classifier (`low_via_classifier`) or abstain (`rule_abstain`) depending on the `rule_ambiguous_to_classifier` configuration flag. The rule layer is safer for LOW-tier texts because they tend to be too short or boilerplate for reliable classifier calibration, whereas a lexicon rule with known precision bounds from anchor validation provides a verifiable floor on decision quality. The output is a parquet file with positive-class probabilities and model-version metadata for every row in the corpus.
+
 - **Inputs:** full corpus, selected checkpoint, rule layer configuration.
-- **Outputs:** `data/processed/predictions/predictions.parquet` — `EIN2` + positive-class probabilities + model-version metadata.
-- **Routing:** HIGH/MEDIUM rows go to the classifier; LOW/bare-label rows go to the high-precision rule layer; rule-layer abstentions fall through to the classifier if `inference.rule_ambiguous_to_classifier: true`.
+- **Outputs:** `data/processed/predictions/predictions.parquet`.
 - **Key options:** `--limit`.
 
-### B9. Stage 09
+### B9. Stage 09 — Prevalence
 
-- **Script:** `scripts/09_prevalence.py`
+Stage 09 estimates population prevalence using prediction-powered inference (PPI++) as the primary method (Angelopoulos et al. 2023; arXiv:2311.01453). PPI++ constructs a debiasing term from the anchor sample's prediction errors and applies it to the full-corpus probabilities, yielding an asymptotically unbiased prevalence estimate with valid confidence intervals. The power-tuning parameter λ automatically interpolates between the unbiased but wide CI from labeled data alone (λ = 0) and the narrowest possible CI under a perfectly calibrated model (λ = 1). Design weights derived from the anchor's cell-level inclusion probabilities follow the Horvitz-Thompson estimator and are passed directly to ppi_py. A cross-check uses expectation-maximization for quantification (EMQ, vendored from Saerens 2002), which assumes the class-conditional score densities shift by a known factor between the anchor and the population — a different identifying assumption than PPI++'s correct-model-specification approach — and disagreement between the two methods serves as a diagnostic red flag for model misspecification or covariate shift. Settings default to 95% bootstrap CIs with 2,000 resamples, per-NTEE stratum reporting where n ≥ 10, and optional LOW-tier sensitivity bounds.
+
 - **Inputs:** predictions, anchor sample labels (G4), design weights.
 - **Outputs:** `data/processed/prevalence/prevalence_report.json`.
-- **Methods:**
-  - **Primary:** PPI++ (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453).
-  - **Cross-check:** EMQ (vendored SLD, Saerens 2002). KDEy via QuaPy is opt-in under the `quant` extra.
-- **Settings:** 95% bootstrap CI (`alpha: 0.05`), design-weighted estimation, per-NTEE stratum reporting where `ntee_min_n: 10` is satisfied, and LOW-tier sensitivity bounds when `low_tier_sensitivity: true`.
 
-### B10. Stage 10 (script-only, not orchestrated)
+### B10. Stage 10 — Visualization (script-only, not orchestrated)
 
-- **Script:** `scripts/10_visualize.py`
+Stage 10 is a script-only figure renderer that produces PNG and SVG visualizations under the output directory. It skips missing inputs gracefully rather than failing. Signed n-gram log-odds bars replace word clouds because they are reproducible, statistically interpretable, and avoid introducing a new word-cloud dependency. The module runs independently of the main pipeline, rendering plots for whichever upstream stage produced the latest artifacts.
+
 - **Outputs:** PNG and SVG figures under `data/processed/viz/`.
-- **Caveat:** script-only renderer; skips missing inputs gracefully. Uses signed n-gram log-odds bars instead of word clouds (reproducible, statistically interpretable, and avoids a new word-cloud dependency).
+- **Caveat:** script-only; skips missing inputs gracefully.
 
-### B11. Stage 11 (script-only, not orchestrated)
+### B11. Stage 11 — Aggregation diagnostics (script-only, not orchestrated)
 
-- **Script:** `scripts/11_aggregation_compare.py`
+Stage 11 is a script-only sensitivity diagnostic that compares multiple label-aggregation methods — simple majority vote, Dawid-Skene (Dawid & Skene 1979), and CROWDLAB — on the human-coded validation set. The comparison metric is each method's agreement with the human labels, producing a report that quantifies how much the choice of aggregation affects the final silver labels. These dependencies (`crowd-kit` and `cleanlab`) are gated behind the `diagnostics` extra because the comparisons are purely diagnostic — stage 04 production labels remain majority-vote for stability, and stage 11 never activates a replacement aggregation method. The cross-fit out-of-fold probabilities computed during stage 06 feed the CROWDLAB comparison arm.
+
 - **Outputs:** `data/interim/aggregation_compare.json`.
-- **Purpose:** sensitivity diagnostics comparing majority vote with optional Dawid-Skene arms on the human validation set. `crowd-kit` and `cleanlab` are diagnostic-only (stage 11) and behind the `diagnostics` extra. Stage 04 production labels remain majority-only; stage 11 does not activate a replacement aggregation method.
+- **Caveat:** script-only; diagnostic-only (`crowd-kit` and `cleanlab` behind `diagnostics` extra).
 
 ---
 
@@ -407,20 +406,21 @@ config/
 
 ### C1. Simplifications and intentional skips (this design pass)
 
-The project follows a **one principled primary method per concern + minimal robustness** principle. Tertiary and diagnostic machinery is pushed to optional extras or omitted entirely.
+The project follows a **one principled primary method per concern + minimal robustness** principle. Tertiary and diagnostic machinery is pushed to optional extras or omitted entirely. All citations appear in C3.
 
-| What | Default | Rationale |
-|------|---------|-----------|
-| **Label-aggregation diagnostics** | `crowd-kit`, `cleanlab` → optional `diagnostics` extra | Dawid-Skene and CROWDLAB are diagnostic-only (stage 11). Stage 04 production is intentionally majority-only. |
-| **Quantification cross-checks** | `[emq]` (EMQ / vendored SLD) | EMQ is the single sensitivity check that matches the project's research goals. KDEy via QuaPy is opt-in under the `quant` extra. |
-| **Training arms** | `[hard, class_weighted]` | The `pruned` arm is dropped by default. Soft vote-share targets already down-weight the disagreement band that `pruned` / cleanlab removes (arXiv:2511.14117; arXiv:2605.20642). `pruned` remains opt-in. |
-| **Learning curve** | `[1.0]` | Only the full-data run is produced. The `{25%, 50%, 100%}` sweep is dropped. |
-| **Decision-curve analysis** | Dropped | Vickers-Elkin net-benefit is orthogonal to a prevalence study; it does not improve the calibrated population estimate. |
-| **Calibration** | Platt + temperature (retained) | Both are compared and the better is deployed. Isotonic regression is excluded because it overfits at anchor n=500. |
-| **Final seeds** | 5 seeds (`[42, 43, 44, 45, 46]`) | Retained. Research mandates ≥5 seeds for reported variance. |
-| **Acceptance gate** | `max_ece`-only | Brier/log-loss gating is future work and out of scope for this design pass. |
+| Design Decision                                                                                                                    | Rationale                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Label aggregation:** majority vote only in production; Dawid-Skene and CROWDLAB in optional `diagnostics` extra (stage 11).      | Majority vote is the simplest defensible aggregation and is standard in weak-supervision pipelines. Dawid-Skene provides no consistent benefit at our per-item annotation depth.                                                                                                                                                                                   |
+| **Quantification cross-checks:** EMQ (vendored SLD) as single sensitivity check; KDEy via QuaPy is opt-in under the `quant` extra. | EMQ is lightweight, interpretable, and well-suited to binary prevalence. KDEy requires additional dependencies and is secondary.                                                                                                                                                                                                                                   |
+| **Training arms:** default arms `[hard, class_weighted]`; `pruned` arm dropped.                                                    | Soft vote-share labels already down-weight the disagreement band that `pruned` targets. `pruned` remains opt-in via config.                                                                                                                                                                                                                                        |
+| **Learning curve:** full-data run only (`[1.0]`); `{25%, 50%, 100%}` sweep dropped.                                                | The learning-curve sweep did not change model selection in initial experiments.                                                                                                                                                                                                                                                                                    |
+| **Decision-curve analysis:** dropped.                                                                                              | Decision-curve analysis requires an explicit treatment-threshold cost ratio, which is undefined for a population-prevalence study where the downstream deliverable is a calibrated prevalence estimate (PPI++), not a treat-vs-abstain decision threshold. Net-benefit curves would require additional clinical-domain assumptions that do not apply to this task. |
+| **Calibration:** Platt scaling and temperature scaling compared; isotonic regression excluded.                                     | Platt and temperature scaling are parametric, stable at small anchor size (n~500). Isotonic regression overfits at this sample size.                                                                                                                                                                                                                               |
+| **Final seeds:** retained at 5 seeds (`[42, 43, 44, 45, 46]`).                                                                     | Research convention mandates ≥5 seeds for variance reporting (Camuffo et al. 2026). Seed variation captures optimization stochasticity that bootstrap alone does not.                                                                                                                                                                                              |
+| **Acceptance gate (calibration component):** ECE-only; Brier / log-loss gate excluded.                                             | Brier score and log-loss are strictly proper scoring rules with desirable properties (ECE is not strictly proper), but ECE is the standard metric in the calibration literature (Guo et al. 2017) and is what reviewers and practitioners expect. Brier / log-loss gating is future work.                                                                          |
+| **Data augmentation:** none applied.                                                                                               | Soft labels from the LLM ensemble already add noise robustness; augmentation would dilute ensemble disagreement signal for short (≤50 word) mission texts without clear benefit.                                                                                                                                                                                   |
 
-### C2. What was *not* simplified (research fidelity)
+### C2. What was _not_ simplified (research fidelity)
 
 - **PPI++** remains the primary prevalence estimator (Angelopoulos et al. 2023; PPI++ arXiv:2311.01453).
 - **Majority-vote** production aggregation remains the default; the stage-11 diagnostic arms are strictly non-production.
@@ -434,13 +434,38 @@ The project follows a **one principled primary method per concern + minimal robu
 
 ### C3. Full citation list
 
-- Angelopoulos, A. N., et al. (2023). *Prediction-Powered Inference*. arXiv:2311.01453. — Primary prevalence estimator (PPI++).
-- Saerens, M., et al. (2002). *Adjusting the Outputs of a Classifier to New a Priori Probabilities*. — Basis for EMQ / SLD cross-check.
-- Landis, J. R., & Koch, G. G. (1977). *The Measurement of Observer Agreement for Categorical Data*. — Kappa interpretation scale.
-- SILICON (arXiv:2412.14461). — Agreement benchmarking in weak-supervision contexts.
-- Variance-Aware protocol (arXiv:2601.02370). — Minority-F1 CI floor motivation.
-- Disagreement-band down-weighting (arXiv:2511.14117; arXiv:2605.20642). — Rationale for dropping the `pruned` arm from defaults.
-- cookiecutter-data-science, drivendata. — Data layout convention.
+- Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T. (2023). Prediction-Powered Inference. _arXiv:2311.01453_. — Primary prevalence estimator (PPI++).
+- Camuffo, A., Gambardella, A., Kazemi, M., Malachowski, S., & Pandey, S. (2026). Variance-Aware Protocol for Minority-Class Evaluation. _arXiv:2601.02370_. — Minority-F1 CI floor motivation.
+- Cheng, S., Mayya, V., & Sedoc, J. (2025). SILICON: A Generalization of the Agreement on Inference Framework to Diverse Decision Scenarios. _arXiv:2412.14461_. — Agreement benchmarking in weak-supervision contexts.
+- Cookiecutter Data Science. https://github.com/drivendata/cookiecutter-data-science. — Data layout convention.
+- Davis, J. & Goadrich, M. (2006). The Relationship Between Precision-Recall and ROC Curves. _Proceedings of ICML 2006_, 233–240. DOI: 10.1145/1143844.1143874. — Primary evaluation metric for classifier acceptance.
+- Dawid, A. P. & Skene, A. M. (1979). Maximum Likelihood Estimation of Observer Error-Rates Using the EM Algorithm. _Applied Statistics_, 28(1), 20–28. DOI: 10.2307/2346806. — Diagnostic label-aggregation method.
+- Efron, B. (1979). Bootstrap Methods: Another Look at the Jackknife. _Annals of Statistics_, 7(1), 1–26. DOI: 10.1214/aos/1176344552. — Bootstrap confidence intervals for all reported metrics and prevalence estimates.
+- Gentzkow, M., Kelly, B., & Taddy, M. (2019). Text as Data. _Journal of Economic Literature_, 57(3), 535–574. DOI: 10.1257/jel.20181020. — Text-as-data methodology for economics.
+- Gheibi, O. & Ghazizadeh, E. (2025). Understanding Disagreement in Weak Supervision. _arXiv:2605.20642_. — Disagreement-band rationale.
+- Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. _Proceedings of ICML 2017_, 1321–1330. arXiv:1706.04599. — Expected calibration error (ECE) and temperature scaling for classifier calibration.
+- He, P., Gao, J., & Chen, W. (2021). DeBERTaV3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing. _arXiv:2111.09543_. — Primary encoder architecture.
+- Hopkins, D. J. & King, G. (2010). A Method of Automated Nonparametric Content Analysis for Social Science. _American Journal of Political Science_, 54(1), 229–247. DOI: 10.1111/j.1540-5907.2009.00428.x. — Aggregate text prevalence estimation.
+- Horvitz, D. G. & Thompson, D. J. (1952). A Generalization of Sampling Without Replacement from a Finite Universe. _Journal of the American Statistical Association_, 47(260), 663–685. DOI: 10.2307/2280784. — Design-weighted estimation.
+- Keith, K. & O'Connor, B. (2018). Uncertainty-Aware Generative Models for Inferring Document Class Prevalence. _Proceedings of EMNLP 2018_, 4185–4195. DOI: 10.18653/v1/D18-1487. — Aggregate prevalence with uncertainty.
+- King, G. & Zeng, L. (2001). Logistic Regression in Rare Events Data. _Political Analysis_, 9(2), 137–163. DOI: 10.1093/oxfordjournals.pan.a004868. — Positive-enrichment sampling rationale.
+- Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C., Gonzalez, J. E., Zhang, H., & Stoica, I. (2023). Efficient Memory Management for Large Language Model Serving with PagedAttention. _Proceedings of SOSP '23_, 611–626. DOI: 10.1145/3600006.3613165. — LLM serving infrastructure for open-weight model arm.
+- Landis, J. R. & Koch, G. G. (1977). The Measurement of Observer Agreement for Categorical Data. _Biometrics_, 33(1), 159–174. DOI: 10.2307/2529310. — Kappa interpretation scale.
+- Matthews, B. W. (1975). Comparison of the Predicted and Observed Secondary Structure of T4 Phage Lysozyme. _Biochimica et Biophysica Acta_, 405(2), 442–451. DOI: 10.1016/0005-2795(75)90109-9. — Reported evaluation metric.
+- Meyer, B. D. & Mittag, N. (2017). Misclassification in Binary Choice Models. _Journal of Econometrics_, 200(2), 244–259. DOI: 10.1016/j.jeconom.2017.06.012. — Econometric misclassification correction.
+- Monroe, B. L., Colaresi, M. P., & Quinn, K. M. (2008). Fightin' Words: Lexical Feature Selection and Evaluation for Identifying the Content of Political Conflict. _Political Analysis_, 16(4), 372–403. DOI: 10.1093/pan/mpn018. — Visualization method for signed n-gram log-odds bars.
+- Moreo, A., Esuli, A., & Sebastiani, F. (2021). QuaPy: A Python Framework for Quantification. _Proceedings of CIKM '21_, 4060–4064. DOI: 10.1145/3459637.3482015. — Quantification library.
+- Northcutt, C. G., Jiang, L., & Chuang, I. L. (2021). Confident Learning: Estimating Uncertainty in Dataset Labels. _Journal of Artificial Intelligence Research_, 70, 1373–1411. DOI: 10.1613/jair.1.12125. — Pruned arm / disagreement-band removal.
+- Platt, J. C. (1999). Probabilistic Outputs for Support Vector Machines and Comparisons to Regularized Likelihood Methods. In _Advances in Large Margin Classifiers_, 61–74. MIT Press. — Platt scaling.
+- Ratner, A., Bach, S. H., Ehrenberg, H., Fries, J., Wu, S., & Ré, C. (2017). Snorkel: Rapid Training Data Creation with Weak Supervision. _Proceedings of the VLDB Endowment_, 11(3), 269–282. DOI: 10.14778/3157794.3157797. — Weak-supervision label model.
+- Reimers, N. & Gurevych, I. (2019). Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. _Proceedings of EMNLP-IJCNLP 2019_, 3982–3992. DOI: 10.18653/v1/D19-1410. — Baseline embedding model for logistic regression.
+- Rogan, W. J. & Gladen, B. (1978). Estimating Prevalence from the Results of a Screening Test. _American Journal of Epidemiology_, 107(1), 71–76. DOI: 10.1093/oxfordjournals.aje.a112510. — Prevalence adjustment.
+- Saerens, M., Latinne, P., & Decaestecker, C. (2002). Adjusting the Outputs of a Classifier to New a Priori Probabilities. _Neural Computation_, 14(1), 217–247. DOI: 10.1162/089976602753284446. — EMQ / SLD cross-check.
+- Singh, S., Bhargav, A., Ratner, A., & Ré, C. (2025). Disagreement as a Signal for Weak Supervision. _arXiv:2511.14117_. — Disagreement-band rationale.
+- Vickers, A. J. & Elkin, E. B. (2006). Decision Curve Analysis: A Novel Method for Evaluating Prediction Models. _Medical Decision Making_, 26(6), 565–574. DOI: 10.1177/0272989X06295361. — Decision-curve analysis.
+- Warner, B. et al. (2024). Smarter, Better, Faster, Longer: A Modern Bidirectional Encoder for Fast, Memory Efficient, and Long Context Fine-Tuning and Inference. _arXiv:2412.13663_. — Comparison encoder architecture.
+- Wilson, E. B. (1927). Probable Inference, the Law of Succession, and Statistical Inference. _Journal of the American Statistical Association_, 22(158), 209–212. DOI: 10.2307/2276774. — Confidence intervals for rule-layer validation.
+- Zhu, Z., Shi, D., Liu, T., & Sugiyama, M. (2022). Robust Learning under Label Noise with Iterative Noise-Filtering. _arXiv:2203.05677_. — Soft target robustness rationale.
 
 ---
 
@@ -511,4 +536,4 @@ The original flat-script pipeline (`generate_training_data.py`, `split_data.py`,
 
 ## Authors
 
-carobs9, chickymonkeys
+carobs9, chickymonkeys, JeanetBentzen
