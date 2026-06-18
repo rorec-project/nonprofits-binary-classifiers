@@ -21,9 +21,19 @@ set -euo pipefail
 # ─── Infer repo root and source .env ──────────────────────────────────────────
 # PROJECT_DRIVE can be set as an env var (UCloud job parameter); otherwise the
 # repo root is derived from git (must run from inside the checkout).
-REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "/work/${PROJECT_DRIVE:-}")"
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || REPO_DIR=""
+if [ -z "${REPO_DIR}" ]; then
+  if [ -z "${PROJECT_DRIVE:-}" ]; then
+    echo "ERROR: cannot find repo root." >&2
+    echo "       Run from inside the git checkout, or set PROJECT_DRIVE" >&2
+    echo "       (as an env var or UCloud job parameter) to the project drive name." >&2
+    exit 1
+  fi
+  REPO_DIR="/work/${PROJECT_DRIVE}"
+fi
 if [ ! -d "${REPO_DIR}" ]; then
-  echo "ERROR: cannot find repo root — set PROJECT_DRIVE or run from inside the checkout." >&2
+  echo "ERROR: cannot find repo root at ${REPO_DIR}." >&2
+  echo "       Set PROJECT_DRIVE or run from inside the checkout." >&2
   exit 1
 fi
 
@@ -31,7 +41,11 @@ ENV_FILE="${REPO_DIR}/.env"
 [ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 # ─── Derive runtime env ───────────────────────────────────────────────────────
-DATA="/work/${DATA_DRIVE:-}"
+if [ -n "${DATA_DRIVE:-}" ]; then
+  DATA="/work/${DATA_DRIVE}"
+else
+  DATA="/work/__UNSET__DATA_DRIVE"
+fi
 export HF_HOME="${DATA}/hf-cache"
 export UV_CACHE_DIR="${DATA}/uv-cache"
 export UV_PYTHON_INSTALL_DIR="${DATA}/uv-python"

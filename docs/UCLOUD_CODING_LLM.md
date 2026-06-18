@@ -69,8 +69,8 @@ export UCLOUD_LLM_KEY="sk-ucloud"   # must match LLM_API_KEY in .env
         "baseURL": "{env:UCLOUD_LLM_BASE_URL}"
       },
       "models": {
-        "Qwen/Qwen2.5-Coder-7B-Instruct": {
-          "name": "Qwen2.5-Coder-7B (UCloud)"
+        "Qwen/Qwen3.6-35B-A3B": {
+          "name": "Qwen3.6-35B-A3B (UCloud)"
         }
       }
     }
@@ -116,3 +116,5 @@ bash utils/serve-llm.sh --stop
 ```
 
 The Public IP resource stays allocated after the job ends — detach it in the UCloud UI when not in use, and reattach it at the next job submission.
+
+`bash utils/serve-llm.sh --status` and `bash utils/serve-llm.sh --stop` first try to load `.env` so they only inspect or stop the configured coding model. If `.env` is unavailable, `--status` reports `unknown` and `--stop` refuses to kill any process rather than matching an unrelated vLLM server.

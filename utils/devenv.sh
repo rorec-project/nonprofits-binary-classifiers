@@ -5,7 +5,7 @@
 # (utils/init.sh): Neovim + LazyVim (+ optional private dotfiles), Claude Code,
 # opencode (the independent-LLM-review harness, driven by ANTHROPIC_API_KEY),
 # XDG dirs, git config, and Opencode provider configuration for the UCloud vLLM
-# coding assistant (see utils/serve-llm.sh and §13 of RUNNING_ON_UCLOUD.md).
+# coding assistant (see utils/serve-llm.sh and §14 of RUNNING_ON_UCLOUD.md).
 # Everything installs into the PROJECT drive so it
 # persists across jobs. It is NEVER invoked by batch/GPU jobs and writes its own
 # sourced file (devenv.sh) so the lean runtime env.sh stays free of harness vars.
@@ -16,10 +16,35 @@
 # CONFIGURATION
 # ════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
+shopt -s nullglob
 
-PROJECT_DRIVE="CHANGE_ME"
-ENV_FILE="/work/${PROJECT_DRIVE}/.env"
-[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
+# Refuse non-TTY contexts (e.g., UCloud Initialization or batch jobs). A script
+# invoked as `bash utils/devenv.sh` is non-interactive in Bash's `$-` sense, so
+# TTY presence is the reliable signal for an SSH/web-terminal session.
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  echo "ERROR: utils/devenv.sh is for interactive SSH sessions only." >&2
+  echo "       Do not use it as an Initialization script or in batch jobs." >&2
+  exit 1
+fi
+
+# ─── Auto-discover PROJECT_DRIVE by scanning for .env under /work/ ────────────
+ENV_FILE=""
+for d in /work/*/; do
+  if [ -f "${d}.env" ]; then
+    ENV_FILE="${d}.env"
+    PROJECT_DRIVE="$(basename "${d}")"
+    echo "--- Found .env on /work/${PROJECT_DRIVE} ---"
+    break
+  fi
+done
+
+if [ -z "${ENV_FILE}" ]; then
+  echo "ERROR: .env not found under /work/." >&2
+  echo "       Create it on the project drive before starting the job." >&2
+  exit 1
+fi
+
+set -a && . "${ENV_FILE}" && set +a
 
 # Git identity + the HTTPS credential helper are established by utils/init.sh in
 # the default ~/.gitconfig on every job; the overlay deliberately does NOT set
@@ -36,21 +61,9 @@ INSTALL_OPENCODE=1   # opencode (independent LLM review harness)
 INSTALL_CLAUDE=1     # Claude Code
 CONFIGURE_OPENCODE=1 # Write Opencode provider config pointing at the UCloud LLM
 
-# Refuse to run in non-interactive shells (e.g., as a UCloud Initialization
-# script or batch job). This overlay is for interactive SSH sessions only.
-case "$-" in
-*i*) ;;
-*)
-  echo "ERROR: utils/devenv.sh is for interactive SSH sessions only." >&2
-  echo "       Do not use it as an Initialization script or in batch jobs." >&2
-  exit 1
-  ;;
-esac
-
 PROJECT="/work/${PROJECT_DRIVE}"
 TOOLS_DIR="${PROJECT}/devtools"
 BIN_DIR="${TOOLS_DIR}/bin"
-ENV_FILE="${PROJECT}/.env"
 DEVENV_SH="${PROJECT}/devenv.sh"
 
 if [ ! -d "${PROJECT}" ]; then
@@ -107,8 +120,6 @@ if [ "${INSTALL_NEOVIM}" -eq 1 ]; then
 fi
 
 # ─── opencode + Claude Code (npm prefix on the project drive) ─────────────────
-# npm global installs into the system prefix can fail silently; point npm at a
-# writable, persistent prefix and symlink the binaries onto PATH.
 
 NPM_DIR="${TOOLS_DIR}/npm-global"
 mkdir -p "${NPM_DIR}"
@@ -129,9 +140,6 @@ if [ "${INSTALL_CLAUDE}" -eq 1 ] && [ ! -x "${BIN_DIR}/claude" ]; then
 fi
 
 # ─── Opencode provider configuration (UCloud vLLM coding assistant) ────────────
-# Writes to ${XDG_CONFIG_HOME}/opencode/ — which lives on the project drive and
-# therefore persists across jobs. Opencode finds it because XDG_CONFIG_HOME is
-# exported by the overlay env file written below.
 
 if [ "${CONFIGURE_OPENCODE}" -eq 1 ] && [ "${INSTALL_OPENCODE}" -eq 1 ]; then
   OC_CONFIG_DIR="${XDG_CONFIG_HOME}/opencode"
@@ -182,7 +190,7 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
 # Opencode LLM provider: vLLM on localhost (job) or Public IP (laptop).
 # {env:UCLOUD_LLM_BASE_URL} in opencode.json resolves this at runtime.
 # On your laptop override this in ~/.bashrc / ~/.zshrc with the static Public IP
-# (set UCLOUD_PUBLIC_IP in .env — see §13 of RUNNING_ON_UCLOUD.md).
+# (set UCLOUD_PUBLIC_IP in .env — see §14 of RUNNING_ON_UCLOUD.md).
 export UCLOUD_LLM_BASE_URL="http://localhost:${LLM_CODING_PORT}/v1"
 export UCLOUD_LLM_KEY="${LLM_API_KEY}"
 EOF
@@ -205,7 +213,7 @@ if [ -n "${UCLOUD_PUBLIC_IP:-}" ]; then
   echo "    export UCLOUD_LLM_BASE_URL=\"http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1\""
 else
   echo "    export UCLOUD_LLM_BASE_URL=\"http://<UCLOUD_PUBLIC_IP>:${LLM_CODING_PORT}/v1\""
-  echo "    (set UCLOUD_PUBLIC_IP in .env — see §13 of RUNNING_ON_UCLOUD.md)"
+  echo "    (set UCLOUD_PUBLIC_IP in .env — see §14 of RUNNING_ON_UCLOUD.md)"
 fi
 echo "    export UCLOUD_LLM_KEY=\"${LLM_API_KEY}\""
 echo "  Also merge the ucloud-llm provider block from:"

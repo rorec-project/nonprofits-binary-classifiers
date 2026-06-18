@@ -23,27 +23,51 @@
 # Logs: $PROJECT/outputs/interim/vllm-coding.log
 #
 set -euo pipefail
-
-# ── Source config + secrets ───────────────────────────────────────────────────
-
-PROJECT_DRIVE="CHANGE_ME"
-ENV_FILE="/work/${PROJECT_DRIVE}/.env"
-[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
-
-PROJECT="/work/${PROJECT_DRIVE}"
-ENV_SH="${PROJECT}/env.sh"
-
-[ -f "${ENV_SH}" ] && source "${ENV_SH}"
-
-VLLM_LOG="${PROJECT}/outputs/interim/vllm-coding.log"
+shopt -s nullglob
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+load_env() {
+  local required="${1:-1}"
+
+  ENV_FILE=""
+  for d in /work/*/; do
+    if [ -f "${d}.env" ]; then
+      ENV_FILE="${d}.env"
+      PROJECT_DRIVE="$(basename "${d}")"
+      echo "--- Found .env on /work/${PROJECT_DRIVE} ---"
+      break
+    fi
+  done
+
+  if [ -z "${ENV_FILE}" ]; then
+    if [ "${required}" -eq 1 ]; then
+      echo "ERROR: .env not found under /work/." >&2
+      echo "       Create it on the project drive before starting the job." >&2
+      exit 1
+    fi
+    return 1
+  fi
+
+  set -a && . "${ENV_FILE}" && set +a
+
+  PROJECT="/work/${PROJECT_DRIVE}"
+  ENV_SH="${PROJECT}/env.sh"
+
+  [ -f "${ENV_SH}" ] && source "${ENV_SH}"
+}
+
+vllm_pids() {
+  [ -n "${LLM_CODING_MODEL:-}" ] || return 1
+  ps aux | grep -F "vllm serve ${LLM_CODING_MODEL}" | grep -v grep | awk '{print $2}'
+}
+
 vllm_running() {
-  pgrep -f "vllm serve ${LLM_CODING_MODEL}" >/dev/null 2>&1
+  [ -n "$(vllm_pids)" ]
 }
 
 vllm_ready() {
+  [ -n "${LLM_CODING_PORT:-}" ] || return 1
   curl -sf "http://localhost:${LLM_CODING_PORT}/health" >/dev/null 2>&1
 }
 
@@ -78,8 +102,13 @@ print_endpoints() {
 
 if [[ "${1:-}" == "--stop" ]]; then
   echo "--- Stopping vLLM coding server ---"
+  if ! load_env 0; then
+    echo "  .env not found; cannot identify the coding vLLM model safely."
+    echo "  No process was stopped."
+    exit 0
+  fi
   if vllm_running; then
-    pkill -f "vllm serve ${LLM_CODING_MODEL}" && echo "  Stopped."
+    kill $(vllm_pids) 2>/dev/null && echo "  Stopped."
   else
     echo "  Not running."
   fi
@@ -89,11 +118,23 @@ fi
 # ── --status ──────────────────────────────────────────────────────────────────
 
 if [[ "${1:-}" == "--status" ]]; then
-  echo "vLLM:  $(vllm_running && echo "running (PID $(pgrep -f "vllm serve ${LLM_CODING_MODEL}"))" || echo "stopped")"
+  if ! load_env 0; then
+    echo "vLLM:  unknown (.env not found; model name unavailable)"
+    echo "ready: unknown (.env not found; port unavailable)"
+    echo "  Endpoints not printed."
+    exit 0
+  fi
+  echo "vLLM:  $(vllm_running && echo "running (PID $(vllm_pids | tr '\n' ' '))" || echo "stopped")"
   echo "ready: $(vllm_ready && echo "yes" || echo "no")"
   print_endpoints
   exit 0
 fi
+
+# ── Source config + secrets ───────────────────────────────────────────────────
+
+load_env 1
+
+VLLM_LOG="${PROJECT}/outputs/interim/vllm-coding.log"
 
 # ── Validate drives are mounted ───────────────────────────────────────────────
 
@@ -115,7 +156,7 @@ fi
 # ── Start vLLM ────────────────────────────────────────────────────────────────
 
 if vllm_running; then
-  echo "--- vLLM already running (PID $(pgrep -f "vllm serve ${LLM_CODING_MODEL}")) ---"
+  echo "--- vLLM already running (PID $(vllm_pids | tr '\n' ' ')) ---"
 else
   echo "--- Starting vLLM: ${LLM_CODING_MODEL} ---"
   echo "    port=${LLM_CODING_PORT}  tp=${LLM_TENSOR_PARALLEL}  max-len=${LLM_MAX_MODEL_LEN}"

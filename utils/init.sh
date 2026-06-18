@@ -12,6 +12,7 @@
 # `utils/devenv.sh` overlay (interactive SSH only), kept decoupled so GPU/batch
 # jobs stay lean.
 set -euo pipefail
+shopt -s nullglob
 
 # Pre-pull the open-weight annotator weights into the shared HF cache. Leave 0
 # on every job EXCEPT the vLLM annotation job (stage 03 open-weight arm); the
@@ -61,6 +62,7 @@ set -a && . "${ENV_FILE}" && set +a
 DATA="/work/${DATA_DRIVE}"
 PROJECT="/work/${PROJECT_DRIVE}"
 REPO_DIR="${PROJECT}"
+# same path as discovered above, now using verified PROJECT
 ENV_FILE="${PROJECT}/.env"
 ENV_SH="${PROJECT}/env.sh"
 

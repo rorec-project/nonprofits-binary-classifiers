@@ -486,7 +486,7 @@ GPU jobs run on the **UCloud SDU/DeiC Interactive HPC** platform. See [`docs/RUN
 - Job submission (`gpu-nvidia-b200` SKU, full GPUs, not `-mig` fractional)
 - `/work` persistence rules (only `/work` survives job termination; mount a Drive there)
 - `utils/init.sh` environment setup (uv pre-installed, Python 3.13 self-managed, B200 `sm_100` requires PyTorch 2.7+ from the CUDA 12.8 `cu128` wheel index)
-- vLLM serve on localhost (`--tensor-parallel-size 8`)
+- vLLM serve on localhost (`--tensor-parallel-size 1` for the current Gemma annotator; raise only for larger models)
 - SSH access and secret management (store `OPENAI_API_KEY` in a `.env` inside a private `/work` Drive)
 - GPU compatibility check (`nvidia-smi`, `torch.cuda.get_device_name(0)`)
 - Optional coding LLM setup via Opencode (see [`docs/UCLOUD_CODING_LLM.md`](docs/UCLOUD_CODING_LLM.md))

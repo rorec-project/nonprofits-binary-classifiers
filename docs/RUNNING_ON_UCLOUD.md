@@ -59,7 +59,7 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
 
 1. **Project + grant.** In the `bertopic-test` project, ensure a **Storage** allocation exists (project **Allocations** panel). Add collaborators via **Invite**.
 2. **Create the two Drives** in **Files → "Create Drives"** (`<DATA_DRIVE>`, `<PROJECT_DRIVE>`).
-3. **Upload raw parquet** to `/work/<DATA_DRIVE>/raw/` (web uploader, one time): `missions_cross_section.parquet`, `bmf_unified_processed.parquet`. Also upload the **stage-01 manifests** produced locally (see §4) into `/work/<PROJECT_DRIVE>/data/interim/manifests/` — at least `silver_manifest.csv` (read by stage 03).
+3. **Upload raw parquet** to `/work/<DATA_DRIVE>/raw/` (web uploader, one time): `missions_cross_section.parquet`, `bmf_unified_processed.parquet`. Also upload the **stage-01 manifests** produced locally (see §5) into `/work/<PROJECT_DRIVE>/data/interim/manifests/` — at least `silver_manifest.csv` (read by stage 03).
 4. **Set up SSH keys** for terminal job access. On your **local** machine:
 
    ```bash
@@ -86,7 +86,8 @@ cat ~/.ssh/id_ed25519.pub         # copy the output, paste into UCloud
    GITHUB_TOKEN=ghp_...
    ANTHROPIC_API_KEY=sk-ant-...   # only if using the dev overlay
    ```
-   This is the **single source of truth** for drive names, git identity, and secrets. No other config file needs the drive names set — they flow to all scripts from here. It is needed **before the first job** — `init.sh` reads it to find the drives and seed the git credential store. 8. **No other config edits needed.** The old step of editing `utils/config.sh` and `init.sh` fallbacks is gone — those values now come from `.env`.
+   This is the **single source of truth** for drive names, git identity, and secrets. No other config file needs the drive names set — they flow to all scripts from here. It is needed **before the first job** — `init.sh` reads it to find the drives and seed the git credential store.
+8. **No other config edits needed.** The old step of editing `utils/config.sh` and `init.sh` fallbacks is gone — those values now come from `.env`.
 
 ---
 
@@ -107,7 +108,43 @@ cat ~/.ssh/id_ed25519.pub         # copy the output, paste into UCloud
 
 ---
 
-## 4. Local-first workflow (one-time, deterministic)
+## 4. SSH access from your local computer
+
+UCloud jobs with SSH enabled print a connection string in the job progress view: `ssh ucloud@ssh.cloud.sdu.dk -p <PORT>`. The SSH user is always `ucloud`.
+
+### Per-job SSH (simple)
+
+```bash
+ssh ucloud@ssh.cloud.sdu.dk -p <PORT>
+```
+
+The PORT is shown in the job progress view after the job starts. It changes every job.
+
+### Persistent SSH config alias (recommended)
+
+Add this entry to `~/.ssh/config` on your local computer. Update `<PORT>` each time you start a new job:
+
+```
+Host ucloud-job
+    HostName ssh.cloud.sdu.dk
+    User ucloud
+    Port <PORT>
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 60
+```
+
+Then connect with: `ssh ucloud-job`
+
+### Key setup
+
+1. On your local machine: `ssh-keygen -t ed25519 -C "my-laptop" -f ~/.ssh/id_ed25519`
+2. Upload the public key to UCloud: **Resources → SSH keys** → paste `cat ~/.ssh/id_ed25519.pub`
+3. Enable SSH at every job submission (there's a toggle in the submission form)
+
+---
+
+## 5. Local-first workflow (one-time, deterministic)
 
 Run the cheap/deterministic front of the pipeline **locally**, commit the small tracked artifacts, then let UCloud do the heavy GPU lifting.
 
@@ -117,16 +154,16 @@ Run the cheap/deterministic front of the pipeline **locally**, commit the small 
 
 ---
 
-## 5. Scripts (`utils/`)
+## 6. Scripts (`utils/`)
 
-All configuration — drive names, git identity, LLM serving, network, and secrets — is set once in `.env` on the project drive (see step 7). Every script sources it.
+All configuration — drive names, git identity, LLM serving, network, and secrets — is set once in `.env` on the project drive (see step 7). `init.sh`, `devenv.sh`, and `serve-llm.sh` require it and auto-discover the project drive by scanning `/work/*/.env`; `run.sh` also sources it when present and should be run from the project checkout.
 
 | Script         | Where it runs                     | What it does                                                                                                                                                                                 |
 | -------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init.sh`      | UCloud (Initialization or manual) | Lean runtime: find `.env`, assert drives, export `HF_HOME`/`UV_*`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.             |
 | `devenv.sh`    | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs. |
-| `serve-llm.sh` | UCloud (interactive SSH only)     | Coding LLM assistant: starts vLLM with `LLM_CODING_MODEL` (from `.env`), waits for `/health`, prints endpoint URLs. Run after `devenv.sh`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md).  |
-| `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env`, derive runtime env, `git pull`, run stages.                                                                                                                   |
+| `serve-llm.sh` | UCloud (interactive SSH only)     | Coding LLM assistant: starts vLLM with `LLM_CODING_MODEL` (from `.env`), waits for `/health`, prints endpoint URLs. Run after `devenv.sh`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md).   |
+| `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env` when present, derive runtime env, `git pull`, run stages. If `DATA_DRIVE` is missing, cache paths use `/work/__UNSET__DATA_DRIVE` and fail loudly.            |
 
 ### Running stages — `run.sh`
 
@@ -150,7 +187,7 @@ vLLM serving is needed **only** for the open-weight annotation arm. B200 hours a
 
 ---
 
-## 6. Connecting & environment
+## 7. Connecting & environment
 
 ```bash
 ssh ucloud@ssh.cloud.sdu.dk -p <PORT>
@@ -206,7 +243,7 @@ uv run ty check
 
 ---
 
-## 7. Model / vLLM (config-authoritative + switchable)
+## 8. Model / vLLM (config-authoritative + switchable)
 
 `config/religious_missions.yaml` is the **single source of truth** for the annotator. The open-weight arm is `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`).
 
@@ -228,15 +265,17 @@ The annotator calls `http://127.0.0.1:8000/v1`; weights cache under `HF_HOME`, s
 
 ---
 
-## 8. Pulling results to your laptop
+## 9. Pulling results to your laptop
 
 ```bash
 rsync -av -e "ssh -p <PORT>" "ucloud@ssh.cloud.sdu.dk:/work/<PROJECT_DRIVE>/data/processed/" ./local-results/
 ```
 
+Alternatively, use UCloud's built-in Syncthing: right-click a folder in the UCloud Files view → "Add to sync". Install a Syncthing client on your laptop and pair it with the UCloud device ID (shown in UCloud → Files → Sync button → Manage synchronization). This avoids per-job SSH port management.
+
 ---
 
-## 9. Batch mode (headless on UCloud)
+## 10. Batch mode (headless on UCloud)
 
 UCloud jobs can be submitted with an optional **Batch mode** parameter that runs a script headlessly without SSH. The job starts, runs the script, and terminates on completion — no human connects. This is ideal for long-running CPU/GPU segments (e.g., stages 06→07→08 overnight).
 
@@ -247,23 +286,23 @@ Attach **two scripts** at job submission:
 | **Initialization** | `utils/init.sh`                                          |
 | **Batch mode**     | `utils/run.sh` with the stage IDs as the script argument |
 
-**Prerequisites:** the repo must already be cloned on the project drive, manifests uploaded (per §2.3), and `.env` in place (per §2.6). SSH can be disabled since no human connects.
+**Prerequisites:** the repo must already be cloned on the project drive, manifests uploaded (per §2 step 3), and `.env` in place (per §2 step 7). SSH can be disabled since no human connects.
 
 `init.sh` runs first (drives, env, symlinks, `uv sync`), then `run.sh` executes the requested stages.
 
 ---
 
-## 10. Operational notes
+## 11. Operational notes
 
 - **Cost / wall-time hygiene (B200 is expensive).** Run CPU-only s `cpu-amd-zen5`, not the GPU node. Right-size wall-time. **Stop the job when idle** — UCloud bills running jobs, including idle interactive ones. Use per-stage resume (`--limit`, resume-by-`EIN2`) for long stages.
 - **Outbound network assumption.** Jobs need outbound internet for OpenAI, HF Hub, GitHub, npm, and Anthropic (overlay). Confirm on the first run.
-- **Repeatable submission.** Save the job parameters (machine type, both drives, `utils/init.sh` as Initialization, SSH enabled) as a reusable **job template**. For interactive coding jobs that use the LLM (see [Coding LLM appendix](UCLOUD_CODING_LLM.md)), also include the Public IP resource in the template — it is static, so you attach the same one every time.
+- **Job templates.** UCloud supports importing parameters from previous runs. After configuring a job once (machine type, both Drives, `utils/init.sh` as Initialization, Batch mode if needed, SSH, and Public IP for coding LLM jobs), reuse it via **Import parameters** on a new job or upload the `JobParameters.json` from a completed job's output folder. This eliminates re-entering all fields on every submission.
 - **Disk / quota growth.** HF cache, uv cache, checkpoints, and `.venv` accumulate on the drives. Watch quota; occasionally prune stale checkpoints under `data/models`.
 - **Secrets location.** `.env` lives on the project drive only; no secrets ever go on the shared corpus drive (other repos/people mount it).
 
 ---
 
-## 11. tmux (interactive resilience)
+## 12. tmux (interactive resilience)
 
 tmux 3.4 is pre-installed. SSH connections can drop, but the pipeline keeps running inside the session. Use the raw tmux commands directly:
 
@@ -277,14 +316,14 @@ tmux kill-session -t bclass-pipeline   # stop a finished or stuck session
 
 ---
 
-## 12. Verification (fresh job, end-to-end)
+## 13. Verification (fresh job, end-to-end)
 
 1. Start a Terminal/PyTorch job; attach **both** Drives; attach `utils/init.sh` as Initialization; enable SSH.
 2. SSH in; confirm env auto-loaded: `echo $HF_HOME` → the data drive; `ls -l data/raw` → `/work/<DATA_DRIVE>/raw`.
-3. `uv run python -c "import torch; print(torch.version.cuda, torch.cuda.is_bf16_supported())"` (GPU job; pin cu128 per §6 if needed).
+3. `uv run python -c "import torch; print(torch.version.cuda, torch.cuda.is_bf16_supported())"` (GPU job; pin cu128 per §7 if needed).
 4. `uv run ruff check .` and `uv run ty check` succeed.
 5. `bash utils/run.sh 10` → figures appear under `data/processed/figures`.
-6. Confirm `data/interim/manifests/silver_manifest.csv` resolves through the symlink (uploaded, not regenerated), then `bash utils/run.sh 03 --annotate-limit 5` reads the manifest.
+6. Confirm `data/interim/manifests/silver_manifest.csv` exists on the project drive (uploaded, not regenerated), then `bash utils/run.sh 03 --annotate-limit 5` reads the manifest.
 7. GPU smoke: short `bash utils/run.sh 06` (or `--limit`) writes a checkpoint under `data/models`.
 8. `git pull` / `commit` / `push` work in the project-drive checkout.
 9. From local: `rsync -av -e "ssh -p <PORT>" "ucloud@ssh.cloud.sdu.dk:/work/<PROJECT_DRIVE>/data/processed/" ./local-results/` pulls outputs down.
@@ -293,6 +332,6 @@ tmux kill-session -t bclass-pipeline   # stop a finished or stuck session
 
 ---
 
-## 13. Coding LLM (optional)
+## 14. Coding LLM (optional)
 
 See the dedicated appendix at [`UCLOUD_CODING_LLM.md`](UCLOUD_CODING_LLM.md) for the interactive AI-assisted coding setup (Opencode + vLLM on UCloud, accessible from your laptop via a static Public IP). This is an optional layer on top of the base workflow and is never used by batch/GPU pipeline jobs.
