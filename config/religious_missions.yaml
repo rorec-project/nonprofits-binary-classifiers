@@ -25,12 +25,12 @@ paths:
 # (production_slate.json), so `production` below is just the default seed.
 model_slate:
   bakeoff_candidates:
-    - id: gpt-4o-mini
+    - id: gpt-4o-mini-2024-07-18
       provider: openai
-    - id: gpt-5-mini
+    - id: gpt-5-mini-2025-08-07
       provider: openai
       reasoning_effort: minimal
-    - id: gpt-5-nano
+    - id: gpt-5-nano-2025-08-07
       provider: openai
       reasoning_effort: minimal
     - id: google/gemma-3-27b-it
@@ -85,8 +85,8 @@ aggregation:
 training:
   dev_fraction: 0.1
   targets: soft
-  arms: [hard, class_weighted]  # pruned dropped: soft targets already down-weight disagreement (arXiv:2605.20642); opt-in via override
-  curve_fractions: [1.0]  # learning curve dropped; single full-data run
+  arms: [hard, class_weighted] # pruned dropped: soft targets already down-weight disagreement (arXiv:2605.20642); opt-in via override
+  curve_fractions: [1.0] # learning curve dropped; single full-data run
   sweep_seeds: [42, 43, 44]
   final_seeds: [42, 43, 44, 45, 46]
   crossfit_folds: 5
@@ -134,7 +134,7 @@ inference:
 
 prevalence:
   alpha: 0.05
-  cross_checks: [emq]  # EMQ (vendored SLD, Saerens 2002) as the single quantification sensitivity check; KDEy opt-in under `quant` extra
+  cross_checks: [emq] # EMQ (vendored SLD, Saerens 2002) as the single quantification sensitivity check; KDEy opt-in under `quant` extra
   use_design_weights: true
   per_ntee: true
   ntee_min_n: 10
