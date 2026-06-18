@@ -489,23 +489,15 @@ GPU jobs run on the **UCloud SDU/DeiC Interactive HPC** platform. See [`docs/RUN
 - vLLM serve on localhost (`--tensor-parallel-size 8`)
 - SSH access and secret management (store `OPENAI_API_KEY` in a `.env` inside a private `/work` Drive)
 - GPU compatibility check (`nvidia-smi`, `torch.cuda.get_device_name(0)`)
+- Optional coding LLM setup via Opencode (see [`docs/UCLOUD_CODING_LLM.md`](docs/UCLOUD_CODING_LLM.md))
 
 Quick excerpt for the impatient:
 
 ```bash
 # On UCloud, after cloning to /work/nonprofits-binary-classifiers
 cd /work/nonprofits-binary-classifiers
-bash utils/init.sh
-set -a
-source /work/.env
-set +a
-
-# Serve open-weight model (only on jobs that need it)
-uv run vllm serve google/gemma-3-27b-it --tensor-parallel-size 8 --port 8000
-
-# Train (lean sync, no serve extra)
-uv sync
-uv run python scripts/run_pipeline.py --stages 06
+bash utils/init.sh                     # sources .env, creates symlinks, uv sync
+bash utils/run.sh "06,07,08"           # run GPU stages
 ```
 
 ---

@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
 # utils/init.sh — lean RUNTIME init for the binary-classifier pipeline on UCloud.
 #
-# App-agnostic: works as the Initialization Bash script for a Terminal /
-# PyTorch / JupyterLab job, and as a manual `bash utils/init.sh`. It wires the
-# ephemeral job at the persistent storage spine (two UCloud Drives), exports
-# runtime env, creates the data symlinks, and syncs the Python env. It does NOT
-# install editors or agent harnesses — that is the optional `utils/devenv.sh`
-# overlay (interactive SSH only), kept decoupled so GPU/batch jobs stay lean.
+# Works as the Initialization Bash script for a Terminal / PyTorch / JupyterLab
+# job, and as a manual `bash utils/init.sh`. It waits for /work mount, finds and
+# sources .env on the project drive, exports runtime env (HF_HOME, UV_*),
+# installs uv, writes env.sh, configures git, pulls the latest code, creates
+# data symlinks, and syncs the Python env. Assumes the repo is already cloned
+# on the project drive and .env exists at its root.
 #
-# Bootstrap order:
-#   First-ever job : create .env on the project drive (pre-job) → start Terminal
-#                    with this script as Initialization → it sources .env, seeds
-#                    git, detects no checkout, exits → SSH in → clone the repo
-#                    → `bash utils/init.sh`.
-#   Every later job: attach this script as Initialization. It detects the
-#                    existing checkout and only pulls + syncs + relinks.
-#
+# It does NOT install editors or agent harnesses — that is the optional
+# `utils/devenv.sh` overlay (interactive SSH only), kept decoupled so GPU/batch
+# jobs stay lean.
 set -euo pipefail
-
-# Fallback for PROJECT_DRIVE — the one value needed to find .env before the
-# repo is cloned. DATA_DRIVE, GIT_NAME, GIT_EMAIL come from .env (see below).
-PROJECT_DRIVE="CHANGE_ME_PROJECT_DRIVE"
 
 # Pre-pull the open-weight annotator weights into the shared HF cache. Leave 0
 # on every job EXCEPT the vLLM annotation job (stage 03 open-weight arm); the
@@ -42,17 +33,29 @@ until [ -d "/work" ] && [ -n "$(ls -A /work 2>/dev/null)" ]; do
 done
 echo "--- /work ready after ${ELAPSED}s ---"
 
-# Now the mount is up — source .env from the project drive. This is the single
-# source of truth for all config: drive names, git identity, LLM serving, and
-# secrets. Guarded so a missing .env warns instead of aborting.
-PROJECT="/work/${PROJECT_DRIVE}"
-ENV_FILE="${PROJECT}/.env"
-if [ -f "${ENV_FILE}" ]; then
-  echo "--- Sourcing ${ENV_FILE} ---"
-  set -a && . "${ENV_FILE}" && set +a
-else
-  echo "WARNING: ${ENV_FILE} not found — config and secrets will be unset." >&2
+# ─── Find and source .env on the project drive ────────────────────────────────
+# After the mount is up, scan /work for a subdirectory containing .env. This is
+# the single source of truth for all config: drive names, git identity, LLM
+# serving, and secrets. Only one drive should have .env — fail loud if missing.
+ENV_FILE=""
+for d in /work/*/; do
+  if [ -f "${d}.env" ]; then
+    ENV_FILE="${d}.env"
+    PROJECT_DRIVE="$(basename "${d}")"
+    echo "--- Found .env on /work/${PROJECT_DRIVE} ---"
+    break
+  fi
+done
+
+if [ -z "${ENV_FILE}" ]; then
+  echo "ERROR: .env not found under /work/." >&2
+  echo "       Create it on the project drive before starting the job." >&2
+  echo "       See docs/RUNNING_ON_UCLOUD.md §2 step 7." >&2
+  exit 1
 fi
+
+echo "--- Sourcing ${ENV_FILE} ---"
+set -a && . "${ENV_FILE}" && set +a
 
 # Derive all paths from (now populated) config values.
 DATA="/work/${DATA_DRIVE}"
@@ -124,69 +127,28 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   chmod 600 "${HOME}/.git-credentials"
 fi
 
-# ─── First-job bootstrap: repo not cloned yet ─────────────────────────────────
-
-if [ ! -d "${REPO_DIR}/.git" ]; then
-  echo ""
-  echo "=== Bootstrap: repository not found at ${REPO_DIR} ==="
-  echo "Env, env.sh, and git credentials are now set up. Clone the repo, then"
-  echo "re-run this script (it will pull + sync + relink from here on):"
-  echo ""
-  echo "  cd \"${REPO_DIR}\""
-  echo "  git init"
-  echo "  git remote add origin https://github.com/rorec-project/nonprofits-binary-classifiers.git"
-  echo "  git fetch origin master"
-  echo "  git checkout master"
-  echo "  bash utils/init.sh"
-  echo ""
-  exit 0
-fi
-
 # ─── cwd is load-bearing: PathRegistry anchors at the current directory ───────
 
 cd "${REPO_DIR}"
 git pull --ff-only || echo "WARNING: 'git pull --ff-only' failed (network, auth, or local changes). Check stderr above." >&2
 
-# ─── Pre-create drive-side target directories ─────────────────────────────────
-# The symlinks below point here; PathRegistry.ensure_dirs() does
-# mkdir(exist_ok=True) on these paths, which RE-RAISES on a symlink whose target
-# is missing. Creating the top-level targets first makes the links valid; the
-# nested dirs (manifests, shards, runs, checkpoints, embeddings) are created
-# through the now-valid links by ensure_dirs().
-mkdir -p \
-  "${DATA}/raw" "${DATA}/hf-cache" "${DATA}/uv-cache" "${DATA}/uv-python" \
-  "${PROJECT}/outputs/interim" \
-  "${PROJECT}/outputs/models" \
-  "${PROJECT}/outputs/processed/evaluation" \
-  "${PROJECT}/outputs/processed/predictions" \
-  "${PROJECT}/outputs/processed/prevalence" \
-  "${PROJECT}/outputs/processed/figures"
+# ─── Pre-create directories on the DATA_DRIVE ─────────────────────────────────
+# data/raw is the only symlink — it points to the shared cross-project data drive.
+# Everything else (data/interim, data/models, data/processed/*) lives as real
+# directories inside the repo on the project drive, which persists across jobs.
+# PathRegistry.ensure_dirs() creates the nested dirs on first use.
+mkdir -p "${DATA}/raw" "${DATA}/hf-cache" "${DATA}/uv-cache" "${DATA}/uv-python"
 
-# ─── Create the data symlinks (idempotent) ────────────────────────────────────
-# `ln -sfn` safely replaces an existing SYMLINK, but nests inside a real dir, so
-# clear any wrong-type path first. data/processed itself stays a REAL directory
-# (it holds the git-tracked gold/ subtree); only its leaf entries are symlinked.
-link() {
-  local target="$1" linkpath="$2"
-  if [ -e "${linkpath}" ] && [ ! -L "${linkpath}" ]; then
-    rm -rf "${linkpath}"
-  fi
-  ln -sfn "${target}" "${linkpath}"
-}
+# ─── Create the data/raw symlink (idempotent) ─────────────────────────────────
+# Clear any wrong-type path first, then symlink.
+if [ -e "data/raw" ] && [ ! -L "data/raw" ]; then
+  rm -rf data/raw
+fi
+mkdir -p data
+ln -sfn "${DATA}/raw" data/raw
 
-mkdir -p data data/processed
-
-link "${DATA}/raw" data/raw
-link "${PROJECT}/outputs/interim" data/interim
-link "${PROJECT}/outputs/models" data/models
-link "${PROJECT}/outputs/processed/silver_labels.csv" data/processed/silver_labels.csv
-link "${PROJECT}/outputs/processed/evaluation" data/processed/evaluation
-link "${PROJECT}/outputs/processed/predictions" data/processed/predictions
-link "${PROJECT}/outputs/processed/prevalence" data/processed/prevalence
-link "${PROJECT}/outputs/processed/figures" data/processed/figures
-
-echo "--- Symlinks ---"
-ls -l data data/processed
+echo "--- Symlink ---"
+ls -l data/raw
 
 # ─── Python environment ───────────────────────────────────────────────────────
 # System Python is 3.12; the project requires 3.13. `uv sync` includes the `dev`

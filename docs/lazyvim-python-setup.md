@@ -21,7 +21,7 @@ uv tool install ty        # type checker (Astral, beta)
    vim.g.lazyvim_python_ruff = "ruff"  -- native ruff LSP, not ruff_lsp
    ```
 
-   LazyVim disables the other Python LSPs automatically once `lsp` is set.
+LazyVim disables the other Python LSPs automatically once `lsp` is set.
 
 ## venv
 

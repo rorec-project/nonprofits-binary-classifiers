@@ -18,21 +18,27 @@
 
 set -euo pipefail
 
-PROJECT_DRIVE="CHANGE_ME"
-ENV_FILE="/work/${PROJECT_DRIVE}/.env"
-[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
-
-CONFIG="config/religious_missions.yaml"
-
-REPO_DIR="/work/${PROJECT_DRIVE}"
-ENV_SH="/work/${PROJECT_DRIVE}/env.sh"
-
-if [ ! -f "${ENV_SH}" ]; then
-  echo "ERROR: ${ENV_SH} not found — run 'bash utils/init.sh' first." >&2
+# ─── Infer repo root and source .env ──────────────────────────────────────────
+# PROJECT_DRIVE can be set as an env var (UCloud job parameter); otherwise the
+# repo root is derived from git (must run from inside the checkout).
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "/work/${PROJECT_DRIVE:-}")"
+if [ ! -d "${REPO_DIR}" ]; then
+  echo "ERROR: cannot find repo root — set PROJECT_DRIVE or run from inside the checkout." >&2
   exit 1
 fi
-# shellcheck source=/dev/null
-. "${ENV_SH}"
+
+ENV_FILE="${REPO_DIR}/.env"
+[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
+
+# ─── Derive runtime env ───────────────────────────────────────────────────────
+DATA="/work/${DATA_DRIVE:-}"
+export HF_HOME="${DATA}/hf-cache"
+export UV_CACHE_DIR="${DATA}/uv-cache"
+export UV_PYTHON_INSTALL_DIR="${DATA}/uv-python"
+export UV_LINK_MODE=copy
+export PATH="${HOME}/.local/bin:${PATH}"
+
+CONFIG="config/religious_missions.yaml"
 
 cd "${REPO_DIR}"
 git pull --ff-only || echo "WARNING: 'git pull --ff-only' failed (network, auth, or local changes). Check stderr above." >&2
