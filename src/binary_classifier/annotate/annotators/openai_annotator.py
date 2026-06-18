@@ -2,14 +2,14 @@
 
 Uses the ``openai`` Python client with optional structured JSON output (guided
 JSON) to produce schema-valid ``LabelRecord`` objects. Temperature is fixed at 0
-for best-effort reproducible annotation.
+for models that support custom sampling, and omitted for reasoning-effort models.
 """
 
 import json
 import os
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from binary_classifier.annotate.annotators.base import Annotator
 from binary_classifier.annotate.schema import (
@@ -27,7 +27,8 @@ class OpenAIAnnotator(Annotator):
         model_id: OpenAI model snapshot (e.g. ``gpt-4o-mini``).
         prompt_id: Prompt version tag.
         prompt_text: Full prompt text.
-        temperature: Fixed at 0.0 for best-effort reproducible output.
+        temperature: Fixed at 0.0 for best-effort reproducible output when the
+            selected model supports custom sampling.
         seed: Random seed passed to the API.
         max_retries: Retries on rate-limit or transient errors.
         api_key: Optional explicit API key (falls back to ``OPENAI_API_KEY``).
@@ -88,46 +89,33 @@ class OpenAIAnnotator(Annotator):
         """
         for attempt in range(self.max_retries + 1):
             try:
-                reasoning_effort: (
-                    Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
-                ) = None
+                kwargs: dict[str, Any] = {
+                    "model": self.model_id,
+                    "messages": [
+                        {"role": "system", "content": self.prompt_text},
+                        {"role": "user", "content": text},
+                    ],
+                    "seed": self.seed,
+                }
                 if self.reasoning_effort is not None:
-                    reasoning_effort = cast(
+                    kwargs["reasoning_effort"] = cast(
                         Literal["none", "minimal", "low", "medium", "high", "xhigh"],
                         self.reasoning_effort,
                     )
+                else:
+                    kwargs["temperature"] = self.temperature
                 # cfg.annotation.guided_json controls OpenAI strict schema mode;
                 # false leaves only prompt-level JSON guidance.
                 if self.guided_json:
-                    response = self.client.chat.completions.create(
-                        model=self.model_id,
-                        messages=[
-                            {"role": "system", "content": self.prompt_text},
-                            {"role": "user", "content": text},
-                        ],
-                        temperature=self.temperature,
-                        seed=self.seed,
-                        response_format={
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "label_record",
-                                "schema": build_json_schema(),
-                                "strict": True,
-                            },
+                    kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "label_record",
+                            "schema": build_json_schema(),
+                            "strict": True,
                         },
-                        reasoning_effort=reasoning_effort,
-                    )
-                else:
-                    response = self.client.chat.completions.create(
-                        model=self.model_id,
-                        messages=[
-                            {"role": "system", "content": self.prompt_text},
-                            {"role": "user", "content": text},
-                        ],
-                        temperature=self.temperature,
-                        seed=self.seed,
-                        reasoning_effort=reasoning_effort,
-                    )
+                    }
+                response = self.client.chat.completions.create(**kwargs)
                 raw = response.choices[0].message.content
                 if raw is None:
                     return self._error_record(ein2, "empty_content")
@@ -135,6 +123,8 @@ class OpenAIAnnotator(Annotator):
                 parsed.raw_response = raw
                 parsed.system_fingerprint = response.system_fingerprint
                 return parsed
+            except BadRequestError as exc:
+                return self._error_record(ein2, str(exc))
             except Exception as exc:
                 if attempt >= self.max_retries:
                     return self._error_record(ein2, str(exc))

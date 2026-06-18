@@ -99,7 +99,7 @@ def test_openai_annotator_emits_schema_valid_json_and_fingerprint() -> None:
 
 
 def test_openai_annotator_forwards_reasoning_effort() -> None:
-    """When reasoning_effort is set, it is passed to the API call."""
+    """When reasoning_effort is set, it is passed without sampling knobs."""
     mock_client = MagicMock()
     mock_response = _make_mock_openai_response(
         {
@@ -126,10 +126,11 @@ def test_openai_annotator_forwards_reasoning_effort() -> None:
 
     call_args = mock_client.chat.completions.create.call_args.kwargs
     assert call_args.get("reasoning_effort") == "minimal"
+    assert "temperature" not in call_args
 
 
 def test_openai_annotator_no_reasoning_effort_when_none() -> None:
-    """When reasoning_effort is None, it is not included in the API call."""
+    """When reasoning_effort is None, it is omitted from the API call."""
     mock_client = MagicMock()
     mock_response = _make_mock_openai_response(
         {
@@ -154,7 +155,8 @@ def test_openai_annotator_no_reasoning_effort_when_none() -> None:
     annotator.annotate("We help animals.", ein2="00-2")
 
     call_args = mock_client.chat.completions.create.call_args.kwargs
-    assert call_args.get("reasoning_effort") is None
+    assert "reasoning_effort" not in call_args
+    assert call_args["temperature"] == 0.0
 
 
 def test_openai_annotator_guided_json_false_omits_response_format() -> None:
