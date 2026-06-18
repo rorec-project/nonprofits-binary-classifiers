@@ -4,7 +4,9 @@
 # Opt-in only. Layers an editor + agent harness on top of the lean runtime
 # (utils/init.sh): Neovim + LazyVim (+ optional private dotfiles), Claude Code,
 # opencode (the independent-LLM-review harness, driven by ANTHROPIC_API_KEY),
-# XDG dirs, and git config. Everything installs into the PROJECT drive so it
+# XDG dirs, git config, and Opencode provider configuration for the UCloud vLLM
+# coding assistant (see utils/serve-llm.sh and §13 of RUNNING_ON_UCLOUD.md).
+# Everything installs into the PROJECT drive so it
 # persists across jobs. It is NEVER invoked by batch/GPU jobs and writes its own
 # sourced file (devenv.sh) so the lean runtime env.sh stays free of harness vars.
 #
@@ -26,20 +28,21 @@ set -euo pipefail
 DOTFILES_REPO="https://github.com/chickymonkeys/omarchy-dotfiles.git"
 
 # Feature flags (1 = enable, 0 = disable).
-INSTALL_NEOVIM=1    # Neovim + LazyVim starter
-INSTALL_DOTFILES=1  # overlay private dotfiles on LazyVim (needs INSTALL_NEOVIM=1 + GITHUB_TOKEN)
-INSTALL_OPENCODE=1  # opencode (independent LLM review harness)
-INSTALL_CLAUDE=1    # Claude Code
+INSTALL_NEOVIM=1     # Neovim + LazyVim starter
+INSTALL_DOTFILES=1   # overlay private dotfiles on LazyVim (needs INSTALL_NEOVIM=1 + GITHUB_TOKEN)
+INSTALL_OPENCODE=1   # opencode (independent LLM review harness)
+INSTALL_CLAUDE=1     # Claude Code
+CONFIGURE_OPENCODE=1 # Write Opencode provider config pointing at the UCloud LLM
 
 # Refuse to run in non-interactive shells (e.g., as a UCloud Initialization
 # script or batch job). This overlay is for interactive SSH sessions only.
 case "$-" in
-  *i*) ;;
-  *)
-    echo "ERROR: utils/devenv.sh is for interactive SSH sessions only." >&2
-    echo "       Do not use it as an Initialization script or in batch jobs." >&2
-    exit 1
-    ;;
+*i*) ;;
+*)
+  echo "ERROR: utils/devenv.sh is for interactive SSH sessions only." >&2
+  echo "       Do not use it as an Initialization script or in batch jobs." >&2
+  exit 1
+  ;;
 esac
 
 PROJECT="/work/${PROJECT_DRIVE}"
@@ -79,8 +82,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 if [ "${INSTALL_NEOVIM}" -eq 1 ]; then
   if [ ! -x "${BIN_DIR}/nvim" ]; then
     echo "--- Installing Neovim ---"
-    curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz" \
-      | tar xz -C "${TOOLS_DIR}"
+    curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz" |
+      tar xz -C "${TOOLS_DIR}"
     ln -sf "${TOOLS_DIR}/nvim-linux-x86_64/bin/nvim" "${BIN_DIR}/nvim"
   fi
 
@@ -99,8 +102,8 @@ if [ "${INSTALL_NEOVIM}" -eq 1 ]; then
     else
       git -C "${DOTFILES_DIR}" pull --ff-only 2>/dev/null || true
     fi
-    [ -d "${DOTFILES_DIR}/dotfiles/.config/nvim" ] \
-      && cp -r "${DOTFILES_DIR}/dotfiles/.config/nvim/." "${NVIM_CONFIG}/"
+    [ -d "${DOTFILES_DIR}/dotfiles/.config/nvim" ] &&
+      cp -r "${DOTFILES_DIR}/dotfiles/.config/nvim/." "${NVIM_CONFIG}/"
   fi
 fi
 
@@ -115,20 +118,60 @@ npm config set prefix "${NPM_DIR}"
 if [ "${INSTALL_OPENCODE}" -eq 1 ] && [ ! -x "${BIN_DIR}/opencode" ]; then
   echo "--- Installing opencode ---"
   npm install -g opencode-ai
-  [ -f "${NPM_DIR}/bin/opencode" ] && ln -sf "${NPM_DIR}/bin/opencode" "${BIN_DIR}/opencode" \
-    || echo "WARNING: opencode binary not found after install" >&2
+  [ -f "${NPM_DIR}/bin/opencode" ] && ln -sf "${NPM_DIR}/bin/opencode" "${BIN_DIR}/opencode" ||
+    echo "WARNING: opencode binary not found after install" >&2
 fi
 
 if [ "${INSTALL_CLAUDE}" -eq 1 ] && [ ! -x "${BIN_DIR}/claude" ]; then
   echo "--- Installing Claude Code ---"
   npm install -g @anthropic-ai/claude-code
-  [ -f "${NPM_DIR}/bin/claude" ] && ln -sf "${NPM_DIR}/bin/claude" "${BIN_DIR}/claude" \
-    || echo "WARNING: claude binary not found after install" >&2
+  [ -f "${NPM_DIR}/bin/claude" ] && ln -sf "${NPM_DIR}/bin/claude" "${BIN_DIR}/claude" ||
+    echo "WARNING: claude binary not found after install" >&2
+fi
+
+# ─── Opencode provider configuration (UCloud vLLM coding assistant) ────────────
+# Writes to ${XDG_CONFIG_HOME}/opencode/ — which lives on the project drive and
+# therefore persists across jobs. Opencode finds it because XDG_CONFIG_HOME is
+# exported by the overlay env file written below.
+
+if [ "${CONFIGURE_OPENCODE}" -eq 1 ] && [ "${INSTALL_OPENCODE}" -eq 1 ]; then
+  OC_CONFIG_DIR="${XDG_CONFIG_HOME}/opencode"
+  mkdir -p "${OC_CONFIG_DIR}"
+
+  MODEL_SHORT="$(basename "${LLM_CODING_MODEL}")"
+
+  cat >"${OC_CONFIG_DIR}/opencode.json" <<OCEOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ucloud-llm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "UCloud LLM (${MODEL_SHORT})",
+      "options": {
+        "baseURL": "{env:UCLOUD_LLM_BASE_URL}"
+      },
+      "models": {
+        "${LLM_CODING_MODEL}": {
+          "name": "${MODEL_SHORT}"
+        }
+      }
+    }
+  },
+  "model": "ucloud-llm/${LLM_CODING_MODEL}"
+}
+OCEOF
+
+  cat >"${OC_CONFIG_DIR}/auth.json" <<AUTHEOF
+{
+  "ucloud-llm": "${LLM_API_KEY}"
+}
+AUTHEOF
+  echo "--- Opencode config → ${OC_CONFIG_DIR}/ ---"
 fi
 
 # ─── Write the overlay env file and auto-source it (separate from env.sh) ─────
 
-cat > "${DEVENV_SH}" <<EOF
+cat >"${DEVENV_SH}" <<EOF
 # devenv.sh — dev/agent overlay environment (interactive sessions only).
 # Auto-generated by utils/devenv.sh. Kept separate from the runtime env.sh so
 # batch/GPU jobs never pick up the editor/agent harness vars.
@@ -137,12 +180,35 @@ export XDG_CONFIG_HOME="${XDG_CONFIG_HOME}"
 export XDG_DATA_HOME="${XDG_DATA_HOME}"
 export XDG_STATE_HOME="${XDG_STATE_HOME}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
+# Opencode LLM provider: vLLM on localhost (job) or Public IP (laptop).
+# {env:UCLOUD_LLM_BASE_URL} in opencode.json resolves this at runtime.
+# On your laptop override this in ~/.bashrc / ~/.zshrc with the static Public IP
+# (set UCLOUD_PUBLIC_IP in config.sh — see §13 of RUNNING_ON_UCLOUD.md).
+export UCLOUD_LLM_BASE_URL="http://localhost:${LLM_CODING_PORT}/v1"
+export UCLOUD_LLM_KEY="${LLM_API_KEY}"
 EOF
 
 SOURCE_LINE="[ -f '${DEVENV_SH}' ] && source '${DEVENV_SH}'"
 for rc in "${HOME}/.bashrc" "${HOME}/.profile" "${HOME}/.bash_profile"; do
-  grep -qF "${DEVENV_SH}" "${rc}" 2>/dev/null || echo "${SOURCE_LINE}" >> "${rc}"
+  grep -qF "${DEVENV_SH}" "${rc}" 2>/dev/null || echo "${SOURCE_LINE}" >>"${rc}"
 done
 
 echo "=== devenv.sh complete $(date) ==="
+
 echo "Open a new shell (or 'source ${DEVENV_SH}') to pick up nvim / claude / opencode."
+echo ""
+echo "  Next steps on this job:"
+echo "    bash utils/serve-llm.sh    # start the coding LLM (vLLM + health check)"
+echo "    opencode                   # launch agent — uses localhost:${LLM_CODING_PORT}"
+echo ""
+echo "  Laptop one-time setup (add to ~/.bashrc / ~/.zshrc):"
+if [ -n "${UCLOUD_PUBLIC_IP:-}" ]; then
+  echo "    export UCLOUD_LLM_BASE_URL=\"http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1\""
+else
+  echo "    export UCLOUD_LLM_BASE_URL=\"http://<UCLOUD_PUBLIC_IP>:${LLM_CODING_PORT}/v1\""
+  echo "    (set UCLOUD_PUBLIC_IP in utils/config.sh — see §13 of RUNNING_ON_UCLOUD.md)"
+fi
+echo "    export UCLOUD_LLM_KEY=\"${LLM_API_KEY}\""
+echo "  Also merge the ucloud-llm provider block from:"
+echo "    ${XDG_CONFIG_HOME}/opencode/opencode.json"
+echo "  into your laptop's ~/.config/opencode/opencode.json (or XDG equivalent)."
