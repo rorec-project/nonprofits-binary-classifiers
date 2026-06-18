@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # utils/serve-llm.sh — start the coding LLM stack on a UCloud interactive job.
 #
-# Starts vLLM with LLM_CODING_MODEL (defined in config.sh) and prints the
+# Starts vLLM with LLM_CODING_MODEL (defined in .env) and prints the
 # endpoint URLs for both job-local and laptop access.
 #
 # Laptop access uses UCloud's native Public IP feature (Resources → IP addresses
 # in the UCloud web UI). Allocate one static IP, open port LLM_CODING_PORT TCP,
-# set UCLOUD_PUBLIC_IP in config.sh, and attach it at job submission — the IP
+# set UCLOUD_PUBLIC_IP in .env, and attach it at job submission — the IP
 # is static across jobs, so your laptop config never needs updating.
 #
 # Usage:
@@ -26,14 +26,14 @@ set -euo pipefail
 
 # ── Source config + secrets ───────────────────────────────────────────────────
 
-. "$(dirname "$0")/config.sh"
+PROJECT_DRIVE="CHANGE_ME"
+ENV_FILE="/work/${PROJECT_DRIVE}/.env"
+[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 PROJECT="/work/${PROJECT_DRIVE}"
 ENV_SH="${PROJECT}/env.sh"
-ENV_FILE="${PROJECT}/.env"
 
 [ -f "${ENV_SH}" ] && source "${ENV_SH}"
-[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 VLLM_LOG="${PROJECT}/outputs/interim/vllm-coding.log"
 
@@ -66,7 +66,7 @@ print_endpoints() {
     echo "    export UCLOUD_LLM_BASE_URL=\"http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1\""
     echo "    export UCLOUD_LLM_KEY=\"${LLM_API_KEY}\""
   else
-    echo "  Laptop access: set UCLOUD_PUBLIC_IP in config.sh."
+    echo "  Laptop access: set UCLOUD_PUBLIC_IP in .env."
     echo "  Allocate a static IP in UCloud → Resources → IP addresses,"
     echo "  open port ${LLM_CODING_PORT} TCP, attach at job submission."
   fi

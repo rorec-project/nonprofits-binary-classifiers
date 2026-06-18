@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-. "$(dirname "$0")/config.sh"
+PROJECT_DRIVE="CHANGE_ME"
 
 PORT="${1:?usage: sync-results.sh <ssh-port> [dest-dir]}"
 DEST="${2:-./local-results}"

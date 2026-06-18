@@ -18,7 +18,10 @@
 
 set -euo pipefail
 
-. "$(dirname "$0")/config.sh"
+PROJECT_DRIVE="CHANGE_ME"
+ENV_FILE="/work/${PROJECT_DRIVE}/.env"
+[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
+
 CONFIG="config/religious_missions.yaml"
 
 REPO_DIR="/work/${PROJECT_DRIVE}"

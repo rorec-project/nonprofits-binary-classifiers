@@ -18,14 +18,9 @@
 #
 set -euo pipefail
 
-# Fallback defaults for the critical path variables — used when this script
-# runs as the UCloud Initialization script (before the repo checkout is
-# accessible). Duplicated in utils/config.sh for the other scripts; edit
-# config.sh when changing drive names, then update this block to match.
-DATA_DRIVE="CHANGE_ME_DATA_DRIVE"
+# Fallback for PROJECT_DRIVE — the one value needed to find .env before the
+# repo is cloned. DATA_DRIVE, GIT_NAME, GIT_EMAIL come from .env (see below).
 PROJECT_DRIVE="CHANGE_ME_PROJECT_DRIVE"
-GIT_NAME="YOUR_NAME"
-GIT_EMAIL="YOUR_EMAIL"
 
 # Pre-pull the open-weight annotator weights into the shared HF cache. Leave 0
 # on every job EXCEPT the vLLM annotation job (stage 03 open-weight arm); the
@@ -47,20 +42,19 @@ until [ -d "/work" ] && [ -n "$(ls -A /work 2>/dev/null)" ]; do
 done
 echo "--- /work ready after ${ELAPSED}s ---"
 
-# Now the mount is up — source config.sh from the project drive to override
-# the fallback defaults above. For the Initialization script use case, this
-# absolute-path source works because the drive name is already known; for
-# manual `bash utils/init.sh` from the repo root, it resolves to the same
-# location as "$(dirname "$0")/config.sh".
+# Now the mount is up — source .env from the project drive. This is the single
+# source of truth for all config: drive names, git identity, LLM serving, and
+# secrets. Guarded so a missing .env warns instead of aborting.
 PROJECT="/work/${PROJECT_DRIVE}"
-CONFIG_SH="${PROJECT}/utils/config.sh"
-if [ -f "${CONFIG_SH}" ]; then
-  . "${CONFIG_SH}"
+ENV_FILE="${PROJECT}/.env"
+if [ -f "${ENV_FILE}" ]; then
+  echo "--- Sourcing ${ENV_FILE} ---"
+  set -a && . "${ENV_FILE}" && set +a
 else
-  echo "WARNING: ${CONFIG_SH} not found — using fallback defaults." >&2
+  echo "WARNING: ${ENV_FILE} not found — config and secrets will be unset." >&2
 fi
 
-# Derive all paths from (possibly overridden) config values.
+# Derive all paths from (now populated) config values.
 DATA="/work/${DATA_DRIVE}"
 PROJECT="/work/${PROJECT_DRIVE}"
 REPO_DIR="${PROJECT}"
@@ -72,8 +66,8 @@ ENV_SH="${PROJECT}/env.sh"
 for drive in "${DATA}" "${PROJECT}"; do
   if [ ! -d "${drive}" ]; then
     echo "ERROR: expected Drive not found at ${drive}" >&2
-    echo "       Attach it to the job and set DATA_DRIVE / PROJECT_DRIVE to the" >&2
-    echo "       names you actually see under /work:" >&2
+    echo "       Attach it to the job and set DATA_DRIVE / PROJECT_DRIVE in" >&2
+    echo "       .env on the project drive — observe the actual names under /work:" >&2
     ls -la /work/ >&2 || true
     exit 1
   fi
@@ -98,15 +92,6 @@ export HF_HOME="${DATA}/hf-cache"
 export UV_CACHE_DIR="${DATA}/uv-cache"
 export UV_PYTHON_INSTALL_DIR="${DATA}/uv-python"
 export UV_LINK_MODE=copy
-
-# Secrets live ONLY on the project drive (never the shared corpus drive). Source
-# is guarded so a job missing .env warns instead of aborting under `set -e`.
-if [ -f "${ENV_FILE}" ]; then
-  echo "--- Sourcing secrets from ${ENV_FILE} ---"
-  set -a && . "${ENV_FILE}" && set +a
-else
-  echo "WARNING: ${ENV_FILE} not found — OPENAI/HF/GITHUB tokens will be unset." >&2
-fi
 
 # ─── Write the lean runtime env.sh and auto-source it on every login ──────────
 # Generated with the resolved absolute /work paths baked in; $HOME/$PATH stay

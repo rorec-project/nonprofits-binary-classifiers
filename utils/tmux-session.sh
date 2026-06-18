@@ -9,7 +9,7 @@
 #   bash utils/tmux-session.sh "06,07,08"    # create + start pipeline
 #   bash utils/tmux-session.sh --kill          # kill existing session
 #
-# Inside the session: sources config.sh, sources env.sh, cds to the repo, and
+# Inside the session: sources env.sh, cds to the repo, and
 # runs utils/run.sh.
 
 set -euo pipefail
@@ -20,7 +20,9 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 
-. "$(dirname "$0")/config.sh"
+PROJECT_DRIVE="CHANGE_ME"
+ENV_FILE="/work/${PROJECT_DRIVE}/.env"
+[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 REPO_DIR="/work/${PROJECT_DRIVE}"
 ENV_SH="/work/${PROJECT_DRIVE}/env.sh"
@@ -48,7 +50,6 @@ STAGES="${1:?usage: tmux-session.sh <stages>}"
 
 # ─── Create session and send commands ───────────────────────────────────────
 tmux new-session -d -s "$SESSION"
-tmux send-keys -t "$SESSION" ". '${REPO_DIR}/utils/config.sh'" Enter
 tmux send-keys -t "$SESSION" ". '${ENV_SH}'" Enter
 tmux send-keys -t "$SESSION" "cd '${REPO_DIR}'" Enter
 tmux send-keys -t "$SESSION" "bash utils/run.sh ${STAGES}" Enter

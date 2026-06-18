@@ -17,7 +17,9 @@
 # ════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-. "$(dirname "$0")/config.sh"
+PROJECT_DRIVE="CHANGE_ME"
+ENV_FILE="/work/${PROJECT_DRIVE}/.env"
+[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 # Git identity + the HTTPS credential helper are established by utils/init.sh in
 # the default ~/.gitconfig on every job; the overlay deliberately does NOT set
@@ -58,9 +60,6 @@ fi
 
 mkdir -p "${BIN_DIR}"
 export PATH="${BIN_DIR}:${PATH}"
-
-# Load secrets (needed for dotfiles clone + agent auth).
-[ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
 
 # ─── XDG dirs (persistent on the project drive) ───────────────────────────────
 
@@ -183,7 +182,7 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
 # Opencode LLM provider: vLLM on localhost (job) or Public IP (laptop).
 # {env:UCLOUD_LLM_BASE_URL} in opencode.json resolves this at runtime.
 # On your laptop override this in ~/.bashrc / ~/.zshrc with the static Public IP
-# (set UCLOUD_PUBLIC_IP in config.sh — see §13 of RUNNING_ON_UCLOUD.md).
+# (set UCLOUD_PUBLIC_IP in .env — see §13 of RUNNING_ON_UCLOUD.md).
 export UCLOUD_LLM_BASE_URL="http://localhost:${LLM_CODING_PORT}/v1"
 export UCLOUD_LLM_KEY="${LLM_API_KEY}"
 EOF
@@ -206,7 +205,7 @@ if [ -n "${UCLOUD_PUBLIC_IP:-}" ]; then
   echo "    export UCLOUD_LLM_BASE_URL=\"http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1\""
 else
   echo "    export UCLOUD_LLM_BASE_URL=\"http://<UCLOUD_PUBLIC_IP>:${LLM_CODING_PORT}/v1\""
-  echo "    (set UCLOUD_PUBLIC_IP in utils/config.sh — see §13 of RUNNING_ON_UCLOUD.md)"
+  echo "    (set UCLOUD_PUBLIC_IP in .env — see §13 of RUNNING_ON_UCLOUD.md)"
 fi
 echo "    export UCLOUD_LLM_KEY=\"${LLM_API_KEY}\""
 echo "  Also merge the ucloud-llm provider block from:"

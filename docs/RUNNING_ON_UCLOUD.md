@@ -11,7 +11,7 @@ How to run the binary-classifier pipeline on **UCloud (SDU/DeiC Interactive HPC)
 
 Two UCloud Drives, both attached to every job. Each appears at `/work/<DriveName>`.
 
-> **Drive names are load-bearing.** The `/work/` prefix is fixed, but the mounted directory _name_ is the risk: a member-files drive may mount with a `#NNNN` suffix (`/work/AlessandroPizzigolotto#6144`); a user-created drives have to be mounted. **Observe the real names with `ls /work` on a live job** and set `DATA_DRIVE` / `PROJECT_DRIVE` in each script's config block. `init.sh` validates both mounts and **fails loud** if a drive is absent. The names below are placeholders.
+> **Drive names are load-bearing.** The `/work/` prefix is fixed, but the mounted directory _name_ is the risk: a member-files drive may mount with a `#NNNN` suffix (`/work/AlessandroPizzigolotto#6144`); a user-created drives have to be mounted. **Observe the real names with `ls /work` on a live job** and set them in `.env` on the project drive (the single source of truth, see step 7). `init.sh` validates both mounts and **fails loud** if a drive is absent. The names below are placeholders.
 
 **Drive A — shared corpus & cache** (cross-project; reused by other project repos):
 
@@ -80,15 +80,19 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
 
 5. **Allocate a Public IP** in **Resources → IP addresses → Create public IP** (one-time; static across all future jobs). Select provider DeiC Interactive HPC (SDU/K8s), open port `8000` TCP. Note the assigned address — it never changes. This is used to reach the coding vLLM from your laptop (§13); the annotation pipeline's vLLM is job-local only and does not need it.
 6. **Gemma is gated:** accept the license for `google/gemma-3-27b-it` on huggingface.co and create an **HF token**.
-7. **Create the secrets `.env`** on the project drive via the UCloud web file editor or upload. Use `.env.example` as the template. The file must be at `/work/<PROJECT_DRIVE>/.env`:
+7. **Create the `.env`** on the project drive via the UCloud web file editor or upload. Use `.env.example` as the template. The file must be at `/work/<PROJECT_DRIVE>/.env`:
    ```
+   DATA_DRIVE=<your-data-drive-name>
+   PROJECT_DRIVE=<your-project-drive-name>
+   GIT_NAME=Your Name
+   GIT_EMAIL=your.email@example.com
    OPENAI_API_KEY=sk-...
    HF_TOKEN=hf_...
    GITHUB_TOKEN=ghp_...
    ANTHROPIC_API_KEY=sk-ant-...   # only if using the dev overlay
    ```
-   This is needed **before the first job** — `init.sh` reads it to seed the git credential store so the repo can be cloned.
-8. **Prepare `config.sh`:** edit `DATA_DRIVE` and `PROJECT_DRIVE` in `utils/config.sh` to match your UCloud drive names. Also update the matching fallback defaults in `init.sh` (lines ~21-24) — these are used when `init.sh` runs as the Initialization script before the repo is cloned.
+   This is the **single source of truth** for drive names, git identity, and secrets. No other config file needs the drive names set — they flow to all scripts from here. It is needed **before the first job** — `init.sh` reads it to find the drives and seed the git credential store.
+8. **No other config edits needed.** The old step of editing `utils/config.sh` and `init.sh` fallbacks is gone — those values now come from `.env`.
 
 ---
 
@@ -118,13 +122,13 @@ The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` ancho
 
    `git init` works even though `.env` already exists on the drive.
 
-5. Re-run `init.sh` manually — now it finds `config.sh` in the cloned repo and proceeds with the full setup:
+5. Re-run `init.sh` manually — now it finds `.env` on the project drive and proceeds with the full setup:
    ```bash
    bash utils/init.sh
    ```
-   It sources `config.sh` (overrides the fallback defaults), runs `git pull`, `uv sync`, creates the data symlinks, and writes `env.sh`.
+   It sources `.env` for drive names, git identity, LLM config, and secrets, runs `git pull`, `uv sync`, creates the data symlinks, and writes `env.sh`.
 
-**Every later job:** attach `utils/init.sh` as the **Initialization** script. It detects the existing checkout, sources `config.sh` from the repo, pulls, syncs, and relinks.
+**Every later job:** attach `utils/init.sh` as the **Initialization** script. It detects the existing checkout, sources `.env` from the project drive, pulls, syncs, and relinks.
 
 ---
 
@@ -140,13 +144,13 @@ Run the cheap/deterministic front of the pipeline **locally**, commit the small 
 
 ## 5. Scripts (`utils/`)
 
-Configuration lives in a single shared `utils/config.sh` (`DATA_DRIVE`, `PROJECT_DRIVE`, git identity) — the edit-one-block pattern, sourced by all scripts.
+All configuration — drive names, git identity, LLM serving, network, and secrets — is set once in `.env` on the project drive (see step 7). Every script sources it.
 
 | Script            | Where it runs                     | What it does                                                                                                                                                                                 |
 | ----------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init.sh`         | UCloud (Initialization or manual) | Lean runtime: assert drives, export `HF_HOME`/`UV_*`, source `.env`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.           |
 | `devenv.sh`       | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs. |
-| `serve-llm.sh`    | UCloud (interactive SSH only)     | Coding LLM assistant: starts vLLM with `LLM_CODING_MODEL` (from `config.sh`), waits for `/health`, prints endpoint URLs. Run after `devenv.sh`. See §13.                                     |
+| `serve-llm.sh`    | UCloud (interactive SSH only)     | Coding LLM assistant: starts vLLM with `LLM_CODING_MODEL` (from `.env`), waits for `/health`, prints endpoint URLs. Run after `devenv.sh`. See §13.                                          |
 | `run.sh`          | UCloud (Batch param or SSH)       | Segment runner: `source env.sh` → `git pull` → run stages.                                                                                                                                   |
 | `tmux-session.sh` | UCloud (interactive SSH)          | tmux session manager: creates a detached session (named after the checkout dir) that survives SSH disconnects, runs stages, reports re-attach command.                                       |
 | `sync-results.sh` | **Your laptop**                   | `rsync` processed outputs down over SSH.                                                                                                                                                     |
@@ -260,7 +264,7 @@ bash utils/sync-results.sh <PORT>            # → ./local-results/
 bash utils/sync-results.sh <PORT> ~/data/run # custom destination
 ```
 
-Set `PROJECT_DRIVE` in the script to match `init.sh`.
+`PROJECT_DRIVE` is read from `.env` — no script editing needed.
 
 ---
 
@@ -348,7 +352,7 @@ Opencode (laptop)                  Opencode (UCloud SSH session)
        └───────────────────┬───────────────────┘
                            ▼
                vLLM :8000  on UCloud job
-               LLM_CODING_MODEL (config.sh) — weights in HF_HOME
+               LLM_CODING_MODEL (.env) — weights in HF_HOME
 ```
 
 **No Tailscale, no ssh tunnel, no dynamic IPs.**  
@@ -393,7 +397,7 @@ Done once after allocating the Public IP in §2 step 5.
 ```bash
 # UCloud coding LLM — static IP from §2 step 5, never changes between jobs
 export UCLOUD_LLM_BASE_URL="http://<UCLOUD_PUBLIC_IP>:8000/v1"
-export UCLOUD_LLM_KEY="sk-ucloud"   # must match LLM_API_KEY in config.sh
+export UCLOUD_LLM_KEY="sk-ucloud"   # must match LLM_API_KEY in .env
 ```
 
 **Merge into `~/.config/opencode/opencode.json` on your laptop:**
@@ -430,7 +434,7 @@ Or: `opencode auth login` → Other → provider ID: `ucloud-llm` → key: `sk-u
 
 ### Switching models
 
-Single switch point in `utils/config.sh`:
+Single switch point in `.env` on the project drive:
 
 ```bash
 LLM_CODING_MODEL="Qwen/Qwen2.5-Coder-32B-Instruct"   # stronger; needs B200
@@ -441,7 +445,7 @@ Re-run `devenv.sh` (updates Opencode config) and `serve-llm.sh` (restarts vLLM).
 
 ### Co-locating with the annotation pipeline
 
-If running the coding LLM on the same B200 job as stages 03/06/07/08, set `LLM_CODING_PORT=8001` in `config.sh` to avoid clashing with the annotation vLLM on `:8000`. Open port `8001` TCP on the Public IP resource in addition to
+If running the coding LLM on the same B200 job as stages 03/06/07/08, set `LLM_CODING_PORT=8001` in `.env` to avoid clashing with the annotation vLLM on `:8000`. Open port `8001` TCP on the Public IP resource in addition to
 (or instead of) `8000`.
 
 ### Security
