@@ -219,7 +219,7 @@ if [ "${PREPULL_MODEL}" -eq 1 ]; then
   MODEL_ID="$(uv run python -c "from binary_classifier.config import load_config; print(next((c.id for c in load_config('config/religious_missions.yaml').model_slate.bakeoff_candidates if c.provider=='vllm'), ''))")"
   if [ -n "${MODEL_ID}" ]; then
     echo "--- Pre-pulling ${MODEL_ID} into ${HF_HOME} ---"
-    uv run huggingface-cli download "${MODEL_ID}"
+    uv run hf download "${MODEL_ID}"
   else
     echo "--- No vLLM candidate in config; skipping model pre-pull. ---"
   fi

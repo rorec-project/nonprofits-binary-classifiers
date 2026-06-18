@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # utils/config.sh — shared UCloud drive configuration for the binary-classifier pipeline.
 #
-# Edit this file on first use. Sourced by utils/init.sh, utils/run.sh,
-# utils/devenv.sh, and utils/sync-results.sh — one place to set drive names
-# and git identity, instead of duplicating them across four scripts.
+# Edit this file on first use. Sourced by utils/init.sh, utils/run.sh, utils/devenv.sh,
+# utils/sync-results.sh, utils/tmux-session.sh, and utils/serve-llm.sh — one place to
+# set drive names and git identity, instead of duplicating them across six scripts.
 #
 # ════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION — edit this block on first use
@@ -24,10 +24,10 @@ GIT_NAME="YOUR_NAME"
 GIT_EMAIL="YOUR_EMAIL"
 
 # ── LLM serving (coding assistant / Opencode) ────────────────────────────────
-# Model for interactive coding assistance. Qwen2.5-Coder-7B fits any UCloud GPU
+# Model for interactive coding assistance.  Qwen3.6-35B-A3B fits any UCloud GPU
 # node (A40/H100). Bump to 32B on a B200 for stronger completions. Must be a
 # HuggingFace model id — weights cache under HF_HOME on the DATA_DRIVE.
-LLM_CODING_MODEL="Qwen/Qwen2.5-Coder-7B-Instruct"
+LLM_CODING_MODEL="Qwen3.6-35B-A3B"
 
 # Port for the coding vLLM instance. Uses 8000 by default on an interactive-only
 # job. Change to 8001 to avoid clashing with the annotation vLLM if co-locating

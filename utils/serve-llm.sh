@@ -26,8 +26,7 @@ set -euo pipefail
 
 # ── Source config + secrets ───────────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "${SCRIPT_DIR}/config.sh"
+. "$(dirname "$0")/config.sh"
 
 PROJECT="/work/${PROJECT_DRIVE}"
 ENV_SH="${PROJECT}/env.sh"
