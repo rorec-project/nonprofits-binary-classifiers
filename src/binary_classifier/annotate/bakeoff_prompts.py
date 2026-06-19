@@ -20,6 +20,10 @@ import pandas as pd
 
 from binary_classifier.annotate.annotators import Annotator
 from binary_classifier.annotate.annotators.factory import make_annotator
+from binary_classifier.annotate.concurrency import (
+    annotate_with_provider_limit,
+    build_provider_limiters,
+)
 from binary_classifier.annotate.schema import AnnotationStore
 from binary_classifier.config import BakeoffCandidate, BinaryClassifierConfig
 from binary_classifier.metrics import compute_metric_bundle
@@ -108,6 +112,7 @@ def run_bakeoff(
     store_lock = threading.Lock()
     errors_lock = threading.Lock()
     arm_errors: dict[str, str] = {}
+    provider_limiters = build_provider_limiters(cfg)
 
     def _annotate_group(
         spec: BakeoffCandidate,
@@ -121,7 +126,15 @@ def run_bakeoff(
         for _, row in prompt_dev.iterrows():
             if store.already_done(row["EIN2"], source_id):
                 continue
-            batch.append(annotator.annotate(row["text"], ein2=row["EIN2"]))
+            batch.append(
+                annotate_with_provider_limit(
+                    annotator,
+                    spec.provider,
+                    row["text"],
+                    row["EIN2"],
+                    provider_limiters,
+                ),
+            )
         if batch:
             with store_lock:
                 store.append_many(batch)

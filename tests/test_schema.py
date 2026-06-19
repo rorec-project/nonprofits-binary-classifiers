@@ -55,8 +55,13 @@ def _make_mock_openai_response(content: dict, fingerprint: str = "fp_abc123"):
     """Build a mock OpenAI ChatCompletion response."""
     response = MagicMock()
     response.choices = [MagicMock()]
-    response.choices[0].message.content = json.dumps(content)
+    raw = json.dumps(content)
+    response.choices[0].message.content = raw
     response.system_fingerprint = fingerprint
+    response.model_dump.return_value = {
+        "choices": [{"message": {"content": raw}}],
+        "system_fingerprint": fingerprint,
+    }
     return response
 
 
@@ -198,9 +203,8 @@ def test_openai_annotator_guided_json_false_omits_response_format() -> None:
 # ── vLLM annotator tests ─────────────────────────────────────────────────────
 
 
-def test_vllm_annotator_uses_shared_schema_no_inline_dict() -> None:
-    """vLLM annotator passes the schema from schema.py to guided_json and has
-    no inline properties dict."""
+def test_vllm_annotator_uses_openai_compatible_json_schema() -> None:
+    """vLLM annotator requests structured output through response_format."""
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -226,16 +230,17 @@ def test_vllm_annotator_uses_shared_schema_no_inline_dict() -> None:
     annotator.annotate("test text", ein2="00-3")
 
     call_args = mock_client.chat.completions.create.call_args.kwargs
-    assert "extra_body" in call_args
-    guided = call_args["extra_body"]["guided_json"]
-    assert guided == build_json_schema()
+    response_format = call_args["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"] == build_json_schema()
 
 
 def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
     """guided_json=False keeps vLLM in prompt-only JSON mode.
 
-    The OpenAI-compatible vLLM endpoint receives no ``extra_body`` guided JSON
-    schema, proving the config flag can disable provider-side constrained
+    The OpenAI-compatible vLLM endpoint receives no structured-output request,
+    proving the config flag can disable provider-side constrained
     decoding while leaving downstream parsing unchanged.
     """
     mock_client = MagicMock()
@@ -265,7 +270,7 @@ def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
 
     assert record.binary_label == BinaryLabel.NONRELIGIOUS
     call_args = mock_client.chat.completions.create.call_args.kwargs
-    assert "extra_body" not in call_args
+    assert "response_format" not in call_args
 
 
 # ── AnnotationStore tests ────────────────────────────────────────────────────
@@ -324,6 +329,17 @@ def test_store_append_many_also_appends(tmp_path) -> None:
     assert len(df) == 100
 
 
+def test_store_creates_parent_directory_on_append_many(tmp_path) -> None:
+    """Standalone stages can write stores below newly introduced subdirs."""
+    path = tmp_path / "interim" / "bakeoff" / "bakeoff_labels.csv"
+    store = AnnotationStore(path)
+
+    store.append_many([_make_record("00-1", "m1__v1")])
+
+    assert path.exists()
+    assert len(pd.read_csv(path)) == 1
+
+
 def test_system_fingerprint_persisted_in_store(tmp_path) -> None:
     """system_fingerprint column survives a write + read round-trip."""
     path = tmp_path / "store.csv"
@@ -337,6 +353,36 @@ def test_system_fingerprint_persisted_in_store(tmp_path) -> None:
     # Rehydrate from flat dict
     record = LabelRecord.from_flat_dict(df.to_dict("records")[0])
     assert record.system_fingerprint == "fp_xyz"
+
+
+def test_store_keeps_free_text_fields_single_line_csv(tmp_path) -> None:
+    """Raw LLM text round-trips without embedded physical CSV newlines."""
+    path = tmp_path / "bakeoff_labels.csv"
+    raw_response = '{\n  "binary_label": "religious",\n  "reason": "a, b"\n}'
+    reason = "line one\nline two, with comma"
+    boundary_notes = "quoted \"edge\"\ncase"
+    store = AnnotationStore(path)
+    store.append(
+        LabelRecord(
+            EIN2="00-1",
+            source_id="m1__v1",
+            source_type=SourceType.LLM_PROMPT,
+            model_id="m1",
+            prompt_id="v1",
+            temperature=0.0,
+            binary_label=BinaryLabel.RELIGIOUS,
+            raw_response=raw_response,
+            reason=reason,
+            boundary_notes=boundary_notes,
+        )
+    )
+
+    lines = path.read_text().splitlines()
+    assert len(lines) == 2
+    restored = store.records_for_ein2("00-1")[0]
+    assert restored.raw_response == raw_response
+    assert restored.reason == reason
+    assert restored.boundary_notes == boundary_notes
 
 
 def test_already_done_uses_cached_set(tmp_path) -> None:

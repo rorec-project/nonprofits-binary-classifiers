@@ -61,6 +61,17 @@ annotation:
   max_retries: 5
   checkpoint_every: 100
   guided_json: true
+  # Provider-level caps across concurrent model×prompt arms. Keep OpenAI low to
+  # avoid rate-limit retry storms; UCloud vLLM runs on 2-8 B200 GPUs, so 8 live
+  # requests is the default starting point for the local endpoint.
+  openai_max_concurrency: 2
+  vllm_max_concurrency: 8
+  # Stage 03 OpenAI production groups use the OpenAI Batch API by default.
+  # OpenAI currently supports only a 24h batch completion window; use live
+  # concurrency (openai_batch: false) when a shorter wall-clock run is required.
+  openai_batch: true
+  openai_batch_poll_seconds: 30
+  openai_batch_completion_window: 24h
 
 # Hard-fail on a missing upstream parquet unless explicitly opted in.
 # This is only for smoke tests, activating synthetic data.

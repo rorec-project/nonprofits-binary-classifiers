@@ -68,7 +68,7 @@ The following sections are already tuned for the production religious-missions t
 - **`q_thresholds`** — The Q rubric is entity-agnostic (`HIGH >= 5.0`, `MEDIUM >= 3.0`, `LOW >= 0.0`).
 - **`sample_sizes`** — `silver: 20000`, `gold: 450`, `prompt_dev: 50`, `monitor: 50` is the production standard.
 - **`anchor`** — `n: 500`, `oversample_low_factor: 1.5`, `min_stratum_frame: 200` is calibrated for prevalence estimation.
-- **`annotation`** — `temperature: 0.0`, `max_retries: 5`, `checkpoint_every: 100`, `guided_json: true` are best-practice defaults.
+- **`annotation`** — `temperature: 0.0`, `max_retries: 5`, `checkpoint_every: 100`, `guided_json: true`, `openai_max_concurrency: 2`, `vllm_max_concurrency: 8`, and production `openai_batch: true` are best-practice defaults.
 - **`data`** — `allow_synthetic: false` is the production default; only set to `true` for smoke tests.
 - **`qc`** — `kappa_threshold: 0.70`, `f1_ci_floor: 0.70` is the validated freeze gate.
 - **`aggregation`** — `method: majority` with `comparison_arms: []` is the default production path.
@@ -131,6 +131,7 @@ Input and output directory roots. All paths are relative to the project root. `P
 | `processed_dir` | `{processed_dir}` |
 | `gold_dir` | `{processed_dir}/gold` |
 | `bakeoff_dir` | `{interim_dir}/bakeoff` |
+| `bakeoff_store` | `{interim_dir}/bakeoff/bakeoff_labels.csv` |
 | `models_dir` | `{models_dir}` |
 | `silver_manifest` | `{interim_dir}/manifests/silver_manifest.csv` |
 | `gold_manifest` | `{interim_dir}/manifests/gold_manifest.csv` |
@@ -229,6 +230,11 @@ Hyperparameters for the LLM-as-primary labeler that runs across the full silver 
 | `annotation.max_retries` | `int` | `5` | Maximum number of retry attempts per API call on transient failures (rate limits, timeouts). | Stage 02, stage 03 |
 | `annotation.checkpoint_every` | `int` | `100` | Number of rows annotated between checkpoints. The label store is flushed to disk at this interval for resumability. | Stage 03 |
 | `annotation.guided_json` | `bool` | `true` | Whether to use structured JSON output mode (function calling / guided decoding). When `true`, the annotator requests a structured JSON response; when `false`, falls back to raw text parsing. | Stage 02, stage 03 |
+| `annotation.openai_max_concurrency` | `int` | `2` | Maximum simultaneous `annotator.annotate` calls sent to OpenAI across all model×prompt workers. Must be positive. | Stage 02, stage 03 |
+| `annotation.vllm_max_concurrency` | `int` | `8` | Maximum simultaneous `annotator.annotate` calls sent to vLLM across all model×prompt workers. The default targets the UCloud 2-8x B200 endpoint; reduce it if the server queues or OOMs. Must be positive. | Stage 02, stage 03 |
+| `annotation.openai_batch` | `bool` | `false` (`true` in `religious_missions.yaml`) | When `true`, Stage 03 routes OpenAI production annotators through the OpenAI Batch API. Stage 02 bake-off remains live calls. Set to `false` for shorter live runs. | Stage 03 |
+| `annotation.openai_batch_poll_seconds` | `int` | `30` | Seconds between OpenAI Batch API status polls. Must be positive. | Stage 03 |
+| `annotation.openai_batch_completion_window` | `str` | `"24h"` | Completion window sent when creating OpenAI batches. OpenAI currently supports only `24h`. | Stage 03 |
 
 **Note:** Resume is keyed by `(EIN2, source_id)` rather than row count, ensuring idempotency across interrupted runs (addresses legacy audit issue R-08).
 

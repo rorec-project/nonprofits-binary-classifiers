@@ -103,9 +103,12 @@ Typical workflow:
 uv run python scripts/run_pipeline.py --stages 01
 
 # Stage 02: bake-off. Review scores in bakeoff_results.json, then copy proposed_slate.json → production_slate.json (G2).
+# If the Gemma/vLLM candidate is enabled, start the vLLM server first; otherwise comment that candidate out.
 uv run python scripts/run_pipeline.py --stages 02
 
-# Stage 03-04: full annotation + QC freeze.
+# Stage 03-04: full annotation + QC freeze. OpenAI Stage 03 calls batch by
+# default; set annotation.openai_batch: false for shorter live runs. vLLM
+# providers always use live requests.
 uv run python scripts/run_pipeline.py --stages 03,04
 
 # Stage 05: anchor sample. Then code anchor_to_code.csv (G4).
@@ -324,17 +327,18 @@ Stage 02 runs a bake-off that scores every model-candidate × prompt-template co
 - **Outputs:**
   - `data/interim/bakeoff/bakeoff_results.json` — scores per candidate × prompt.
   - `data/interim/bakeoff/proposed_slate.json` — auto-picked, unconfirmed slate.
+  - `data/interim/bakeoff/bakeoff_labels.csv` — resumable long/tidy label cache keyed by `(EIN2, source_id)`.
 - **Key options:** `--prompts`, `--human-labels`, `--limit`, `--store-path`, `--output`.
-- **Caveat:** bake-off skips vLLM gracefully if server unreachable.
+- **Caveat:** the pipeline does not start vLLM automatically. If a `provider: vllm` candidate such as `google/gemma-3-27b-it` is enabled, start a local OpenAI-compatible vLLM server at `http://127.0.0.1:8000/v1` before stage 02, or comment out that candidate for a pure-OpenAI bake-off.
 
 ### B3. Stage 03 — Annotate
 
-Stage 03 applies the human-confirmed production slate to the silver pool, scoring every row across all model × prompt combinations in the ensemble. The annotation store uses a long/tidy schema keyed by (EIN2, source_id), where source_id encodes the model × prompt identity, allowing the pipeline to add or remove annotators without altering the store structure. Crashes are resumable at the (EIN2, source_id) granularity: completed rows are skipped automatically on restart, and the `--no-resume` flag forces a fresh run from scratch. Checkpointing at configurable intervals and a `--canary` mode for small-scale smoke tests support iterative prompt development without exhausting the annotation budget.
+Stage 03 applies the human-confirmed production slate to the silver pool, scoring every row across all model × prompt combinations in the ensemble. The annotation store uses a long/tidy schema keyed by (EIN2, source_id), where source_id encodes the model × prompt identity, allowing the pipeline to add or remove annotators without altering the store structure. Crashes are resumable at the (EIN2, source_id) granularity: completed rows are skipped automatically on restart, and the `--no-resume` flag forces a fresh run from scratch. Checkpointing at configurable intervals and a `--canary` mode for small-scale smoke tests support iterative prompt development without exhausting the annotation budget. With the default `annotation.openai_batch: true`, only Stage 03 OpenAI production annotators use the OpenAI Batch API; Stage 02 bake-off stays on live calls, and any vLLM production annotators continue through the live concurrency-limited path. OpenAI currently supports only a `24h` batch completion window, so set `annotation.openai_batch: false` for shorter live OpenAI runs.
 
 - **Inputs:** `production_slate.json` (G2), silver manifests.
 - **Outputs:** `data/interim/annotation_store.csv` — long/tidy label store keyed by `(EIN2, source_id)`.
 - **Key options:** `--limit`, `--no-resume`, `--canary`, `--checkpoint-every`.
-- **Caveat:** crashes resumable by `(EIN2, source_id)`; `--no-resume` starts fresh.
+- **Caveat:** crashes resumable by `(EIN2, source_id)`; `--no-resume` starts fresh. OpenAI batch request/output JSONL files are written under `data/interim/openai_batch/` for auditability; limited and canary runs stay on live calls. If a rerun finds a complete existing output JSONL for a model×prompt group, it reuses that file instead of submitting duplicate batch work.
 
 ### B4. Stage 04 — QC / Freeze
 
@@ -516,7 +520,7 @@ bash utils/run.sh "06,07,08"           # run GPU stages
 
 **OpenAI API errors** — Check that `OPENAI_API_KEY` is set in `.env` and the key has access to the model IDs in your config/slate. Rate-limit errors trigger automatic retries with backoff (`annotation.max_retries: 5`).
 
-**vLLM arm not found** — The bake-off skips the vLLM candidate gracefully if the server is unreachable. Ensure the vLLM server is running on the expected host/port and that the model ID in the config matches the served model.
+**vLLM arm not found** — The bake-off does not start vLLM for you. If the Gemma/vLLM candidate is enabled, start the server before stage 02 and ensure the model ID in the config matches the served model. If you want a pure-OpenAI bake-off, comment out the `provider: vllm` candidate.
 
 ---
 

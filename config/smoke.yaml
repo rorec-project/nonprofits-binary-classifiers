@@ -5,6 +5,7 @@ label_name: religious
 data: { allow_synthetic: true }
 anchor: { n: 60 }
 sample_sizes: { silver: 400, gold: 120, prompt_dev: 20, monitor: 10 }
+annotation: { openai_batch: false }
 training:
   epochs: 1
   batch_size: 16

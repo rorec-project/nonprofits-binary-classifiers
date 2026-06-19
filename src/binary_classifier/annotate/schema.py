@@ -7,7 +7,7 @@ label table. The schema is designed to be weak-supervision-ready: one row per
 """
 
 import json
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,26 @@ def normalize_ein2(value: Any) -> Any:
     return str(value).strip()
 
 
+def _csv_safe_text(value: str | None) -> str | None:
+    """Encode free-text fields so CSV stores stay one physical row per record."""
+    if value is None:
+        return None
+    return json.dumps(value)
+
+
+def _restore_csv_safe_text(value: Any) -> Any:
+    """Decode text written by ``_csv_safe_text`` while accepting legacy rows."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return decoded if isinstance(decoded, str) else value
+
+
 class LabelRecord(BaseModel):
     """Canonical record produced by every annotator.
 
@@ -138,7 +158,7 @@ class LabelRecord(BaseModel):
         None,
         ge=0.0,
         le=1.0,
-        description="Annotator confidence (0–1).",
+        description="Annotator confidence (0-1).",
     )
     reason: str | None = Field(
         None,
@@ -216,15 +236,15 @@ class LabelRecord(BaseModel):
             "temperature": self.temperature,
             "seed": self.seed,
             "run_timestamp": self.run_timestamp.isoformat(),
-            "raw_response": self.raw_response,
-            "reason": self.reason,
+            "raw_response": _csv_safe_text(self.raw_response),
+            "reason": _csv_safe_text(self.reason),
             "domains_present": json.dumps(self.domains_present)
             if self.domains_present is not None
             else None,
             "evidence_spans": json.dumps(self.evidence_spans)
             if self.evidence_spans is not None
             else None,
-            "boundary_notes": self.boundary_notes,
+            "boundary_notes": _csv_safe_text(self.boundary_notes),
             "binary_label": self.binary_label.value if self.binary_label else None,
             "system_fingerprint": self.system_fingerprint,
         }
@@ -253,8 +273,8 @@ class LabelRecord(BaseModel):
                 if row.get("run_timestamp")
                 else datetime.now(UTC)
             ),
-            raw_response=_clean(row.get("raw_response")),
-            reason=_clean(row.get("reason")),
+            raw_response=_restore_csv_safe_text(row.get("raw_response")),
+            reason=_restore_csv_safe_text(row.get("reason")),
             domains_present=(
                 json.loads(row["domains_present"])
                 if isinstance(row.get("domains_present"), str)
@@ -266,7 +286,7 @@ class LabelRecord(BaseModel):
                 if isinstance(row.get("evidence_spans"), str) and row["evidence_spans"]
                 else None
             ),
-            boundary_notes=_clean(row.get("boundary_notes")),
+            boundary_notes=_restore_csv_safe_text(row.get("boundary_notes")),
             binary_label=(
                 BinaryLabel(row["binary_label"])
                 if isinstance(row.get("binary_label"), str) and row["binary_label"]
@@ -343,6 +363,7 @@ class AnnotationStore:
     def _save(self) -> None:
         """Persist the backing dataframe."""
         df = self._load()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
             df.to_parquet(self.path, index=False)
         else:
@@ -381,6 +402,7 @@ class AnnotationStore:
         """Append a single record to the store."""
         row = record.to_flat_dict()
         row_df = pd.DataFrame([row], columns=self.COLUMNS)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
             df = self._load()
             self._df = pd.concat([df, row_df], ignore_index=True)
@@ -401,6 +423,7 @@ class AnnotationStore:
             return
         rows = [r.to_flat_dict() for r in records]
         rows_df = pd.DataFrame(rows, columns=self.COLUMNS)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
             df = self._load()
             self._df = pd.concat([df, rows_df], ignore_index=True)

@@ -37,16 +37,23 @@ import hashlib
 import json
 import logging
 import threading
+import time
+from collections.abc import Callable
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
 from binary_classifier.annotate.aggregate import aggregate_labels
 from binary_classifier.annotate.annotators import Annotator
 from binary_classifier.annotate.annotators.factory import make_annotator
+from binary_classifier.annotate.annotators.openai_annotator import OpenAIAnnotator
+from binary_classifier.annotate.concurrency import (
+    ProviderLimiters,
+    annotate_with_provider_limit,
+    build_provider_limiters,
+)
 from binary_classifier.annotate.schema import (
     AnnotationStore,
     LabelRecord,
@@ -298,6 +305,11 @@ def run_annotation(
 
     if limit:
         annotation_manifest = annotation_manifest.head(limit)
+    use_openai_batch = bool(
+        cfg.annotation.openai_batch and limit is None and not canary_only
+    )
+    if cfg.annotation.openai_batch and not use_openai_batch:
+        logger.info("OpenAI batch mode disabled for limited/canary annotation run")
 
     def annotator_factory(
         spec: BakeoffCandidate,
@@ -318,6 +330,7 @@ def run_annotation(
         canary_only=canary_only,
         cfg=cfg,
         registry=registry,
+        use_openai_batch=use_openai_batch,
     )
 
 
@@ -333,6 +346,8 @@ def run_annotation_matrix(
     canary_only: bool = False,
     cfg: "BinaryClassifierConfig | None" = None,
     registry: "PathRegistry | None" = None,
+    provider_limiters: ProviderLimiters | None = None,
+    use_openai_batch: bool | None = None,
 ) -> AnnotationStore:
     """Run the full model x prompt matrix over a dataframe.
 
@@ -357,6 +372,10 @@ def run_annotation_matrix(
         cfg: Configuration needed for canary fingerprint metadata.
         registry: Path registry needed to load the monitor manifest and write
             the canary audit history.
+        provider_limiters: Optional provider semaphores. When omitted and
+            ``cfg`` is supplied, built from ``cfg.annotation``.
+        use_openai_batch: Optional override for routing OpenAI groups through
+            the Batch API. ``None`` follows ``cfg.annotation.openai_batch``.
 
     Returns:
         The populated ``AnnotationStore``.
@@ -371,6 +390,8 @@ def run_annotation_matrix(
     store = AnnotationStore(store_path)
     df = df.copy()
     df["EIN2"] = df["EIN2"].map(normalize_ein2)
+    if provider_limiters is None and cfg is not None:
+        provider_limiters = build_provider_limiters(cfg)
 
     # Load prompt texts (keyed by file stem = the real prompt_id).
     prompt_texts: dict[str, str] = {p.stem: p.read_text() for p in prompt_paths}
@@ -453,8 +474,30 @@ def run_annotation_matrix(
         )
 
     total_items = sum(len(rows) for _, _, _, rows in groups)
+    openai_batch_groups: list[
+        tuple[BakeoffCandidate, str, str, list[tuple[str, str]]]
+    ] = []
+    live_groups = groups
+    batch_enabled = (
+        bool(cfg.annotation.openai_batch and not canary_only)
+        if use_openai_batch is None and cfg
+        else False
+    )
+    if use_openai_batch is not None:
+        batch_enabled = use_openai_batch
+    if batch_enabled:
+        openai_batch_groups = [
+            group for group in groups if group[0].provider == "openai"
+        ]
+        live_groups = [group for group in groups if group[0].provider != "openai"]
+        if openai_batch_groups:
+            logger.info(
+                "OpenAI Batch API enabled for %d Stage 03 model×prompt groups",
+                len(openai_batch_groups),
+            )
 
-    # Parallel execution: one thread per (spec, prompt_id) group.
+    # Parallel execution: one thread per live (spec, prompt_id) group. OpenAI
+    # batch groups are submitted through the provider's asynchronous Batch API.
     run_records: list[LabelRecord] = []
     if total_items > 0:
         store_lock = threading.Lock()
@@ -475,7 +518,13 @@ def run_annotation_matrix(
             local_count = 0
 
             for ein2, text in rows:
-                record = annotator.annotate(text, ein2=ein2)
+                record = annotate_with_provider_limit(
+                    annotator,
+                    spec.provider,
+                    text,
+                    ein2,
+                    provider_limiters,
+                )
                 batch.append(record)
                 local_records.append(record)
                 local_count += 1
@@ -507,17 +556,44 @@ def run_annotation_matrix(
 
             return local_records
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(groups),
-        ) as executor:
-            futures = [
-                executor.submit(process_group, spec, prompt_id, prompt_text, rows)
-                for spec, prompt_id, prompt_text, rows in groups
-            ]
-            for future in concurrent.futures.as_completed(futures):
-                local_records = future.result()
+        if openai_batch_groups:
+            assert cfg is not None
+            for spec, prompt_id, prompt_text, rows in openai_batch_groups:
+                local_records = _run_openai_batch_group(
+                    spec=spec,
+                    prompt_id=prompt_id,
+                    prompt_text=prompt_text,
+                    rows=rows,
+                    store_path=store_path,
+                    annotator_factory=annotator_factory,
+                    poll_seconds=cfg.annotation.openai_batch_poll_seconds,
+                    completion_window=cfg.annotation.openai_batch_completion_window,
+                )
+                with store_lock:
+                    store.append_many(local_records)
+                with progress_lock:
+                    completed += len(local_records)
+                    logger.info(
+                        "OpenAI batch checkpoint %d/%d — wrote %d records",
+                        completed,
+                        total_items,
+                        len(local_records),
+                    )
                 with run_records_lock:
                     run_records.extend(local_records)
+
+        if live_groups:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(live_groups),
+            ) as executor:
+                futures = [
+                    executor.submit(process_group, spec, prompt_id, prompt_text, rows)
+                    for spec, prompt_id, prompt_text, rows in live_groups
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    local_records = future.result()
+                    with run_records_lock:
+                        run_records.extend(local_records)
 
     else:
         logger.info("All work items already done — nothing to annotate.")
@@ -535,6 +611,256 @@ def run_annotation_matrix(
         )
 
     return store
+
+
+# ── OpenAI Batch API path ─────────────────────────────────────────────────────
+#
+# Stage 02 intentionally remains on live calls because the prompt-dev bake-off is
+# small and needs immediate scored feedback. Stage 03 can optionally batch only
+# OpenAI-backed production groups while vLLM groups continue through the live
+# concurrency-limited path.
+
+
+def _run_openai_batch_group(
+    *,
+    spec: BakeoffCandidate,
+    prompt_id: str,
+    prompt_text: str,
+    rows: list[tuple[str, str]],
+    store_path: Path,
+    annotator_factory: AnnotatorFactory,
+    poll_seconds: int,
+    completion_window: Literal["24h"],
+) -> list[LabelRecord]:
+    """Submit, poll, and parse one OpenAI model×prompt batch group."""
+    annotator = annotator_factory(spec, prompt_id, prompt_text)
+    if not isinstance(annotator, OpenAIAnnotator):
+        raise TypeError(
+            "OpenAI batch mode requires the OpenAIAnnotator factory path for "
+            f"{spec.id}__{prompt_id}.",
+        )
+
+    source_id = f"{spec.id}__{prompt_id}"
+    batch_dir = store_path.parent / "openai_batch"
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    safe_source = _safe_batch_stem(source_id)
+    requests_path = batch_dir / f"{safe_source}.requests.jsonl"
+    output_path = batch_dir / f"{safe_source}.output.jsonl"
+    errors_path = batch_dir / f"{safe_source}.errors.jsonl"
+    metadata_path = batch_dir / f"{safe_source}.batch.json"
+
+    custom_to_ein2: dict[str, str] = {}
+    with requests_path.open("w", encoding="utf-8") as handle:
+        for ein2, text in rows:
+            custom_id = f"{source_id}::{ein2}"
+            custom_to_ein2[custom_id] = ein2
+            request = annotator.build_batch_request(text, custom_id)
+            handle.write(json.dumps(request, sort_keys=True) + "\n")
+
+    expected_custom_ids = set(custom_to_ein2)
+    if _batch_outputs_cover(output_path, errors_path, expected_custom_ids):
+        logger.info("Reusing existing OpenAI batch output for %s", source_id)
+    else:
+        _submit_and_download_openai_batch(
+            annotator=annotator,
+            requests_path=requests_path,
+            output_path=output_path,
+            errors_path=errors_path,
+            metadata_path=metadata_path,
+            poll_seconds=poll_seconds,
+            completion_window=completion_window,
+        )
+
+    records: list[LabelRecord] = []
+    seen_custom_ids: set[str] = set()
+    for item, line in _iter_batch_result_lines(output_path, errors_path):
+        custom_id = item.get("custom_id")
+        if custom_id not in custom_to_ein2:
+            logger.warning("Ignoring unknown OpenAI batch custom_id: %s", custom_id)
+            continue
+        seen_custom_ids.add(custom_id)
+        records.append(
+            annotator.parse_batch_response_line(line, custom_to_ein2[custom_id]),
+        )
+
+    for custom_id in sorted(set(custom_to_ein2) - seen_custom_ids):
+        records.append(
+            annotator._error_record(
+                custom_to_ein2[custom_id], "missing_batch_response"
+            ),
+        )
+    return records
+
+
+def _submit_and_download_openai_batch(
+    *,
+    annotator: OpenAIAnnotator,
+    requests_path: Path,
+    output_path: Path,
+    errors_path: Path,
+    metadata_path: Path,
+    poll_seconds: int,
+    completion_window: Literal["24h"],
+) -> None:
+    """Submit an OpenAI batch file and write its output JSONL locally."""
+    request_sha256 = _file_sha256(requests_path)
+    metadata = _load_batch_metadata(metadata_path, request_sha256)
+    if metadata and metadata.get("batch_id"):
+        batch = annotator.client.batches.retrieve(str(metadata["batch_id"]))
+        logger.info("Resuming OpenAI batch %s", batch.id)
+    else:
+        with requests_path.open("rb") as handle:
+            input_file = annotator.client.files.create(file=handle, purpose="batch")
+
+        batch = annotator.client.batches.create(
+            input_file_id=input_file.id,
+            endpoint="/v1/chat/completions",
+            completion_window=completion_window,
+        )
+        _write_batch_metadata(
+            metadata_path,
+            {
+                "batch_id": batch.id,
+                "input_file_id": input_file.id,
+                "endpoint": "/v1/chat/completions",
+                "completion_window": completion_window,
+                "request_sha256": request_sha256,
+                "status": batch.status,
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
+    terminal_statuses = {"completed", "failed", "expired", "cancelled"}
+    while batch.status not in terminal_statuses:
+        logger.info("OpenAI batch %s status=%s", batch.id, batch.status)
+        time.sleep(poll_seconds)
+        batch = annotator.client.batches.retrieve(batch.id)
+        _update_batch_metadata_status(metadata_path, batch)
+
+    _update_batch_metadata_status(metadata_path, batch)
+    output_file_id = getattr(batch, "output_file_id", None)
+    error_file_id = getattr(batch, "error_file_id", None)
+    if output_file_id:
+        _download_openai_file(annotator, output_file_id, output_path)
+    if error_file_id:
+        _download_openai_file(annotator, error_file_id, errors_path)
+
+    if batch.status not in {"completed", "expired"}:
+        raise RuntimeError(f"OpenAI batch {batch.id} ended with status={batch.status}")
+    if not output_file_id and not error_file_id:
+        raise RuntimeError(
+            f"OpenAI batch {batch.id} ended with status={batch.status} but no "
+            "output_file_id or error_file_id"
+        )
+
+
+def _download_openai_file(
+    annotator: OpenAIAnnotator,
+    file_id: str,
+    path: Path,
+) -> None:
+    """Download an OpenAI file resource to ``path``."""
+    content = annotator.client.files.content(file_id)
+    if hasattr(content, "write_to_file"):
+        content.write_to_file(path)
+        return
+
+    data = content.read() if hasattr(content, "read") else content
+    if isinstance(data, bytes):
+        path.write_bytes(data)
+    else:
+        path.write_text(str(data), encoding="utf-8")
+
+
+def _batch_outputs_cover(
+    output_path: Path,
+    errors_path: Path,
+    expected_custom_ids: set[str],
+) -> bool:
+    """Return whether existing Batch output/error JSONL covers all requests."""
+    seen: set[str] = set()
+    try:
+        for item, _line in _iter_batch_result_lines(output_path, errors_path):
+            custom_id = item.get("custom_id")
+            if isinstance(custom_id, str):
+                seen.add(custom_id)
+    except json.JSONDecodeError:
+        return False
+    return expected_custom_ids <= seen
+
+
+def _iter_batch_result_lines(
+    output_path: Path,
+    errors_path: Path,
+) -> list[tuple[dict[str, Any], str]]:
+    """Load parsed Batch output and error JSONL lines from existing files."""
+    items: list[tuple[dict[str, Any], str]] = []
+    for path in (output_path, errors_path):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if isinstance(item, dict):
+                items.append((item, line))
+    return items
+
+
+def _file_sha256(path: Path) -> str:
+    """Return SHA-256 digest for a local file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_batch_metadata(
+    metadata_path: Path,
+    request_sha256: str,
+) -> dict[str, Any] | None:
+    """Load persisted Batch metadata when it matches the current request file."""
+    if not metadata_path.exists():
+        return None
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if metadata.get("request_sha256") != request_sha256:
+        return None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def _write_batch_metadata(metadata_path: Path, metadata: dict[str, Any]) -> None:
+    """Persist OpenAI Batch metadata for crash-safe reruns."""
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True))
+
+
+def _update_batch_metadata_status(metadata_path: Path, batch: Any) -> None:
+    """Update persisted Batch status without dropping submission metadata."""
+    metadata: dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                metadata = loaded
+        except json.JSONDecodeError:
+            metadata = {}
+    metadata.update(
+        {
+            "batch_id": batch.id,
+            "status": batch.status,
+            "output_file_id": getattr(batch, "output_file_id", None),
+            "error_file_id": getattr(batch, "error_file_id", None),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    _write_batch_metadata(metadata_path, metadata)
+
+
+def _safe_batch_stem(value: str) -> str:
+    """Return a filesystem-safe stem for persisted batch request/output files."""
+    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
 
 
 # ── Canary drift audit ────────────────────────────────────────────────────────

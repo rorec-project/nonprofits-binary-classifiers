@@ -180,7 +180,7 @@ class PathRegistry:
     @property
     def bakeoff_store(self) -> Path:
         """Long/tidy bake-off label store (stage 02)."""
-        return self.interim_dir / "bakeoff_labels.csv"
+        return self.bakeoff_dir / "bakeoff_labels.csv"
 
     @property
     def prompts_dir(self) -> Path:

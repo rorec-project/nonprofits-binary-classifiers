@@ -61,6 +61,20 @@ def _prompts(tmp_path) -> list:
     return paths
 
 
+class _SpyLimiter:
+    """Context-manager probe for provider limiter wiring."""
+
+    def __init__(self) -> None:
+        self.entries = 0
+
+    def __enter__(self):
+        self.entries += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 def test_bakeoff_emits_scores_and_unconfirmed_slate(tiny_config, tiny_registry, tmp_path):
     _write_template(tiny_registry)
     candidates = [BakeoffCandidate(id="m1", provider="openai")]
@@ -174,3 +188,54 @@ def test_bakeoff_deduplicates_predictions_before_scoring(
 
     assert out["results"][0]["scores"]["n_total"] == 3
     assert out["results"][0]["scores"]["n_valid"] == 3
+
+
+def test_bakeoff_wraps_annotation_calls_with_provider_limiter(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Stage 02 applies the OpenAI limiter across model×prompt workers."""
+    _write_template(tiny_registry)
+    spy = _SpyLimiter()
+    monkeypatch.setattr(
+        "binary_classifier.annotate.bakeoff_prompts.build_provider_limiters",
+        lambda cfg: {"openai": spy},
+    )
+
+    run_bakeoff(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=_prompts(tmp_path),
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        annotator_factory=_factory(),
+    )
+
+    assert spy.entries == 6  # 3 prompt-dev rows × 2 prompts.
+
+
+def test_bakeoff_ignores_stage03_openai_batch_flag(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Stage 02 bake-off stays on live calls when Stage 03 batch mode is on."""
+    _write_template(tiny_registry)
+    tiny_config.annotation.openai_batch = True
+    spy = _SpyLimiter()
+    monkeypatch.setattr(
+        "binary_classifier.annotate.bakeoff_prompts.build_provider_limiters",
+        lambda cfg: {"openai": spy},
+    )
+
+    run_bakeoff(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=_prompts(tmp_path),
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        annotator_factory=_factory(),
+    )
+
+    assert spy.entries == 6

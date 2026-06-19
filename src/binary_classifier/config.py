@@ -365,6 +365,11 @@ class AnnotationConfig(BaseModel):
     max_retries: int = 5
     checkpoint_every: int = 100
     guided_json: bool = True
+    openai_max_concurrency: int = Field(default=2, gt=0)
+    vllm_max_concurrency: int = Field(default=8, gt=0)
+    openai_batch: bool = False
+    openai_batch_poll_seconds: int = Field(default=30, gt=0)
+    openai_batch_completion_window: Literal["24h"] = "24h"
 
 
 class DataConfig(BaseModel):

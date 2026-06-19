@@ -72,6 +72,45 @@ class OpenAIAnnotator(Annotator):
 
     # ── Core annotation method ───────────────────────────────────────────
 
+    def build_request_body(self, text: str) -> dict[str, Any]:
+        """Return the Chat Completions body used by live and batch calls."""
+        kwargs: dict[str, Any] = {
+            "model": self.model_id,
+            "messages": [
+                {"role": "system", "content": self.prompt_text},
+                {"role": "user", "content": text},
+            ],
+            "seed": self.seed,
+        }
+        if self.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = cast(
+                Literal["none", "minimal", "low", "medium", "high", "xhigh"],
+                self.reasoning_effort,
+            )
+        else:
+            kwargs["temperature"] = self.temperature
+        # cfg.annotation.guided_json controls OpenAI strict schema mode; false
+        # leaves only prompt-level JSON guidance.
+        if self.guided_json:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "label_record",
+                    "schema": build_json_schema(),
+                    "strict": True,
+                },
+            }
+        return kwargs
+
+    def build_batch_request(self, text: str, custom_id: str) -> dict[str, Any]:
+        """Return one OpenAI Batch API JSONL request object."""
+        return {
+            "custom_id": custom_id,
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": self.build_request_body(text),
+        }
+
     def annotate(self, text: str, ein2: str = "") -> LabelRecord:
         """Call the OpenAI API and return a parsed ``LabelRecord``.
 
@@ -89,40 +128,10 @@ class OpenAIAnnotator(Annotator):
         """
         for attempt in range(self.max_retries + 1):
             try:
-                kwargs: dict[str, Any] = {
-                    "model": self.model_id,
-                    "messages": [
-                        {"role": "system", "content": self.prompt_text},
-                        {"role": "user", "content": text},
-                    ],
-                    "seed": self.seed,
-                }
-                if self.reasoning_effort is not None:
-                    kwargs["reasoning_effort"] = cast(
-                        Literal["none", "minimal", "low", "medium", "high", "xhigh"],
-                        self.reasoning_effort,
-                    )
-                else:
-                    kwargs["temperature"] = self.temperature
-                # cfg.annotation.guided_json controls OpenAI strict schema mode;
-                # false leaves only prompt-level JSON guidance.
-                if self.guided_json:
-                    kwargs["response_format"] = {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "label_record",
-                            "schema": build_json_schema(),
-                            "strict": True,
-                        },
-                    }
-                response = self.client.chat.completions.create(**kwargs)
-                raw = response.choices[0].message.content
-                if raw is None:
-                    return self._error_record(ein2, "empty_content")
-                parsed = self._parse_raw(raw, ein2)
-                parsed.raw_response = raw
-                parsed.system_fingerprint = response.system_fingerprint
-                return parsed
+                response = self.client.chat.completions.create(
+                    **self.build_request_body(text),
+                )
+                return self.parse_chat_completion_body(response.model_dump(), ein2)
             except BadRequestError as exc:
                 return self._error_record(ein2, str(exc))
             except Exception as exc:
@@ -133,6 +142,36 @@ class OpenAIAnnotator(Annotator):
         return self._error_record(ein2, "unknown_failure")
 
     # ── Parsing helpers ──────────────────────────────────────────────────
+
+    def parse_chat_completion_body(
+        self,
+        body: dict[str, Any],
+        ein2: str,
+    ) -> LabelRecord:
+        """Parse an OpenAI Chat Completions response body into a record."""
+        choices = body.get("choices") or []
+        message = choices[0].get("message", {}) if choices else {}
+        raw = message.get("content")
+        if raw is None:
+            return self._error_record(ein2, "empty_content")
+        parsed = self._parse_raw(raw, ein2)
+        parsed.raw_response = raw
+        parsed.system_fingerprint = body.get("system_fingerprint")
+        return parsed
+
+    def parse_batch_response_line(self, line: str, ein2: str) -> LabelRecord:
+        """Parse one OpenAI Batch API output JSONL line into a record."""
+        item = json.loads(line)
+        if item.get("error"):
+            return self._error_record(ein2, _format_batch_error(item["error"]))
+
+        response = item.get("response") or {}
+        status_code = response.get("status_code")
+        body = response.get("body") or {}
+        if status_code != 200:
+            message = _format_batch_error(body.get("error") or body)
+            return self._error_record(ein2, f"batch_status_{status_code}: {message}")
+        return self.parse_chat_completion_body(body, ein2)
 
     def _parse_raw(self, raw: str, ein2: str) -> LabelRecord:
         """Parse the raw JSON string into a ``LabelRecord``.
@@ -184,3 +223,12 @@ class OpenAIAnnotator(Annotator):
             reason=reason,
             raw_response=None,
         )
+
+
+def _format_batch_error(error: Any) -> str:
+    """Return a compact error message from OpenAI batch response payloads."""
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("error") or json.dumps(error)
+        code = error.get("code") or error.get("type")
+        return f"{code}: {message}" if code else str(message)
+    return str(error)

@@ -132,6 +132,20 @@ def _write_annotation_inputs(
     ).to_parquet(registry.missions_parquet, index=False)
 
 
+class _SpyLimiter:
+    """Context-manager probe for provider limiter wiring."""
+
+    def __init__(self) -> None:
+        self.entries = 0
+
+    def __enter__(self):
+        self.entries += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 def test_distinct_source_id_per_prompt(tmp_path) -> None:
     """One row under v1/v2/v3 yields three distinct source_ids."""
     prompts = _write_prompts(tmp_path)
@@ -241,6 +255,36 @@ def test_no_resume_replaces_existing_store(tmp_path) -> None:
     assert set(frame["EIN2"]) == {"00-new"}
 
 
+def test_run_annotation_matrix_wraps_calls_with_provider_limiters(tmp_path) -> None:
+    """Stage 03 applies each provider limiter on the worker annotate path."""
+    prompts = [_write_prompts(tmp_path)[0]]
+    specs = [
+        BakeoffCandidate(id="m-openai", provider="openai"),
+        BakeoffCandidate(id="m-vllm", provider="vllm"),
+    ]
+    openai_spy = _SpyLimiter()
+    vllm_spy = _SpyLimiter()
+
+    store = run_annotation_matrix(
+        df=pd.DataFrame(
+            {
+                "EIN2": ["00-1", "00-2"],
+                "text": ["mission a", "mission b"],
+            }
+        ),
+        specs=specs,
+        prompt_paths=prompts,
+        store_path=tmp_path / "store.csv",
+        annotator_factory=_stub_factory,
+        checkpoint_every=10,
+        provider_limiters={"openai": openai_spy, "vllm": vllm_spy},
+    )
+
+    assert len(store.to_frame()) == 4
+    assert openai_spy.entries == 2
+    assert vllm_spy.entries == 2
+
+
 def test_run_annotation_includes_gold_validation_for_stage04_gate(
     tiny_config,
     tiny_registry,
@@ -308,6 +352,46 @@ def test_run_annotation_includes_gold_validation_for_stage04_gate(
     assert result["n_valid"] == len(validation_ein2s)
 
 
+def test_run_annotation_limit_disables_openai_batch(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Smoke-limited Stage 03 runs stay live even when production batches."""
+    tiny_config.annotation.openai_batch = True
+    prompt = _write_prompts(tmp_path)[0]
+    _write_annotation_inputs(
+        registry=tiny_registry,
+        cfg=tiny_config,
+        silver_ein2s=["00-S1"],
+        gold_rows=[{"EIN2": "00-V1", "split": "validation"}],
+        texts={"00-S1": "community support", "00-V1": "church worship"},
+    )
+
+    def fail_batch_group(**kwargs):
+        raise AssertionError("batch path should not run for limited annotation")
+
+    monkeypatch.setattr(
+        "binary_classifier.annotate.run_annotation._run_openai_batch_group",
+        fail_batch_group,
+    )
+    monkeypatch.setattr(
+        "binary_classifier.annotate.run_annotation.make_annotator",
+        _keyword_stub_factory,
+    )
+
+    store = run_annotation(
+        cfg=tiny_config,
+        registry=tiny_registry,
+        limit=1,
+        prompt_paths=[prompt],
+        specs=[BakeoffCandidate(id="gpt-4o-mini-2024-07-18", provider="openai")],
+    )
+
+    assert len(store.to_frame()) == 1
+
+
 def test_run_annotation_canary_uses_monitor_manifest_only(
     tiny_config,
     tiny_registry,
@@ -371,6 +455,47 @@ def test_run_annotation_canary_uses_monitor_manifest_only(
         audit["model_fingerprints"][0]["temperature"]
         == tiny_config.annotation.temperature
     )
+
+
+def test_run_annotation_canary_disables_openai_batch(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Canary drift checks stay live even when production OpenAI batches."""
+    tiny_config.annotation.openai_batch = True
+    prompt = _write_prompts(tmp_path)[0]
+    _write_annotation_inputs(
+        registry=tiny_registry,
+        cfg=tiny_config,
+        silver_ein2s=["00-S1"],
+        gold_rows=[{"EIN2": "00-M1", "split": "monitor"}],
+        monitor_ein2s=["00-M1"],
+        texts={"00-M1": "church worship", "00-S1": "community support"},
+    )
+
+    def fail_batch_group(**kwargs):
+        raise AssertionError("batch path should not run for canary annotation")
+
+    monkeypatch.setattr(
+        "binary_classifier.annotate.run_annotation._run_openai_batch_group",
+        fail_batch_group,
+    )
+    monkeypatch.setattr(
+        "binary_classifier.annotate.run_annotation.make_annotator",
+        _keyword_stub_factory,
+    )
+
+    store = run_annotation(
+        cfg=tiny_config,
+        registry=tiny_registry,
+        prompt_paths=[prompt],
+        specs=[BakeoffCandidate(id="gpt-4o-mini-2024-07-18", provider="openai")],
+        canary_only=True,
+    )
+
+    assert set(store.to_frame()["EIN2"]) == {"00-M1"}
 
 
 def test_run_annotation_canary_missing_monitor_manifest_raises(

@@ -1,12 +1,12 @@
 """vLLM / local OpenAI-compatible endpoint annotator.
 
 Calls a local vLLM server at ``http://127.0.0.1:8000/v1`` using the OpenAI
-client library. When guided JSON is enabled, expects the server to be started
-with guided JSON support (e.g. ``--guided-decoding-backend outlines`` or
-``xgrammar``).
+client library. When guided JSON is enabled, requests OpenAI-compatible
+``response_format={"type": "json_schema"}`` structured output.
 """
 
 import json
+from typing import Any
 
 from openai import OpenAI
 
@@ -91,31 +91,25 @@ class VLLMAnnotator(Annotator):
         """
         for attempt in range(self.max_retries + 1):
             try:
-                # cfg.annotation.guided_json controls vLLM's constrained
-                # decoder request; false leaves only prompt-level JSON guidance.
+                kwargs: dict[str, Any] = {
+                    "model": self.model_id,
+                    "messages": [
+                        {"role": "system", "content": self.prompt_text},
+                        {"role": "user", "content": text},
+                    ],
+                    "temperature": self.temperature,
+                    "seed": self.seed,
+                }
                 if self.guided_json:
-                    response = self.client.chat.completions.create(
-                        model=self.model_id,
-                        messages=[
-                            {"role": "system", "content": self.prompt_text},
-                            {"role": "user", "content": text},
-                        ],
-                        temperature=self.temperature,
-                        seed=self.seed,
-                        extra_body={
-                            "guided_json": build_json_schema(),
+                    kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "label_record",
+                            "schema": build_json_schema(),
+                            "strict": True,
                         },
-                    )
-                else:
-                    response = self.client.chat.completions.create(
-                        model=self.model_id,
-                        messages=[
-                            {"role": "system", "content": self.prompt_text},
-                            {"role": "user", "content": text},
-                        ],
-                        temperature=self.temperature,
-                        seed=self.seed,
-                    )
+                    }
+                response = self.client.chat.completions.create(**kwargs)
                 raw = response.choices[0].message.content
                 if raw is None:
                     return self._error_record(ein2, "empty_content")
