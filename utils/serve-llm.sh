@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
-# utils/serve-llm.sh — start the coding LLM stack on a UCloud interactive job.
+# utils/serve-llm.sh — serve vLLM model(s) on a UCloud interactive job.
 #
-# Starts vLLM with LLM_CODING_MODEL (defined in .env) and prints the
-# endpoint URLs for both job-local and laptop access.
-#
-# Laptop access uses UCloud's native Public IP feature (Resources → IP addresses
-# in the UCloud web UI). Allocate one static IP, open port LLM_CODING_PORT TCP,
-# set UCLOUD_PUBLIC_IP in .env, and attach it at job submission — the IP
-# is static across jobs, so your laptop config never needs updating.
+# Two roles, each on its own port, share one GPU (a B200's 183 GB fits both):
+#   annotate — the open-weight Gemma arm for pipeline stages 02/03. The model id
+#              is read from the vLLM bake-off candidate in
+#              config/religious_missions.yaml — the single source of truth shared
+#              with the annotator client, so the served model never drifts from
+#              the one the pipeline asks for.
+#   coding   — interactive dev assistant (Opencode); LLM_CODING_MODEL from .env.
 #
 # Usage:
-#   bash utils/serve-llm.sh           # start (idempotent)
-#   bash utils/serve-llm.sh --stop    # kill vLLM
-#   bash utils/serve-llm.sh --status  # print running state + endpoint URLs
+#   bash utils/serve-llm.sh annotate          # serve the annotation model
+#   bash utils/serve-llm.sh coding            # serve the coding model
+#   bash utils/serve-llm.sh both              # serve both concurrently (split VRAM)
+#   bash utils/serve-llm.sh --status [role]   # running state + endpoint URLs
+#   bash utils/serve-llm.sh --stop   [role]   # stop one role (default: all)
+#
+# Laptop access uses UCloud's native Public IP feature (Resources → IP addresses
+# in the UCloud web UI). Allocate one static IP, open the relevant port(s) TCP,
+# set UCLOUD_PUBLIC_IP in .env, and attach it at job submission — the IP is
+# static across jobs, so your laptop config never needs updating.
 #
 # Prerequisites:
-#   - init.sh has run (drives mounted, uv env synced, env.sh written)
-#   - devenv.sh has run (Opencode installed, ~/.config/opencode/ written)
-#   - uv sync --extra serve has been run (vllm in .venv)
-#   - At job submission: Public IP resource attached with LLM_CODING_PORT open
+#   - init.sh has run (drives mounted, env.sh written, CUDA module loaded)
+#   - uv sync --extra serve (vllm in .venv) — auto-run here if missing
+#   - On Blackwell (B200), env.sh loads CUDA/12.8.0 so FlashInfer's first-launch
+#     JIT compile of the sm_100 sampling kernels can find nvcc.
 #
-# Logs: $PROJECT/outputs/interim/vllm-coding.log
+# Logs: $PROJECT/outputs/interim/vllm-<role>.log
 #
 set -euo pipefail
 shopt -s nullglob
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+ALL_ROLES="annotate coding"
+USAGE="Usage: serve-llm.sh {annotate|coding|both} | --status [role] | --stop [role]"
+
+# ── Config + secrets ──────────────────────────────────────────────────────────
 
 load_env() {
   local required="${1:-1}"
@@ -54,64 +64,166 @@ load_env() {
   PROJECT="/work/${PROJECT_DRIVE}"
   ENV_SH="${PROJECT}/env.sh"
 
+  # env.sh loads the CUDA module + GPU cache redirects — load-bearing for vLLM.
+  # shellcheck disable=SC1090
   [ -f "${ENV_SH}" ] && source "${ENV_SH}"
 }
 
-vllm_pids() {
-  [ -n "${LLM_CODING_MODEL:-}" ] || return 1
-  ps aux | grep -F "vllm serve ${LLM_CODING_MODEL}" | grep -v grep | awk '{print $2}'
+# ── Role → (model, port, max-model-len) resolution ────────────────────────────
+
+annotate_model_id() {
+  # Single switch point: the model id is the vLLM candidate in the YAML, never
+  # hardcoded here (mirrors utils/init.sh's pre-pull step).
+  ( cd "${PROJECT}" && uv run python -c "from binary_classifier.config import load_config; print(next((c.id for c in load_config('config/religious_missions.yaml').model_slate.bakeoff_candidates if c.provider=='vllm'), ''))" )
 }
 
-vllm_running() {
-  [ -n "$(vllm_pids)" ]
+role_model() {
+  case "$1" in
+    annotate) annotate_model_id ;;
+    coding)   printf '%s' "${LLM_CODING_MODEL:-}" ;;
+  esac
 }
 
-vllm_ready() {
-  [ -n "${LLM_CODING_PORT:-}" ] || return 1
-  curl -sf "http://localhost:${LLM_CODING_PORT}/health" >/dev/null 2>&1
+role_port() {
+  case "$1" in
+    annotate) printf '%s' "${LLM_ANNOTATE_PORT:-8000}" ;;
+    coding)   printf '%s' "${LLM_CODING_PORT:-8001}" ;;
+  esac
 }
 
-print_endpoints() {
+role_max_len() {
+  case "$1" in
+    annotate) printf '%s' "${LLM_ANNOTATE_MAX_MODEL_LEN:-8192}" ;;
+    coding)   printf '%s' "${LLM_CODING_MAX_MODEL_LEN:-8192}" ;;
+  esac
+}
+
+# ── Process / health helpers ──────────────────────────────────────────────────
+
+vllm_pids() {  # $1 = model id
+  [ -n "${1:-}" ] || return 1
+  ps aux | grep -F "vllm serve $1" | grep -v grep | awk '{print $2}'
+}
+
+port_ready() {  # $1 = port
+  [ -n "${1:-}" ] || return 1
+  curl -sf "http://localhost:$1/health" >/dev/null 2>&1
+}
+
+print_endpoint() {  # $1 role  $2 model  $3 port
   local model_short
-  model_short="$(basename "${LLM_CODING_MODEL}")"
-
+  model_short="$(basename "$2")"
   echo ""
   echo "═══════════════════════════════════════════════════════════════"
-  echo "  Model:  ${model_short}  (port :${LLM_CODING_PORT})"
-  echo ""
-  echo "  Within this job (Opencode in SSH session):"
-  echo "    http://localhost:${LLM_CODING_PORT}/v1"
-  echo ""
+  echo "  [$1]  ${model_short}   (port :$3)"
+  echo "    in-job:  http://localhost:$3/v1"
   if [ -n "${UCLOUD_PUBLIC_IP:-}" ]; then
-    echo "  From your laptop (UCloud Public IP — static):"
-    echo "    http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1"
-    echo ""
-    echo "  Set once in your laptop shell init (~/.bashrc / ~/.zshrc):"
-    echo "    export UCLOUD_LLM_BASE_URL=\"http://${UCLOUD_PUBLIC_IP}:${LLM_CODING_PORT}/v1\""
-    echo "    export UCLOUD_LLM_KEY=\"${LLM_API_KEY}\""
+    echo "    laptop:  http://${UCLOUD_PUBLIC_IP}:$3/v1   (open port $3 TCP on the IP)"
   else
-    echo "  Laptop access: set UCLOUD_PUBLIC_IP in .env."
-    echo "  Allocate a static IP in UCloud → Resources → IP addresses,"
-    echo "  open port ${LLM_CODING_PORT} TCP, attach at job submission."
+    echo "    laptop:  set UCLOUD_PUBLIC_IP in .env to expose this port."
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo ""
+}
+
+ensure_vllm() {
+  if ! ( cd "${PROJECT}" && uv run python -c "import vllm" ) 2>/dev/null; then
+    echo "--- vllm not in .venv; running: uv sync --extra serve ---"
+    ( cd "${PROJECT}" && uv sync --extra serve )
+  fi
+}
+
+# ── Start one role ────────────────────────────────────────────────────────────
+
+serve_one() {  # $1 role  $2 gpu_mem_util
+  local role="$1" util="$2" model port max_len log attempts
+  model="$(role_model "${role}")"
+  port="$(role_port "${role}")"
+  max_len="$(role_max_len "${role}")"
+  log="${PROJECT}/outputs/interim/vllm-${role}.log"
+
+  if [ -z "${model}" ]; then
+    echo "ERROR: no model resolved for role '${role}'." >&2
+    if [ "${role}" = "annotate" ]; then
+      echo "       Ensure config/religious_missions.yaml has a vLLM bake-off candidate." >&2
+    else
+      echo "       Set LLM_CODING_MODEL in .env." >&2
+    fi
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "${log}")"
+
+  if [ -n "$(vllm_pids "${model}")" ]; then
+    echo "--- [${role}] already running: ${model} (PID $(vllm_pids "${model}" | tr '\n' ' ')) ---"
+    print_endpoint "${role}" "${model}" "${port}"
+    return 0
+  fi
+
+  echo "--- [${role}] starting: ${model} ---"
+  echo "    port=${port}  tp=${LLM_TENSOR_PARALLEL:-1}  max-len=${max_len}  gpu-mem=${util}"
+  # On Blackwell (SM100) vLLM auto-selects FlashAttention v4 for the model's
+  # vision tower (Gemma-3 is multimodal). FA4 lazily imports the CuTe DSL
+  # (`import cutlass`), and the resolved nvidia-cutlass-dsl 4.5.2 wheel is
+  # internally broken — `cutlass/cute/core.py` does `from .tuple import ... unwrap`
+  # but that symbol no longer exists, so engine warmup's profile_run dies with
+  # `ImportError: cannot import name 'unwrap' from 'cutlass.cute.tuple'`. We never
+  # send images (text-only annotation), so pin the FA version to 2 — a prebuilt
+  # kernel that needs no CuTe/cutlass import — to bypass the broken FA4 path.
+  ( cd "${PROJECT}" && nohup uv run vllm serve "${model}" \
+      --host 0.0.0.0 \
+      --port "${port}" \
+      --served-model-name "${model}" \
+      --tensor-parallel-size "${LLM_TENSOR_PARALLEL:-1}" \
+      --max-model-len "${max_len}" \
+      --gpu-memory-utilization "${util}" \
+      --dtype auto \
+      --attention-config '{"flash_attn_version": 2}' \
+      --api-key "${LLM_API_KEY:-sk-ucloud}" \
+      &>>"${log}" & )
+  echo "    logs: ${log}"
+
+  # The first launch on Blackwell JIT-compiles FlashInfer kernels (~5 min) before
+  # /health responds; allow a generous window but fail fast if the proc dies.
+  echo -n "    waiting for /health (first Blackwell launch compiles kernels)"
+  attempts=0
+  until port_ready "${port}"; do
+    sleep 5
+    attempts=$((attempts + 1))
+    echo -n "."
+    if [ -z "$(vllm_pids "${model}")" ]; then
+      echo ""
+      echo "ERROR: [${role}] vLLM process exited before becoming healthy." >&2
+      echo "       Last 50 log lines (${log}):" >&2
+      tail -n 50 "${log}" >&2 || true
+      exit 1
+    fi
+    if [ "${attempts}" -ge 180 ]; then
+      echo ""
+      echo "ERROR: [${role}] not healthy after 15 min — tail -f ${log}" >&2
+      exit 1
+    fi
+  done
+  echo " ready (${attempts}×5s)"
+  print_endpoint "${role}" "${model}" "${port}"
 }
 
 # ── --stop ────────────────────────────────────────────────────────────────────
 
 if [[ "${1:-}" == "--stop" ]]; then
-  echo "--- Stopping vLLM coding server ---"
+  echo "--- Stopping vLLM ---"
   if ! load_env 0; then
-    echo "  .env not found; cannot identify the coding vLLM model safely."
-    echo "  No process was stopped."
+    echo "  .env not found; cannot identify models safely. Nothing stopped."
     exit 0
   fi
-  if vllm_running; then
-    kill $(vllm_pids) 2>/dev/null && echo "  Stopped."
-  else
-    echo "  Not running."
-  fi
+  roles="${2:-${ALL_ROLES}}"
+  for r in ${roles}; do
+    m="$(role_model "${r}")"
+    if [ -n "${m}" ] && [ -n "$(vllm_pids "${m}")" ]; then
+      kill $(vllm_pids "${m}") 2>/dev/null && echo "  [${r}] stopped (${m})."
+    else
+      echo "  [${r}] not running."
+    fi
+  done
   exit 0
 fi
 
@@ -119,73 +231,59 @@ fi
 
 if [[ "${1:-}" == "--status" ]]; then
   if ! load_env 0; then
-    echo "vLLM:  unknown (.env not found; model name unavailable)"
-    echo "ready: unknown (.env not found; port unavailable)"
-    echo "  Endpoints not printed."
+    echo "status: unknown (.env not found)"
     exit 0
   fi
-  echo "vLLM:  $(vllm_running && echo "running (PID $(vllm_pids | tr '\n' ' '))" || echo "stopped")"
-  echo "ready: $(vllm_ready && echo "yes" || echo "no")"
-  print_endpoints
+  roles="${2:-${ALL_ROLES}}"
+  for r in ${roles}; do
+    m="$(role_model "${r}")"
+    p="$(role_port "${r}")"
+    state="stopped"
+    [ -n "${m}" ] && [ -n "$(vllm_pids "${m}")" ] && state="running"
+    ready="no"
+    port_ready "${p}" && ready="yes"
+    echo "[${r}] ${state}  ready=${ready}  model=${m:-<unset>}  port=${p}"
+    [ "${state}" = "running" ] && print_endpoint "${r}" "${m}" "${p}"
+  done
   exit 0
 fi
 
-# ── Source config + secrets ───────────────────────────────────────────────────
+# ── Start (annotate | coding | both) ──────────────────────────────────────────
+
+MODE="${1:-}"
+case "${MODE}" in
+  annotate | coding | both) ;;
+  "" | -h | --help)
+    echo "${USAGE}" >&2
+    exit 2
+    ;;
+  *)
+    echo "ERROR: unknown role '${MODE}'." >&2
+    echo "${USAGE}" >&2
+    exit 2
+    ;;
+esac
 
 load_env 1
 
-VLLM_LOG="${PROJECT}/outputs/interim/vllm-coding.log"
-
-# ── Validate drives are mounted ───────────────────────────────────────────────
-
 if [ ! -d "${PROJECT}" ]; then
   echo "ERROR: project drive not found at ${PROJECT}." >&2
-  echo "       Attach both drives and run init.sh first." >&2
+  echo "       Attach the drives and run init.sh first." >&2
   exit 1
 fi
-mkdir -p "$(dirname "${VLLM_LOG}")"
 
-# ── Ensure vllm is in the env (uv sync --extra serve) ────────────────────────
-
-if ! uv run python -c "import vllm" 2>/dev/null; then
-  echo "--- vllm not in .venv; running: uv sync --extra serve ---"
-  cd "${PROJECT}"
-  uv sync --extra serve
+if [ -z "${CUDA_HOME:-}" ]; then
+  echo "WARNING: CUDA_HOME is empty — on a B200, FlashInfer JIT will fail at warmup." >&2
+  echo "         Run utils/init.sh (loads CUDA/12.8.0) or set CUDA_MODULE in .env." >&2
 fi
 
-# ── Start vLLM ────────────────────────────────────────────────────────────────
+ensure_vllm
 
-if vllm_running; then
-  echo "--- vLLM already running (PID $(vllm_pids | tr '\n' ' ')) ---"
+if [ "${MODE}" = "both" ]; then
+  # Split VRAM so both servers coexist on one GPU.
+  serve_one annotate "${LLM_GPU_MEM_UTIL:-0.45}"
+  serve_one coding "${LLM_GPU_MEM_UTIL:-0.45}"
 else
-  echo "--- Starting vLLM: ${LLM_CODING_MODEL} ---"
-  echo "    port=${LLM_CODING_PORT}  tp=${LLM_TENSOR_PARALLEL}  max-len=${LLM_MAX_MODEL_LEN}"
-
-  cd "${PROJECT}"
-  nohup uv run vllm serve "${LLM_CODING_MODEL}" \
-    --host 0.0.0.0 \
-    --port "${LLM_CODING_PORT}" \
-    --tensor-parallel-size "${LLM_TENSOR_PARALLEL}" \
-    --max-model-len "${LLM_MAX_MODEL_LEN}" \
-    --dtype auto \
-    --api-key "${LLM_API_KEY}" \
-    &>>"${VLLM_LOG}" &
-  echo "    PID $! — logs: ${VLLM_LOG}"
-
-  echo -n "    Waiting for /health"
-  ATTEMPTS=0
-  until vllm_ready; do
-    sleep 5
-    ATTEMPTS=$((ATTEMPTS + 1))
-    echo -n "."
-    if [ "${ATTEMPTS}" -ge 72 ]; then
-      echo ""
-      echo "ERROR: vLLM did not become healthy after 6 min." >&2
-      echo "       tail -f ${VLLM_LOG}" >&2
-      exit 1
-    fi
-  done
-  echo " ready (${ATTEMPTS}×5s)"
+  # Sole tenant: give the one model most of the GPU.
+  serve_one "${MODE}" "${LLM_GPU_MEM_UTIL_SOLO:-0.90}"
 fi
-
-print_endpoints

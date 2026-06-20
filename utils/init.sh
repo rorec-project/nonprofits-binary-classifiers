@@ -112,12 +112,51 @@ export UV_PYTHON_INSTALL_DIR="${DATA}/uv-python"
 export UV_LINK_MODE=copy
 export PATH="\$HOME/.local/bin:\$PATH"
 [ -f "${ENV_FILE}" ] && set -a && . "${ENV_FILE}" && set +a
+
+# ─── GPU caches on the persistent data drive ──────────────────────────────────
+# \$HOME is an ephemeral overlay on UCloud; redirect FlashInfer's JIT cache and
+# vLLM's torch.compile cache to /work so the ~5-min Blackwell (sm_100) compile
+# happens once and is reused across restarts and future jobs.
+export FLASHINFER_CACHE_DIR="${DATA}/flashinfer-cache"
+export VLLM_CACHE_ROOT="${DATA}/vllm-cache"
+# Pipeline client targets the annotation vLLM server (see utils/serve-llm.sh).
+export VLLM_BASE_URL="http://127.0.0.1:\${LLM_ANNOTATE_PORT:-8000}/v1"
+
+# ─── CUDA toolkit for FlashInfer JIT on Blackwell (B200 = sm_100) ─────────────
+# vLLM/FlashInfer JIT-compile sm_100 kernels at engine warmup and need nvcc,
+# which the torch/vLLM wheels do not ship. Load the EasyBuild CUDA module
+# (matches torch's cu128 build). UCloud's "Modules path" job parameter may
+# already add the EasyBuild tree to MODULEPATH; we add it defensively too.
+CUDA_MODULE="\${CUDA_MODULE:-CUDA/12.8.0}"
+if [ -f /opt/lmod/lmod/init/bash ]; then
+  . /opt/lmod/lmod/init/bash || true
+  for _ebp in /opt/easybuild/ubuntu-24.04/amd/modules/all \\
+              /opt/easybuild/ubuntu-24.04/intel/modules/all; do
+    if [ -d "\$_ebp" ]; then module use "\$_ebp"; fi
+  done
+  unset _ebp
+  module load "\$CUDA_MODULE" 2>/dev/null \\
+    || module --ignore_cache load "\$CUDA_MODULE" 2>/dev/null || true
+fi
 EOF
 
 SOURCE_LINE="[ -f '${ENV_SH}' ] && source '${ENV_SH}'"
 for rc in "${HOME}/.bashrc" "${HOME}/.profile" "${HOME}/.bash_profile"; do
   grep -qF "${ENV_SH}" "${rc}" 2>/dev/null || echo "${SOURCE_LINE}" >>"${rc}"
 done
+
+# Apply the runtime env (incl. the CUDA module) to THIS shell and report status,
+# so a missing/broken CUDA toolkit is caught here rather than at vLLM warmup.
+# shellcheck disable=SC1090
+source "${ENV_SH}"
+if [ -n "${CUDA_HOME:-}" ]; then
+  echo "--- CUDA ready: ${CUDA_HOME} (nvcc: $(command -v nvcc || echo 'not on PATH')) ---"
+elif command -v nvidia-smi >/dev/null 2>&1; then
+  # Only warn on GPU nodes — CPU-only jobs neither need nor load CUDA.
+  echo "WARNING: a GPU is present but the CUDA module did not load — the vLLM" >&2
+  echo "         annotation arm will fail on Blackwell (B200) FlashInfer JIT." >&2
+  echo "         Check the EasyBuild module tree, or set CUDA_MODULE in .env." >&2
+fi
 
 # ─── Git identity + HTTPS credential helper (no token in URLs or history) ─────
 
@@ -139,7 +178,17 @@ git pull --ff-only || echo "WARNING: 'git pull --ff-only' failed (network, auth,
 # Everything else (data/interim, data/models, data/processed/*) lives as real
 # directories inside the repo on the project drive, which persists across jobs.
 # PathRegistry.ensure_dirs() creates the nested dirs on first use.
-mkdir -p "${DATA}/raw" "${DATA}/hf-cache" "${DATA}/uv-cache" "${DATA}/uv-python"
+mkdir -p "${DATA}/raw" "${DATA}/hf-cache" "${DATA}/uv-cache" "${DATA}/uv-python" \
+  "${DATA}/flashinfer-cache" "${DATA}/vllm-cache"
+
+# Belt-and-suspenders: redirect FlashInfer's default cache location to the data
+# drive too, in case the FLASHINFER_CACHE_DIR env var is not honored by the
+# installed flashinfer-python version.
+mkdir -p "${HOME}/.cache"
+if [ ! -L "${HOME}/.cache/flashinfer" ]; then
+  rm -rf "${HOME}/.cache/flashinfer"
+  ln -sfn "${DATA}/flashinfer-cache" "${HOME}/.cache/flashinfer"
+fi
 
 # ─── Create the data/raw symlink (idempotent) ─────────────────────────────────
 # Clear any wrong-type path first, then symlink.

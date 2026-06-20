@@ -6,6 +6,7 @@ the full annotation run (stage 03), so provider routing and hyperparameter
 wiring live in one place.
 """
 
+import os
 from typing import TYPE_CHECKING
 
 from binary_classifier.annotate.annotators.base import Annotator
@@ -67,6 +68,14 @@ def make_annotator(
     if spec.provider == "vllm":
         # The guided-json switch is a global annotation knob, not a per-model
         # slate choice, so every provider construction path must receive it.
+        # VLLM_BASE_URL lets the runtime point at the annotation server's port
+        # (set by utils/serve-llm.sh / env.sh from LLM_ANNOTATE_PORT) so the
+        # client follows the server when it is not on the default :8000.
+        # LLM_API_KEY must match the key utils/serve-llm.sh passes to
+        # `vllm serve --api-key`; otherwise the server answers 401 and every
+        # annotation silently degrades to an error record. Both sides read the
+        # same env var (default "sk-ucloud") so the client never drifts from
+        # the server's auth.
         return VLLMAnnotator(
             model_id=spec.id,
             prompt_id=prompt_id,
@@ -75,6 +84,8 @@ def make_annotator(
             seed=cfg.SEED,
             max_retries=cfg.annotation.max_retries,
             guided_json=cfg.annotation.guided_json,
+            base_url=os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
+            api_key=os.environ.get("LLM_API_KEY", "sk-ucloud"),
             **extra,
         )
 

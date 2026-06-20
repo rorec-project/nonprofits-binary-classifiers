@@ -11,8 +11,11 @@ Opencode (laptop)                  Opencode (UCloud SSH session)
        │ (static, allocated once in §2 step 5) │
        └───────────────────┬───────────────────┘
                            ▼
-               vLLM :8000  on UCloud job
-               LLM_CODING_MODEL (.env) — weights in HF_HOME
+        vLLM :LLM_CODING_PORT (default 8001)  on UCloud job
+        LLM_CODING_MODEL (.env) — weights in HF_HOME
+
+  (The annotation arm — Gemma for stages 02/03 — runs separately on
+   LLM_ANNOTATE_PORT, default 8000. `serve-llm.sh both` runs both at once.)
 ```
 
 **No Tailscale, no ssh tunnel, no dynamic IPs.** UCloud's native **Public IP** resource (Resources → IP addresses) provides a static address that is attached to a job at submission time and reused every time — the endpoint URL never changes between jobs.
@@ -25,17 +28,17 @@ Launch a Terminal or PyTorch job. At job submission:
 - Attach the **Public IP** resource (allocated once beforehand).
 - Enable **SSH** and attach `utils/init.sh` as **Initialization**.
 
-Machine type: `u1-gpu-1` (single A40 or H100) is sufficient for 7B models. Reserve B200 for pipeline stages.
+Machine type: `u1-gpu-1` (single A40 or H100) is sufficient for 7B models. On a B200 you can co-locate the coding model with the annotation arm — its 183 GB fits both (`serve-llm.sh both`).
 
 ```bash
-# 1. Already done by Initialization param:
+# 1. Already done by Initialization param (also loads the CUDA module):
 bash utils/init.sh
 
 # 2. Install tooling + write Opencode config (idempotent; ~2 min first time):
 bash utils/devenv.sh
 
-# 3. Start vLLM, confirm health, print endpoint:
-bash utils/serve-llm.sh
+# 3. Start the coding vLLM, confirm health, print endpoint:
+bash utils/serve-llm.sh coding        # or: serve-llm.sh both (with the Gemma arm)
 
 # 4. Code from within the job (UCLOUD_LLM_BASE_URL=localhost set by devenv.sh):
 opencode
@@ -52,7 +55,7 @@ Done once after allocating the Public IP.
 
 ```bash
 # UCloud coding LLM — static IP, never changes between jobs
-export UCLOUD_LLM_BASE_URL="http://<UCLOUD_PUBLIC_IP>:8000/v1"
+export UCLOUD_LLM_BASE_URL="http://<UCLOUD_PUBLIC_IP>:8001/v1"   # LLM_CODING_PORT
 export UCLOUD_LLM_KEY="sk-ucloud"   # must match LLM_API_KEY in .env
 ```
 
@@ -97,11 +100,17 @@ LLM_CODING_MODEL="Qwen/Qwen2.5-Coder-32B-Instruct"   # stronger; needs B200
 LLM_TENSOR_PARALLEL=2
 ```
 
-Re-run `devenv.sh` (updates Opencode config) and `serve-llm.sh` (restarts vLLM). Update the model name in the laptop's `opencode.json` to match. Weights cache under `HF_HOME` on the DATA_DRIVE — shared across projects, no re-download on restart.
+Re-run `devenv.sh` (updates Opencode config) and `serve-llm.sh coding` (restarts the coding vLLM). Update the model name in the laptop's `opencode.json` to match. Weights cache under `HF_HOME` on the DATA_DRIVE — shared across projects, no re-download on restart.
 
 ## Co-locating with the annotation pipeline
 
-If running the coding LLM on the same B200 job as stages 03/06/07/08, set `LLM_CODING_PORT=8001` in `.env` to avoid clashing with the annotation vLLM on `:8000`. Open port `8001` TCP on the Public IP resource in addition to (or instead of) `8000`.
+The coding model defaults to `LLM_CODING_PORT=8001` and the annotation arm to `LLM_ANNOTATE_PORT=8000`, so they never clash. To run both on one B200 in a single command:
+
+```bash
+bash utils/serve-llm.sh both     # Gemma :8000 + coding :8001, split VRAM (LLM_GPU_MEM_UTIL each)
+```
+
+For laptop access to the coding model, open port `8001` TCP on the Public IP resource (the annotation arm is job-local and needs no public port).
 
 ## Security
 
@@ -112,9 +121,10 @@ If running the coding LLM on the same B200 job as stages 03/06/07/08, set `LLM_C
 ## Stopping
 
 ```bash
-bash utils/serve-llm.sh --stop
+bash utils/serve-llm.sh --stop coding   # stop just the coding model
+bash utils/serve-llm.sh --stop          # stop all roles (annotate + coding)
 ```
 
 The Public IP resource stays allocated after the job ends — detach it in the UCloud UI when not in use, and reattach it at the next job submission.
 
-`bash utils/serve-llm.sh --status` and `bash utils/serve-llm.sh --stop` first try to load `.env` so they only inspect or stop the configured coding model. If `.env` is unavailable, `--status` reports `unknown` and `--stop` refuses to kill any process rather than matching an unrelated vLLM server.
+`serve-llm.sh --status [role]` and `--stop [role]` first load `.env` so they only inspect or stop the models this project configures (matched by exact model id). If `.env` is unavailable, `--status` reports `unknown` and `--stop` refuses to kill any process rather than matching an unrelated vLLM server.

@@ -203,8 +203,14 @@ def test_openai_annotator_guided_json_false_omits_response_format() -> None:
 # ── vLLM annotator tests ─────────────────────────────────────────────────────
 
 
-def test_vllm_annotator_uses_openai_compatible_json_schema() -> None:
-    """vLLM annotator requests structured output through response_format."""
+def test_vllm_annotator_uses_guided_json_structured_output() -> None:
+    """vLLM annotator requests structured output through native guided_json.
+
+    The OpenAI ``response_format=json_schema`` path lets Gemma-3 run away
+    emitting whitespace until the length limit, so the annotator uses vLLM's
+    ``guided_json`` (xgrammar) with ``disable_any_whitespace`` instead, which
+    constrains decoding so the model closes the object and stops cleanly.
+    """
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -230,10 +236,38 @@ def test_vllm_annotator_uses_openai_compatible_json_schema() -> None:
     annotator.annotate("test text", ein2="00-3")
 
     call_args = mock_client.chat.completions.create.call_args.kwargs
-    response_format = call_args["response_format"]
-    assert response_format["type"] == "json_schema"
-    assert response_format["json_schema"]["strict"] is True
-    assert response_format["json_schema"]["schema"] == build_json_schema()
+    assert "response_format" not in call_args
+    extra_body = call_args["extra_body"]
+    assert extra_body["guided_json"] == build_json_schema()
+    assert extra_body["guided_decoding_backend"] == "xgrammar"
+    assert extra_body["disable_any_whitespace"] is True
+
+
+def test_vllm_annotator_strips_markdown_code_fence() -> None:
+    """Gemma-3 wraps guided JSON in a ```json fence; parsing must see through it."""
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = (
+        '```json\n{"binary_label": "religious", "confidence": 1.0, '
+        '"domains_present": null, "evidence_spans": null, '
+        '"boundary_notes": null, "reason": "fenced"}\n```'
+    )
+    mock_client.chat.completions.create.return_value = mock_response
+
+    annotator = VLLMAnnotator(
+        model_id="gemma-3-27b-it",
+        prompt_id="v1",
+        prompt_text="Classify.",
+    )
+    annotator.client = mock_client
+
+    record = annotator.annotate("test text", ein2="00-4")
+
+    assert record.binary_label == BinaryLabel.RELIGIOUS
+    assert record.confidence == 1.0
+    # The raw response preserves the fence; only parsing strips it.
+    assert record.raw_response is not None and record.raw_response.startswith("```")
 
 
 def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
@@ -271,6 +305,7 @@ def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
     assert record.binary_label == BinaryLabel.NONRELIGIOUS
     call_args = mock_client.chat.completions.create.call_args.kwargs
     assert "response_format" not in call_args
+    assert "extra_body" not in call_args
 
 
 # ── AnnotationStore tests ────────────────────────────────────────────────────

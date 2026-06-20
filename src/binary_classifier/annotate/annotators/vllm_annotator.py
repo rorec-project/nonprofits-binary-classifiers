@@ -1,11 +1,14 @@
 """vLLM / local OpenAI-compatible endpoint annotator.
 
 Calls a local vLLM server at ``http://127.0.0.1:8000/v1`` using the OpenAI
-client library. When guided JSON is enabled, requests OpenAI-compatible
-``response_format={"type": "json_schema"}`` structured output.
+client library. When guided JSON is enabled, requests vLLM's native
+``extra_body={"guided_json": ...}`` (xgrammar, ``disable_any_whitespace``)
+structured output — chosen over OpenAI ``response_format=json_schema`` because
+Gemma-3 runs away emitting whitespace under the latter; see ``annotate``.
 """
 
 import json
+import re
 from typing import Any
 
 from openai import OpenAI
@@ -17,6 +20,24 @@ from binary_classifier.annotate.schema import (
     SourceType,
     build_json_schema,
 )
+
+# Matches a leading ```json / ``` fence and the trailing ``` fence that some
+# instruction-tuned models (e.g. Gemma-3) wrap around structured JSON output
+# even under guided decoding.
+_CODE_FENCE_RE = re.compile(
+    r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_code_fence(raw: str) -> str:
+    """Return ``raw`` with a surrounding markdown code fence removed, if present.
+
+    Guided JSON constrains the *content* but not whether the model wraps it in a
+    ```json fence; stripping the fence keeps parsing robust to either form.
+    """
+    match = _CODE_FENCE_RE.match(raw)
+    return match.group("body") if match else raw
 
 
 class VLLMAnnotator(Annotator):
@@ -101,13 +122,17 @@ class VLLMAnnotator(Annotator):
                     "seed": self.seed,
                 }
                 if self.guided_json:
-                    kwargs["response_format"] = {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "label_record",
-                            "schema": build_json_schema(),
-                            "strict": True,
-                        },
+                    # Use vLLM's native guided_json (xgrammar) rather than the
+                    # OpenAI response_format=json_schema path: on Gemma-3 the
+                    # latter lets the model run away emitting thousands of
+                    # whitespace tokens until it hits the length limit, leaving
+                    # truncated, unparseable JSON. The guided path with
+                    # disable_any_whitespace constrains decoding so the model
+                    # closes the object and stops cleanly in ~90 tokens.
+                    kwargs["extra_body"] = {
+                        "guided_json": build_json_schema(),
+                        "guided_decoding_backend": "xgrammar",
+                        "disable_any_whitespace": True,
                     }
                 response = self.client.chat.completions.create(**kwargs)
                 raw = response.choices[0].message.content
@@ -133,7 +158,7 @@ class VLLMAnnotator(Annotator):
         treat it as an abstain.
         """
         try:
-            data = json.loads(raw)
+            data = json.loads(_strip_code_fence(raw))
         except json.JSONDecodeError:
             return self._error_record(ein2, "JSONDecodeError")
 

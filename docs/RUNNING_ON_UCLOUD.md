@@ -162,7 +162,7 @@ All configuration — drive names, git identity, LLM serving, network, and secre
 | -------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init.sh`      | UCloud (Initialization or manual) | Lean runtime: find `.env`, assert drives, export `HF_HOME`/`UV_*`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.             |
 | `devenv.sh`    | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs. |
-| `serve-llm.sh` | UCloud (interactive SSH only)     | Coding LLM assistant: starts vLLM with `LLM_CODING_MODEL` (from `.env`), waits for `/health`, prints endpoint URLs. Run after `devenv.sh`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md).   |
+| `serve-llm.sh` | UCloud (interactive SSH / GPU)     | Role-based vLLM: `annotate` (Gemma arm for stages 02/03, id from the YAML), `coding` (`LLM_CODING_MODEL`), or `both` concurrently on one B200 (two ports, split VRAM). Waits for `/health`, prints endpoints. `--status`/`--stop [role]`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md). |
 | `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env` when present, derive runtime env, `git pull`, run stages. If `DATA_DRIVE` is missing, cache paths use `/work/__UNSET__DATA_DRIVE` and fail loudly.            |
 
 ### Running stages — `run.sh`
@@ -208,7 +208,7 @@ Host ucloud-job
 
 Since the **port changes per job**, use `-p <PORT>` directly for SSH access, or update the `~/.ssh/config` entry each time. For accessing **services running in the job** (vLLM, Opencode) from your laptop, the Public IP feature (see [Coding LLM appendix](UCLOUD_CODING_LLM.md)) gives a static address that never changes between jobs — so those clients need no per-job reconfiguration.
 
-`init.sh` writes `/work/<PROJECT_DRIVE>/env.sh` and auto-sources it from `~/.bashrc` / `~/.profile`, so the runtime env (`HF_HOME`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_LINK_MODE=copy`, `PATH`, and the secrets from `.env`) loads automatically on every login — fixing the old "exports don't propagate to the interactive shell" caveat. To force it: `source /work/<PROJECT_DRIVE>/env.sh`.
+`init.sh` writes `/work/<PROJECT_DRIVE>/env.sh` and auto-sources it from `~/.bashrc` / `~/.profile`, so the runtime env loads automatically on every login — fixing the old "exports don't propagate to the interactive shell" caveat. It now exports `HF_HOME`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_LINK_MODE=copy`, `PATH`, the `.env` secrets, **the CUDA module** (see GPU build), the **GPU cache redirects** (`FLASHINFER_CACHE_DIR`, `VLLM_CACHE_ROOT` on the data drive), and **`VLLM_BASE_URL`** (built from `LLM_ANNOTATE_PORT`, so the pipeline's vLLM client follows the annotation server's port). To force it: `source /work/<PROJECT_DRIVE>/env.sh`.
 
 ### GPU build
 
@@ -232,6 +232,29 @@ torch = { index = "pytorch-cu128" }
 
 then `uv sync` again.
 
+#### CUDA toolkit for FlashInfer JIT (the B200 "nvcc not found" failure)
+
+On Blackwell, FlashInfer has no prebuilt sampling kernel for `sm_100a`, so on the **first** `vllm serve` it JIT-compiles one — which needs **`nvcc`**. The torch/vLLM wheels ship the CUDA *runtime* but not the compiler, so vLLM otherwise dies at engine warmup with:
+
+```
+/opt/cuda/bin/nvcc: not found   →   RuntimeError: Engine core initialization failed.
+```
+
+UCloud provides the compiler through the **EasyBuild module system** (Lmod). `init.sh` loads it automatically:
+
+```bash
+module load CUDA/12.8.0      # sets CUDA_HOME / PATH / CPATH; nvcc 12.8 supports sm_100
+```
+
+Notes:
+
+- Only **CUDA ≥ 12.8** can compile `compute_100a`; the 12.6 and older modules cannot.
+- At job submission you may also point the optional **"Modules path"** parameter at the **easybuild** folder so `CUDA/12.8.0` is on `MODULEPATH` by default; `init.sh` adds the EasyBuild tree itself regardless, so this is optional.
+- Override the module name with `CUDA_MODULE` in `.env` if the platform renames it.
+- The compiled kernels land in `FLASHINFER_CACHE_DIR` on the persistent data drive, so the ~5-min compile happens **once** and is reused across restarts and future jobs (UCloud's `$HOME` is wiped per job; the data drive is not).
+- Verify: `module list` shows `CUDA/12.8.0`, and `nvcc --version` → release 12.8.
+- Off-platform hosts without a system CUDA toolkit can instead `uv sync --extra serve --extra nvcc` (bundles a portable `nvcc`) and set `CUDA_HOME` accordingly.
+
 ### Linting / typing
 
 `uv sync` installs the `dev` group (`ruff`, `ty`):
@@ -247,21 +270,23 @@ uv run ty check
 
 `config/religious_missions.yaml` is the **single source of truth** for the annotator. The open-weight arm is `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`).
 
-Serve it (only on the open-weight annotation job, with `uv sync --extra serve`):
+Serve it with the role-based launcher (after `uv sync --extra serve`):
 
 ```bash
-uv run vllm serve google/gemma-3-27b-it --port 8000 --tensor-parallel-size 1
+bash utils/serve-llm.sh annotate     # Gemma on :LLM_ANNOTATE_PORT (default 8000)
 ```
 
-The annotator calls `http://127.0.0.1:8000/v1`; weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is accessed job-locally by the pipeline only — no external access to it is needed or configured. For the interactive coding LLM used with Opencode (which does need laptop access), see the [Coding LLM appendix](UCLOUD_CODING_LLM.md).
+`serve-llm.sh annotate` reads the model id straight from the YAML's vLLM candidate and starts it with `--served-model-name <id>`, so the served model can never drift from the one the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
 
-**Switching models — the single switch point:**
+To also serve the interactive **coding** model for Opencode at the same time (the B200's 183 GB has room for both), run `bash utils/serve-llm.sh both` — Gemma on `LLM_ANNOTATE_PORT` and `LLM_CODING_MODEL` on `LLM_CODING_PORT`, each given `LLM_GPU_MEM_UTIL` of the GPU. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md) for laptop access. Use `serve-llm.sh --status` / `--stop [role]` to inspect or stop a role.
+
+**Switching the annotation model — the single switch point:**
 
 1. Edit the `vllm` candidate `id` in `config/religious_missions.yaml`.
 2. Re-pull weights (`PREPULL_MODEL=1 bash utils/init.sh`, or `uv run hf download <id>`).
-3. Update the `vllm serve` id (raise `--tensor-parallel-size` for larger models).
+3. Re-run `serve-llm.sh annotate` (raise `LLM_TENSOR_PARALLEL` for larger models).
 
-`init.sh`'s pre-pull reads the id straight from the YAML — it is never hardcoded.
+Both `init.sh`'s pre-pull and `serve-llm.sh annotate` read the id straight from the YAML — it is never hardcoded.
 
 ---
 
@@ -327,8 +352,8 @@ tmux kill-session -t bclass-pipeline   # stop a finished or stuck session
 7. GPU smoke: short `bash utils/run.sh 06` (or `--limit`) writes a checkpoint under `data/models`.
 8. `git pull` / `commit` / `push` work in the project-drive checkout.
 9. From local: `rsync -av -e "ssh -p <PORT>" "ucloud@ssh.cloud.sdu.dk:/work/<PROJECT_DRIVE>/data/processed/" ./local-results/` pulls outputs down.
-10. (Open-weight arm) `vllm serve google/gemma-3-27b-it` comes up; annotator reaches `http://127.0.0.1:8000/v1`; weights cached under `HF_HOME` (no re-download on restart).
-11. (Interactive coding, see [Coding LLM appendix](UCLOUD_CODING_LLM.md)) `bash utils/devenv.sh && bash utils/serve-llm.sh` → `opencode` connects within the job; from the laptop, `opencode` connects via the static Public IP with no per-job reconfiguration.
+10. (Open-weight arm) `bash utils/serve-llm.sh annotate` comes up (first Blackwell launch JIT-compiles FlashInfer, then `/health` passes); annotator reaches `VLLM_BASE_URL` (default `http://127.0.0.1:8000/v1`); weights cached under `HF_HOME` (no re-download on restart).
+11. (Interactive coding, see [Coding LLM appendix](UCLOUD_CODING_LLM.md)) `bash utils/devenv.sh && bash utils/serve-llm.sh coding` (or `both` to co-locate with the annotation server) → `opencode` connects within the job; from the laptop, `opencode` connects via the static Public IP with no per-job reconfiguration.
 
 ---
 
