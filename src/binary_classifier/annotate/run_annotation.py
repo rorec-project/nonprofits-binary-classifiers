@@ -1,6 +1,6 @@
 """Batch annotation runner with resume support (stage 03).
 
-Runs the confirmed production model set × prompt matrix over the silver pool.
+Runs the confirmed production model set x prompt matrix over the silver pool.
 Resume is keyed by (EIN2, source_id) — fixes audit R-08 and D1: the real
 ``prompt_id`` (prompt-file stem) is threaded through the annotator factory so
 ``source_id = f"{model_id}__{prompt_id}"`` matches the resume key, keeping the
@@ -30,6 +30,7 @@ References:
     - Pangakis & Wolken (2025), "Keeping Humans in the Loop: Human-Centered
       Automated Annotation with Generative AI", ICWSM.
       https://doi.org/10.1609/icwsm.v19i1.35883
+
 """
 
 import concurrent.futures
@@ -39,7 +40,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 

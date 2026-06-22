@@ -328,8 +328,8 @@ Stage 02 runs a bake-off that scores every model-candidate × prompt-template co
   - `data/interim/bakeoff/bakeoff_results.json` — scores per candidate × prompt.
   - `data/interim/bakeoff/proposed_slate.json` — auto-picked, unconfirmed slate.
   - `data/interim/bakeoff/bakeoff_labels.csv` — resumable long/tidy label cache keyed by `(EIN2, source_id)`.
-- **Key options:** `--prompts`, `--human-labels`, `--limit`, `--store-path`, `--output`.
-- **Caveat:** the pipeline does not start vLLM automatically. If a `provider: vllm` candidate such as `google/gemma-3-27b-it` is enabled, start a local OpenAI-compatible vLLM server at `http://127.0.0.1:8000/v1` before stage 02, or comment out that candidate for a pure-OpenAI bake-off.
+- **Key options:** `--prompts`, `--human-labels`, `--limit`, `--store-path`, `--output`, `--only-model`, `--rebuild-from-store`.
+- **Caveat:** the pipeline does not start vLLM automatically. If a `provider: vllm` candidate such as `google/gemma-3-27b-it` is enabled, start a local OpenAI-compatible vLLM server and point `VLLM_BASE_URL` at it before stage 02, or comment out that candidate for a pure-OpenAI bake-off. DeepSeek-V4-Flash needs vLLM's `deepseek_v4` tokenizer/parser flags; follow `docs/RUNNING_ON_UCLOUD.md` before enabling it.
 
 ### B3. Stage 03 — Annotate
 

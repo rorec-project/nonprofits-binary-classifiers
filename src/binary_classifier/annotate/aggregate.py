@@ -2,11 +2,11 @@
 
 Stage 04 freezes silver labels by dispatching to a configurable aggregation
 method. Majority vote is the production default because it is robust to the
-high correlation typical of LLM-as-annotator ensembles: the model×prompt
+high correlation typical of LLM-as-annotator ensembles: the model x prompt
 sources share architecture, training data, and tokenizer, so their errors are
 not conditionally independent (Ratner et al. 2016/2017,
 https://doi.org/10.14778/3157794.3157797; majority-vote-for-LLM evidence
-arXiv:2511.15714, arXiv:2601.22336). Dawid–Skene (Dawid & Skene 1979) and
+arXiv:2511.15714, arXiv:2601.22336). Dawid-Skene (Dawid & Skene 1979) and
 CROWDLAB (Goh, Mueller et al. 2022, arXiv:2210.06812) are provided as drop-in
 comparison arms. DS estimates worker reliability by EM, but the independence
 assumption is violated when annotators are correlated LLMs, so it remains a
@@ -23,6 +23,7 @@ References:
       Classification Labels", NeurIPS. arXiv:2210.06812
     - Majority-vote robustness for LLM ensembles: arXiv:2511.15714,
       arXiv:2601.22336.
+
 """
 
 import logging
@@ -45,9 +46,9 @@ SILVER_COLUMNS = [
 # ── Majority vote ────────────────────────────────────────────────────────────
 #
 # Majority vote is the production default for stage-04 silver-label freezing.
-# The model×prompt annotators are correlated LLM ensemble members (shared
+# The model x prompt annotators are correlated LLM ensemble members (shared
 # architecture, training data, and tokenizer), so their errors violate the
-# conditional-independence assumption underlying Dawid–Skene EM and many
+# conditional-independence assumption underlying Dawid-Skene EM and many
 # higher-order aggregators.  Majority vote is robust to this dependence
 # structure (Ratner et al. 2017, https://doi.org/10.14778/3157794.3157797;
 # majority-vote-for-LLM evidence arXiv:2511.15714, arXiv:2601.22336).
@@ -118,7 +119,7 @@ def majority_vote(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Drop-in comparison arms ──────────────────────────────────────────────────
 #
-# Dawid–Skene (Dawid & Skene 1979) and CROWDLAB (Goh, Mueller et al. 2022,
+# Dawid-Skene (Dawid & Skene 1979) and CROWDLAB (Goh, Mueller et al. 2022,
 # arXiv:2210.06812) are exposed as opt-in diagnostics, not production defaults.
 # DS assumes conditionally independent annotators; that assumption is violated
 # by correlated LLM ensemble errors, so its consensus can be optimistic.
@@ -129,7 +130,7 @@ def majority_vote(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _label_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot a long annotation store to an EIN2 × source_id label matrix.
+    """Pivot a long annotation store to an EIN2 x source_id label matrix.
 
     Args:
         df: Long/tidy dataframe with columns ``EIN2``, ``source_id``, and
@@ -154,7 +155,7 @@ def _agreement_with_consensus(
     """Compute observed-vote agreement with a consensus label.
 
     Args:
-        labels: EIN2 × source_id label matrix.
+        labels: EIN2 x source_id label matrix.
         silver_labels: Consensus labels indexed by ``EIN2``.
 
     Returns:
@@ -181,7 +182,7 @@ def _wide_result(
     """Map consensus labels and qualities to the majority-vote schema.
 
     Args:
-        labels: EIN2 × source_id label matrix.
+        labels: EIN2 x source_id label matrix.
         silver_labels: Consensus labels indexed by ``EIN2``.
         silver_confidence: Consensus-quality scores indexed by ``EIN2``.
 

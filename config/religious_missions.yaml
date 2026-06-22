@@ -20,9 +20,14 @@ paths:
 # Config-driven slate: each candidate is tagged with its serving provider so
 # the annotator factory can route construction. OpenAI ids are floating
 # aliases (placeholders) — pin to dated snapshots before a production run.
-# The Gemma arm needs the vLLM server up during the bake-off; comment it out
-# for a pure-OpenAI bake-off. Stage 03 only runs the human-confirmed slate
-# (production_slate.json), so `production` below is just the default seed.
+# vLLM arms need an OpenAI-compatible vLLM server up during the bake-off;
+# comment them out for a pure-OpenAI bake-off. For multi-GPU UCloud runs, serve
+# each open-weight model on its own port/GPU group, run stage 02 with
+# `--only-model <id>` and matching `VLLM_BASE_URL`, then rebuild with
+# `--rebuild-from-store`. DeepSeek-V4-Flash needs vLLM's DeepSeek-specific
+# tokenizer/parser flags; see docs/RUNNING_ON_UCLOUD.md before enabling it.
+# Stage 03 only runs the human-confirmed slate (production_slate.json), so
+# `production` below is just the default seed.
 model_slate:
   bakeoff_candidates:
     - id: gpt-4o-mini-2024-07-18
@@ -35,6 +40,11 @@ model_slate:
       reasoning_effort: minimal
     - id: google/gemma-3-27b-it
       provider: vllm
+    # Optional open-weight bake-off candidate. Enable only after a UCloud smoke
+    # test confirms vLLM chat completions + guided JSON work with
+    # `--tokenizer-mode deepseek_v4 --reasoning-parser deepseek_v4`.
+    # - id: deepseek-ai/DeepSeek-V4-Flash
+    #   provider: vllm
   production: gpt-5-mini
 
 # Quality Score Q thresholds for the sample selection.
@@ -96,8 +106,11 @@ aggregation:
 training:
   dev_fraction: 0.1
   targets: soft
-  arms: [hard, class_weighted] # pruned dropped: soft targets already down-weight disagreement (arXiv:2605.20642); opt-in via override
-  curve_fractions: [1.0] # learning curve dropped; single full-data run
+  # pruned dropped: soft targets already down-weight disagreement (arXiv:2605.20642);
+  # opt-in via override
+  arms: [hard, class_weighted]
+  # learning curve dropped; single full-data run
+  curve_fractions: [1.0]
   sweep_seeds: [42, 43, 44]
   final_seeds: [42, 43, 44, 45, 46]
   crossfit_folds: 5
@@ -145,7 +158,9 @@ inference:
 
 prevalence:
   alpha: 0.05
-  cross_checks: [emq] # EMQ (vendored SLD, Saerens 2002) as the single quantification sensitivity check; KDEy opt-in under `quant` extra
+  # EMQ (vendored SLD, Saerens 2002) as the single quantification sensitivity check;
+  # KDEy opt-in under `quant` extra
+  cross_checks: [emq]
   use_design_weights: true
   per_ntee: true
   ntee_min_n: 10

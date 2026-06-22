@@ -47,9 +47,9 @@ A single `HF_HOME=/work/<DATA_DRIVE>/hf-cache` covers the encoders (`deberta-v3-
 
 The authoritative YAML uses **relative** `data/*` paths and `PathRegistry` anchors at the current directory. Since the repo lives on the project drive where persistent storage is needed, only `data/raw` needs a symlink to the shared cross-project data drive. Everything else (`data/interim`, `data/models`, `data/processed/*`) writes directly into the repo's `data/` tree and persists on the project drive.
 
-| Repo path  | → Target                       |
-| ---------- | ------------------------------ |
-| `data/raw` | `/work/<DATA_DRIVE>/raw`       |
+| Repo path  | → Target                 |
+| ---------- | ------------------------ |
+| `data/raw` | `/work/<DATA_DRIVE>/raw` |
 
 `data/processed/gold/` **stays in the repo** (git-committed human labels + slate). `.gitignore` covers `/data/*` and `/data/processed/*`, with `!/data/processed/gold/` to keep the tracked files clean.
 
@@ -158,12 +158,12 @@ Run the cheap/deterministic front of the pipeline **locally**, commit the small 
 
 All configuration — drive names, git identity, LLM serving, network, and secrets — is set once in `.env` on the project drive (see step 7). `init.sh`, `devenv.sh`, and `serve-llm.sh` require it and auto-discover the project drive by scanning `/work/*/.env`; `run.sh` also sources it when present and should be run from the project checkout.
 
-| Script         | Where it runs                     | What it does                                                                                                                                                                                 |
-| -------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init.sh`      | UCloud (Initialization or manual) | Lean runtime: find `.env`, assert drives, export `HF_HOME`/`UV_*`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.             |
-| `devenv.sh`    | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs. |
-| `serve-llm.sh` | UCloud (interactive SSH / GPU)     | Role-based vLLM: `annotate` (Gemma arm for stages 02/03, id from the YAML), `coding` (`LLM_CODING_MODEL`), or `both` concurrently on one B200 (two ports, split VRAM). Waits for `/health`, prints endpoints. `--status`/`--stop [role]`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md). |
-| `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env` when present, derive runtime env, `git pull`, run stages. If `DATA_DRIVE` is missing, cache paths use `/work/__UNSET__DATA_DRIVE` and fail loudly.            |
+| Script         | Where it runs                     | What it does                                                                                                                                                                                                                                                                               |
+| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `init.sh`      | UCloud (Initialization or manual) | Lean runtime: find `.env`, assert drives, export `HF_HOME`/`UV_*`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.                                                                                                           |
+| `devenv.sh`    | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs.                                                                                               |
+| `serve-llm.sh` | UCloud (interactive SSH / GPU)    | Role-based vLLM: `annotate` (Gemma arm for stages 02/03, id from the YAML), `coding` (`LLM_CODING_MODEL`), or `both` concurrently on one B200 (two ports, split VRAM). Waits for `/health`, prints endpoints. `--status`/`--stop [role]`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md). |
+| `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env` when present, derive runtime env, `git pull`, run stages. If `DATA_DRIVE` is missing, cache paths use `/work/__UNSET__DATA_DRIVE` and fail loudly.                                                                                                           |
 
 ### Running stages — `run.sh`
 
@@ -234,7 +234,7 @@ then `uv sync` again.
 
 #### CUDA toolkit for FlashInfer JIT (the B200 "nvcc not found" failure)
 
-On Blackwell, FlashInfer has no prebuilt sampling kernel for `sm_100a`, so on the **first** `vllm serve` it JIT-compiles one — which needs **`nvcc`**. The torch/vLLM wheels ship the CUDA *runtime* but not the compiler, so vLLM otherwise dies at engine warmup with:
+On Blackwell, FlashInfer has no prebuilt sampling kernel for `sm_100a`, so on the **first** `vllm serve` it JIT-compiles one — which needs **`nvcc`**. The torch/vLLM wheels ship the CUDA _runtime_ but not the compiler, so vLLM otherwise dies at engine warmup with:
 
 ```
 /opt/cuda/bin/nvcc: not found   →   RuntimeError: Engine core initialization failed.
@@ -268,7 +268,119 @@ uv run ty check
 
 ## 8. Model / vLLM (config-authoritative + switchable)
 
-`config/religious_missions.yaml` is the **single source of truth** for the annotator. The open-weight arm is `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`).
+`config/religious_missions.yaml` is the **single source of truth** for the annotator. The default open-weight arm is `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`). Optional larger open-weight candidates, such as `deepseek-ai/DeepSeek-V4-Flash`, can be added to `model_slate.bakeoff_candidates` after a UCloud smoke test.
+
+### One node, many GPUs, many ports
+
+Think of a UCloud B200 job as **one big computer**. If the job gives you 2+ B200 GPUs, your terminal can see them like GPU 0, GPU 1, GPU 2, etc. Check with:
+
+```bash
+nvidia-smi
+```
+
+Each vLLM server is just one process. To serve multiple open-weight models at the same time, give each process:
+
+- a GPU or GPU group via `CUDA_VISIBLE_DEVICES`
+- a different HTTP port
+- the exact model id that Stage 02 will ask for
+
+Example with two models on two GPUs:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run vllm serve google/gemma-3-27b-it \
+  --host 0.0.0.0 --port 8000 \
+  --served-model-name google/gemma-3-27b-it \
+  --tensor-parallel-size 1 \
+  --api-key "${LLM_API_KEY:-sk-ucloud}"
+
+CUDA_VISIBLE_DEVICES=1 uv run vllm serve another/model-id \
+  --host 0.0.0.0 --port 8001 \
+  --served-model-name another/model-id \
+  --tensor-parallel-size 1 \
+  --api-key "${LLM_API_KEY:-sk-ucloud}"
+```
+
+Stage 02 talks to **one** vLLM endpoint per process through `VLLM_BASE_URL`. Run one model at a time against the shared bake-off store to avoid concurrent CSV writes:
+
+```bash
+VLLM_BASE_URL=http://127.0.0.1:8000/v1 \
+  uv run python scripts/02_bakeoff_prompts.py --config config/religious_missions.yaml \
+  --only-model google/gemma-3-27b-it
+
+VLLM_BASE_URL=http://127.0.0.1:8001/v1 \
+  uv run python scripts/02_bakeoff_prompts.py --config config/religious_missions.yaml \
+  --only-model another/model-id
+```
+
+After all per-model runs finish, rebuild the combined Stage 02 artifacts from the append-only store:
+
+```bash
+uv run python scripts/02_bakeoff_prompts.py --config config/religious_missions.yaml --rebuild-from-store
+```
+
+That final command writes the combined `bakeoff_results.json` and `proposed_slate.json`. Store-only models that are no longer in the YAML remain visible for review but are not eligible for production recommendation until configured with a provider.
+
+**Important:** multiple servers can run at once, but do not run multiple Stage 02 processes writing to the same `bakeoff_labels.csv` at the same time. If you need fully parallel annotation, write each model to a separate `--store-path` first and merge deliberately afterward.
+
+### DeepSeek-V4-Flash setup
+
+DeepSeek-V4-Flash is not a normal chat-template model. Its Hugging Face card says the release uses a custom `encoding/` implementation rather than a Jinja chat template. vLLM supports that encoding, but only when the DeepSeek-specific tokenizer/parser options are enabled. Treat DeepSeek as an optional bake-off candidate until the smoke test below passes.
+
+Add it to `config/religious_missions.yaml` only when you are ready to test it:
+
+```yaml
+- id: deepseek-ai/DeepSeek-V4-Flash
+  provider: vllm
+```
+
+Serve it on a 4xB200 group. Keep `--served-model-name` exactly equal to the YAML id:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run vllm serve deepseek-ai/DeepSeek-V4-Flash \
+  --host 0.0.0.0 \
+  --port 8001 \
+  --served-model-name deepseek-ai/DeepSeek-V4-Flash \
+  --tensor-parallel-size 4 \
+  --distributed-executor-backend mp \
+  --dtype auto \
+  --kv-cache-dtype fp8 \
+  --max-model-len 8192 \
+  --max-num-batched-tokens 8192 \
+  --gpu-memory-utilization 0.9 \
+  --trust-remote-code \
+  --tokenizer-mode deepseek_v4 \
+  --reasoning-parser deepseek_v4 \
+  --tool-call-parser deepseek_v4 \
+  --enable-auto-tool-choice \
+  --api-key "${LLM_API_KEY:-sk-ucloud}"
+```
+
+First verify the OpenAI-compatible chat endpoint:
+
+```bash
+curl -s http://127.0.0.1:8001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${LLM_API_KEY:-sk-ucloud}" \
+  -d '{
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "messages": [
+      {"role": "user", "content": "Return exactly this JSON: {\"ok\": true}"}
+    ],
+    "temperature": 0,
+    "max_tokens": 64
+  }'
+```
+
+Then verify the pipeline annotator path on one prompt-dev row:
+
+```bash
+VLLM_BASE_URL=http://127.0.0.1:8001/v1 \
+  uv run python scripts/02_bakeoff_prompts.py --config config/religious_missions.yaml \
+  --only-model deepseek-ai/DeepSeek-V4-Flash \
+  --limit 1
+```
+
+Pass criteria: `/health` responds, chat completions return normal assistant content, Stage 02 parses a valid label record, `reason` is populated, `error` is empty, and no conformance warning reports missing required keys or an invalid enum.
 
 Serve it with the role-based launcher (after `uv sync --extra serve`):
 
@@ -277,6 +389,8 @@ bash utils/serve-llm.sh annotate     # Gemma on :LLM_ANNOTATE_PORT (default 8000
 ```
 
 `serve-llm.sh annotate` reads the model id straight from the YAML's vLLM candidate and starts it with `--served-model-name <id>`, so the served model can never drift from the one the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
+
+`serve-llm.sh annotate` is the simple one-annotation-model launcher. For several open-weight bake-off candidates on several GPUs, use the explicit `CUDA_VISIBLE_DEVICES` + port pattern above so each candidate has its own endpoint.
 
 To also serve the interactive **coding** model for Opencode at the same time (the B200's 183 GB has room for both), run `bash utils/serve-llm.sh both` — Gemma on `LLM_ANNOTATE_PORT` and `LLM_CODING_MODEL` on `LLM_CODING_PORT`, each given `LLM_GPU_MEM_UTIL` of the GPU. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md) for laptop access. Use `serve-llm.sh --status` / `--stop [role]` to inspect or stop a role.
 
