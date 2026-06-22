@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
+from binary_classifier.viz.style import OKABE_ITO_BLACK, OKABE_ITO_BLUE
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
@@ -120,12 +122,18 @@ def reliability_diagram(points: object, ax: "Axes", ece: float | None = None) ->
     if counts is not None and counts.max(initial=0.0) > 0.0:
         marker_sizes = 35.0 + 165.0 * counts / counts.max()
 
-    ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="black", linewidth=0.9)
+    ax.plot(
+        [0.0, 1.0],
+        [0.0, 1.0],
+        linestyle="--",
+        color=OKABE_ITO_BLACK,
+        linewidth=0.9,
+    )
     ax.scatter(
         frame["mean_predicted"].to_numpy(dtype=float),
         frame["observed_fraction"].to_numpy(dtype=float),
         s=marker_sizes,
-        color="tab:blue",
+        color=OKABE_ITO_BLUE,
         alpha=0.8,
     )
     ax.set_xlabel("Mean predicted probability")

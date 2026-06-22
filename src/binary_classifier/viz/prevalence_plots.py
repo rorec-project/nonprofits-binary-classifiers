@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from binary_classifier.viz.style import MUTED_GREY, OKABE_ITO_BLACK, OKABE_ITO_BLUE
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
@@ -67,7 +69,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: "Axes") -> None:
         mask = suppressed == is_suppressed
         if not mask.any():
             continue
-        color = "0.65" if is_suppressed else "tab:blue"
+        color = MUTED_GREY if is_suppressed else OKABE_ITO_BLUE
         label = "Suppressed" if is_suppressed else "Estimate"
         finite_ci = mask & np.isfinite(lower) & np.isfinite(upper)
         if finite_ci.any():
@@ -98,7 +100,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: "Axes") -> None:
             )
 
     ax.set_yticks(y_positions, labels=labels)
-    ax.axvline(0.0, color="black", linewidth=0.8, alpha=0.6)
+    ax.axvline(0.0, color=OKABE_ITO_BLACK, linewidth=0.8, alpha=0.6)
     ax.set_xlim(0.0, min(1.0, max(1.0, float(np.nanmax(upper)))))
     ax.set_xlabel("Estimated religious prevalence")
     ax.set_ylabel("NTEE major group")
