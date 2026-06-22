@@ -6,6 +6,11 @@ configured bake-off candidate (closed OpenAI tiers + an open-weight vLLM arm)
 on the coded prompt-dev split, writes the full score bundle, and proposes an
 **unconfirmed** slate. Promoting it to ``production_slate.json`` is the human's
 gate-G2 step (see :func:`run_annotation.resolve_production_specs`).
+
+Derived bake-off artifacts are rebuilt from the full append-only label store by
+default. Removing a model from YAML no longer removes its historical arms from
+``bakeoff_results.json`` or the slate review table; prune the store if an arm
+should disappear from derived artifacts.
 """
 
 import concurrent.futures
@@ -34,6 +39,60 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PROMPT_FILES: tuple[str, ...] = ("v1.txt", "v2.txt", "v3.txt")
 
 AnnotatorFactory = Callable[[BakeoffCandidate, str, str], Annotator]
+
+_BakeoffSetup = tuple[
+    list[Path],
+    list[BakeoffCandidate],
+    Path,
+    Path,
+    Path,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[tuple[BakeoffCandidate, Path, str, str]],
+]
+
+
+def _resolve_bakeoff_setup(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    *,
+    prompt_paths: list[Path] | None = None,
+    candidates: list[BakeoffCandidate] | None = None,
+    human_labels_path: Path | None = None,
+    output_path: Path | None = None,
+    store_path: Path | None = None,
+    limit: int | None = None,
+) -> _BakeoffSetup:
+    if prompt_paths is None:
+        prompt_paths = [registry.prompts_dir / f for f in _DEFAULT_PROMPT_FILES]
+    if candidates is None:
+        candidates = cfg.model_slate.bakeoff_candidates
+    if human_labels_path is None:
+        human_labels_path = registry.gold_coding_template
+    if output_path is None:
+        output_path = registry.bakeoff_results
+    if store_path is None:
+        store_path = registry.bakeoff_store
+
+    prompt_dev = _load_coded_prompt_dev(human_labels_path, limit)
+    human_df = prompt_dev[["EIN2", "human_label"]]
+    groups: list[tuple[BakeoffCandidate, Path, str, str]] = []
+    for spec in candidates:
+        for prompt_path in prompt_paths:
+            prompt_id = prompt_path.stem
+            source_id = f"{spec.id}__{prompt_id}"
+            groups.append((spec, prompt_path, prompt_id, source_id))
+
+    return (
+        prompt_paths,
+        candidates,
+        human_labels_path,
+        output_path,
+        store_path,
+        prompt_dev,
+        human_df,
+        groups,
+    )
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -76,16 +135,6 @@ def run_bakeoff(
         ValueError: If the template carries no coded prompt-dev labels.
 
     """
-    if prompt_paths is None:
-        prompt_paths = [registry.prompts_dir / f for f in _DEFAULT_PROMPT_FILES]
-    if candidates is None:
-        candidates = cfg.model_slate.bakeoff_candidates
-    if human_labels_path is None:
-        human_labels_path = registry.gold_coding_template
-    if output_path is None:
-        output_path = registry.bakeoff_results
-    if store_path is None:
-        store_path = registry.bakeoff_store
     if annotator_factory is None:
 
         def annotator_factory(
@@ -95,19 +144,27 @@ def run_bakeoff(
         ) -> Annotator:
             return make_annotator(cfg, spec, prompt_id, prompt_text)
 
-    # Load coded prompt-dev rows (text + human_label) — raises if absent.
-    prompt_dev = _load_coded_prompt_dev(human_labels_path, limit)
-    human_df = prompt_dev[["EIN2", "human_label"]]
+    (
+        _prompt_paths,
+        _candidates,
+        _human_labels_path,
+        _output_path,
+        _store_path,
+        prompt_dev,
+        human_df,
+        groups,
+    ) = _resolve_bakeoff_setup(
+        cfg,
+        registry,
+        prompt_paths=prompt_paths,
+        candidates=candidates,
+        human_labels_path=human_labels_path,
+        output_path=output_path,
+        store_path=store_path,
+        limit=limit,
+    )
 
-    store = AnnotationStore(store_path)
-    results: list[dict] = []
-
-    groups: list[tuple[BakeoffCandidate, Path, str, str]] = []
-    for spec in candidates:
-        for prompt_path in prompt_paths:
-            prompt_id = prompt_path.stem
-            source_id = f"{spec.id}__{prompt_id}"
-            groups.append((spec, prompt_path, prompt_id, source_id))
+    store = AnnotationStore(_store_path)
 
     store_lock = threading.Lock()
     errors_lock = threading.Lock()
@@ -162,64 +219,28 @@ def run_bakeoff(
                     with errors_lock:
                         arm_errors[source_id] = str(exc)
 
-    for spec, prompt_path, prompt_id, source_id in groups:
-        if source_id in arm_errors:
-            scores = {"error": arm_errors[source_id]}
-        else:
-            try:
-                pred_df = store.to_frame()
-                pred_df = pred_df[pred_df["source_id"] == source_id]
-                pred_df = pred_df.drop_duplicates(
-                    subset=["EIN2", "source_id"],
-                    keep="last",
-                )[["EIN2", "label"]]
-                scores = _score_vs_human(
-                    pred_df,
-                    human_df,
-                    seed=int(cfg.SEED),
-                    n_resamples=int(cfg.evaluation.bootstrap_resamples),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Bake-off arm %s scoring failed: %s",
-                    source_id,
-                    exc,
-                )
-                scores = {"error": str(exc)}
-
-        results.append(
-            {
-                "model_id": spec.id,
-                "provider": spec.provider,
-                "reasoning_effort": spec.reasoning_effort,
-                "prompt_id": prompt_id,
-                "source_id": source_id,
-                "scores": scores,
-            },
-        )
-        logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
-
-    proposed = _build_proposed_slate(
-        results,
+    results = _score_results_from_store(
+        store=store,
+        human_df=human_df,
+        groups=groups,
+        provider_specs=_provider_specs(cfg, _candidates),
+        arm_errors=arm_errors,
+        seed=int(cfg.SEED),
+        n_resamples=int(cfg.evaluation.bootstrap_resamples),
+    )
+    proposed = _write_bakeoff_artifacts(
+        registry=registry,
+        output_path=_output_path,
+        results=results,
         kappa_threshold=cfg.qc.kappa_threshold,
         f1_ci_floor=cfg.qc.f1_ci_floor,
         agreement_threshold=cfg.qc.agreement_threshold,
     )
 
-    # Write the full bundle and the proposed (unconfirmed) slate. Do NOT write
-    # production_slate.json — that is the human's gate-G2 step.
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(results, indent=2))
-    logger.info("Bake-off results written to %s", output_path)
-
-    registry.proposed_slate.parent.mkdir(parents=True, exist_ok=True)
-    registry.proposed_slate.write_text(json.dumps(proposed, indent=2))
-    logger.info("Proposed (unconfirmed) slate written to %s", registry.proposed_slate)
-
     return {
         "results": results,
         "proposed_slate": proposed,
-        "bakeoff_results_path": str(output_path),
+        "bakeoff_results_path": str(_output_path),
         "proposed_slate_path": str(registry.proposed_slate),
     }
 
@@ -292,17 +313,23 @@ def _build_proposed_slate(
         agreement_threshold: Legacy raw-accuracy benchmark, reported only.
 
     Returns:
-        Proposed-slate dict with ``confirmed``, ``models``, ``selected``, and the
-        reported (non-driving) ``agreement_threshold``.
+        Proposed-slate dict with ``confirmed``, ``models``, a compact ranked
+        ``selected`` summary table, recommendation metadata, and the reported
+        (non-driving) ``agreement_threshold``.
 
     """
 
+    def _scores(r: dict) -> dict:
+        scores = r.get("scores", {})
+        return scores if isinstance(scores, dict) else {}
+
     def _bundle(r: dict) -> dict | None:
-        scores = r["scores"]
+        scores = _scores(r)
         bundle = scores.get("metrics")
         return bundle if isinstance(bundle, dict) else None
 
     scored = [r for r in results if _bundle(r) is not None]
+    eligible_scored = [r for r in scored if _has_known_provider(r)]
 
     def _clears(r: dict) -> bool:
         bundle = _bundle(r)
@@ -319,17 +346,82 @@ def _build_proposed_slate(
         f1 = bundle["f1"]
         return f1 if np.isfinite(f1) else float("-inf")
 
-    clearing = [r for r in scored if _clears(r)]
+    def _summary_row(r: dict, *, clears: bool) -> dict:
+        scores = _scores(r)
+        bundle = _bundle(r)
+        assert bundle is not None
+        return {
+            "model_id": r["model_id"],
+            "prompt_id": r["prompt_id"],
+            "accuracy": scores.get("accuracy"),
+            "f1": bundle.get("f1"),
+            "cohens_kappa": bundle.get("cohens_kappa"),
+            "f1_ci_lower": bundle.get("bootstrap_ci", {})
+            .get("minority_f1", {})
+            .get("lower"),
+            "abstain_rate": scores.get("abstain_rate"),
+            "n_valid": scores.get("n_valid"),
+            "clears": clears,
+        }
+
+    def _review_row(r: dict) -> dict:
+        row = {
+            "model_id": r.get("model_id"),
+            "prompt_id": r.get("prompt_id"),
+            "source_id": r.get("source_id"),
+            "provider": r.get("provider"),
+            "reasoning_effort": r.get("reasoning_effort"),
+            "currently_configured": bool(r.get("currently_configured", False)),
+        }
+        scores = _scores(r)
+        bundle = _bundle(r)
+        if bundle is None:
+            row.update(
+                {
+                    "accuracy": scores.get("accuracy"),
+                    "f1": None,
+                    "cohens_kappa": None,
+                    "f1_ci_lower": None,
+                    "abstain_rate": scores.get("abstain_rate"),
+                    "n_valid": scores.get("n_valid"),
+                    "clears": False,
+                    "error": scores.get("error") or "missing metric bundle",
+                },
+            )
+            return row
+        row.update(_summary_row(r, clears=_clears(r)))
+        return row
+
+    def _sort_key(row: dict) -> tuple[float, float, int]:
+        f1 = row["f1"]
+        kappa = row["cohens_kappa"]
+        n_valid = row["n_valid"]
+        return (
+            float(f1) if f1 is not None and np.isfinite(f1) else float("-inf"),
+            float(kappa) if kappa is not None and np.isfinite(kappa) else float("-inf"),
+            int(n_valid) if n_valid is not None else -1,
+        )
+
+    clearing = [r for r in eligible_scored if _clears(r)]
     if clearing:
-        selected = clearing
-    elif scored:
-        selected = [max(scored, key=_minority_f1)]
+        selected_results = clearing
+    elif eligible_scored:
+        selected_results = [max(eligible_scored, key=_minority_f1)]
     else:
-        selected = []
+        selected_results = []
+
+    selected = sorted(
+        (_summary_row(r, clears=_clears(r)) for r in selected_results),
+        key=_sort_key,
+        reverse=True,
+    )
 
     models: list[dict] = []
     seen: set[str] = set()
-    for r in selected:
+    selected_keys = {(row["model_id"], row["prompt_id"]) for row in selected}
+    for r in results:
+        if (r.get("model_id"), r.get("prompt_id")) not in selected_keys:
+            continue
         if r["model_id"] not in seen:
             seen.add(r["model_id"])
             models.append(
@@ -340,13 +432,281 @@ def _build_proposed_slate(
                 },
             )
 
+    arms = sorted((_review_row(r) for r in results), key=_sort_key, reverse=True)
+    not_currently_configured = [
+        row for row in arms if not bool(row.get("currently_configured", False))
+    ]
+
+    recommended = selected[0] if selected else None
+    if recommended is None:
+        rationale = (
+            "No currently configured, provider-backed model-prompt arms had usable "
+            "metrics. Store-only arms are listed for review but are not eligible "
+            "for recommendation until configured with a provider."
+        )
+    elif recommended["clears"]:
+        rationale = (
+            "Top-ranked arm clears both Cohen's kappa and minority-F1 CI gates; "
+            "review abstain_rate and n_valid before confirming."
+        )
+    else:
+        rationale = (
+            "No arm clears both gates; recommended arm is the single-best "
+            "fallback by minority F1."
+        )
+
     return {
         "confirmed": False,
         "models": models,
         "selected": selected,
+        "arms": arms,
+        "not_currently_configured": not_currently_configured,
+        "recommended": recommended,
+        "rationale": rationale,
+        "selection_scope": "full_store",
         "kappa_threshold": kappa_threshold,
         "f1_ci_floor": f1_ci_floor,
         "agreement_threshold": agreement_threshold,
+    }
+
+
+def _has_known_provider(result: dict) -> bool:
+    return result.get("provider") in {"openai", "vllm"}
+
+
+def _parse_source_id(source_id: str) -> tuple[str, str] | None:
+    """Parse ``model_id__prompt_id`` source identifiers."""
+    if "__" not in source_id:
+        return None
+    model_id, prompt_id = source_id.rsplit("__", 1)
+    if not model_id or not prompt_id:
+        return None
+    return model_id, prompt_id
+
+
+def _provider_specs(
+    cfg: BinaryClassifierConfig,
+    candidates: list[BakeoffCandidate],
+) -> dict[str, BakeoffCandidate]:
+    """Return provider metadata from YAML plus any explicit candidate override."""
+    specs = {spec.id: spec for spec in cfg.model_slate.bakeoff_candidates}
+    specs.update({spec.id: spec for spec in candidates})
+    return specs
+
+
+def _group_metadata(
+    groups: list[tuple[BakeoffCandidate, Path, str, str]],
+) -> dict[str, dict]:
+    metadata: dict[str, dict] = {}
+    for spec, _prompt_path, prompt_id, source_id in groups:
+        metadata[source_id] = {
+            "model_id": spec.id,
+            "provider": spec.provider,
+            "reasoning_effort": spec.reasoning_effort,
+            "prompt_id": prompt_id,
+            "source_id": source_id,
+            "currently_configured": True,
+        }
+    return metadata
+
+
+def _score_results_from_store(
+    *,
+    store: AnnotationStore,
+    human_df: pd.DataFrame,
+    groups: list[tuple[BakeoffCandidate, Path, str, str]],
+    provider_specs: dict[str, BakeoffCandidate],
+    arm_errors: dict[str, str] | None,
+    seed: int,
+    n_resamples: int,
+) -> list[dict]:
+    """Score every current and stored bake-off arm from the label store."""
+    current_metadata = _group_metadata(groups)
+    store_df = store.to_frame()
+    source_ids = list(current_metadata)
+    if not store_df.empty:
+        for source_id in store_df["source_id"].dropna().unique().tolist():
+            if source_id not in current_metadata:
+                source_ids.append(str(source_id))
+
+    results: list[dict] = []
+    for source_id in source_ids:
+        metadata = current_metadata.get(source_id)
+        if metadata is None:
+            parsed = _parse_source_id(source_id)
+            if parsed is None:
+                logger.warning("Skipping malformed bake-off source_id: %s", source_id)
+                continue
+            model_id, prompt_id = parsed
+            spec = provider_specs.get(model_id)
+            metadata = {
+                "model_id": model_id,
+                "provider": spec.provider if spec is not None else None,
+                "reasoning_effort": spec.reasoning_effort if spec is not None else None,
+                "prompt_id": prompt_id,
+                "source_id": source_id,
+                "currently_configured": False,
+            }
+
+        if arm_errors and source_id in arm_errors:
+            scores = {"error": arm_errors[source_id]}
+        else:
+            try:
+                pred_df = store_df[store_df["source_id"] == source_id]
+                pred_df = pred_df.drop_duplicates(
+                    subset=["EIN2", "source_id"],
+                    keep="last",
+                )[["EIN2", "label"]]
+                scores = _score_vs_human(
+                    pred_df,
+                    human_df,
+                    seed=seed,
+                    n_resamples=n_resamples,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Bake-off arm %s scoring failed: %s",
+                    source_id,
+                    exc,
+                )
+                scores = {"error": str(exc)}
+
+        result = {**metadata, "scores": scores}
+        results.append(result)
+        logger.info("Bake-off: %s | scores: %s", source_id, json.dumps(scores))
+
+    return results
+
+
+def _write_bakeoff_artifacts(
+    *,
+    registry: PathRegistry,
+    output_path: Path,
+    results: list[dict],
+    kappa_threshold: float,
+    f1_ci_floor: float,
+    agreement_threshold: float,
+) -> dict:
+    """Write full-store results and the unconfirmed proposed slate."""
+    proposed = _build_proposed_slate(
+        results,
+        kappa_threshold=kappa_threshold,
+        f1_ci_floor=f1_ci_floor,
+        agreement_threshold=agreement_threshold,
+    )
+
+    # Do NOT write production_slate.json — that is the human's gate-G2 step.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(results, indent=2))
+    logger.info("Bake-off results written to %s", output_path)
+
+    registry.proposed_slate.parent.mkdir(parents=True, exist_ok=True)
+    registry.proposed_slate.write_text(json.dumps(proposed, indent=2))
+    logger.info("Proposed (unconfirmed) slate written to %s", registry.proposed_slate)
+    return proposed
+
+
+def rebuild_proposed_slate_from_results(
+    registry: PathRegistry,
+    *,
+    kappa_threshold: float,
+    f1_ci_floor: float,
+    agreement_threshold: float,
+) -> dict:
+    """Rebuild ``proposed_slate.json`` from existing bake-off scores only.
+
+    This is a local, zero-cost Gate-G2 utility: it reads the persisted full
+    ``bakeoff_results.json`` bundle, rewrites the compact proposed slate, and
+    never calls annotators or touches the label store.
+
+    Args:
+        registry: Path registry resolving bake-off artifact paths.
+        kappa_threshold: Minimum Cohen's κ to clear.
+        f1_ci_floor: Minimum bootstrap minority-F1 CI-lower to clear.
+        agreement_threshold: Legacy raw-accuracy benchmark, reported only.
+
+    Returns:
+        The rebuilt proposed slate dict.
+
+    Raises:
+        FileNotFoundError: If ``registry.bakeoff_results`` does not exist.
+
+    """
+    results = json.loads(registry.bakeoff_results.read_text())
+    proposed = _build_proposed_slate(
+        results,
+        kappa_threshold=kappa_threshold,
+        f1_ci_floor=f1_ci_floor,
+        agreement_threshold=agreement_threshold,
+    )
+    registry.proposed_slate.parent.mkdir(parents=True, exist_ok=True)
+    registry.proposed_slate.write_text(json.dumps(proposed, indent=2))
+    logger.info("Rebuilt proposed slate from %s", registry.bakeoff_results)
+    return proposed
+
+
+def rebuild_bakeoff_artifacts_from_store(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    *,
+    prompt_paths: list[Path] | None = None,
+    candidates: list[BakeoffCandidate] | None = None,
+    human_labels_path: Path | None = None,
+    output_path: Path | None = None,
+    store_path: Path | None = None,
+    limit: int | None = None,
+) -> dict:
+    """Rebuild full-store bake-off results and proposed slate without annotation.
+
+    This is the zero-cost additive rebuild path. It scores the union of current
+    configured groups and every distinct ``source_id`` already present in the
+    append-only bake-off label store. Store-only arms keep their historical
+    scores in derived artifacts; if their model is not configured in the YAML,
+    ``provider`` is ``None`` and they are excluded from recommendation.
+    """
+    (
+        _prompt_paths,
+        _candidates,
+        _human_labels_path,
+        _output_path,
+        _store_path,
+        prompt_dev,
+        human_df,
+        groups,
+    ) = _resolve_bakeoff_setup(
+        cfg,
+        registry,
+        prompt_paths=prompt_paths,
+        candidates=candidates,
+        human_labels_path=human_labels_path,
+        output_path=output_path,
+        store_path=store_path,
+        limit=limit,
+    )
+
+    results = _score_results_from_store(
+        store=AnnotationStore(_store_path),
+        human_df=human_df,
+        groups=groups,
+        provider_specs=_provider_specs(cfg, _candidates),
+        arm_errors=None,
+        seed=int(cfg.SEED),
+        n_resamples=int(cfg.evaluation.bootstrap_resamples),
+    )
+    proposed = _write_bakeoff_artifacts(
+        registry=registry,
+        output_path=_output_path,
+        results=results,
+        kappa_threshold=cfg.qc.kappa_threshold,
+        f1_ci_floor=cfg.qc.f1_ci_floor,
+        agreement_threshold=cfg.qc.agreement_threshold,
+    )
+
+    return {
+        "results": results,
+        "proposed_slate": proposed,
+        "bakeoff_results_path": str(_output_path),
+        "proposed_slate_path": str(registry.proposed_slate),
     }
 
 

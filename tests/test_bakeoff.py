@@ -1,9 +1,17 @@
 """Tests for T1.6: bake-off scoring, proposed slate, and arm degradation."""
 
+import json
+
 import pandas as pd
 import pytest
 
-from binary_classifier.annotate.bakeoff_prompts import run_bakeoff
+from binary_classifier.annotate.bakeoff_prompts import (
+    _build_proposed_slate,
+    rebuild_bakeoff_artifacts_from_store,
+    rebuild_proposed_slate_from_results,
+    run_bakeoff,
+)
+from binary_classifier.annotate.run_annotation import _selected_prompt_pairs
 from binary_classifier.annotate.schema import (
     AnnotationStore,
     BinaryLabel,
@@ -61,6 +69,41 @@ def _prompts(tmp_path) -> list:
     return paths
 
 
+def _scored_result(
+    model_id: str,
+    prompt_id: str,
+    *,
+    f1: float,
+    kappa: float,
+    ci_lower: float,
+    provider: str | None = "openai",
+    abstain_rate: float = 0.0,
+    n_valid: int = 50,
+) -> dict:
+    return {
+        "model_id": model_id,
+        "provider": provider,
+        "reasoning_effort": None,
+        "prompt_id": prompt_id,
+        "source_id": f"{model_id}__{prompt_id}",
+        "currently_configured": provider is not None,
+        "scores": {
+            "accuracy": 0.9,
+            "precision": 0.9,
+            "recall": 0.9,
+            "f1": f1,
+            "abstain_rate": abstain_rate,
+            "n_valid": n_valid,
+            "n_total": 50,
+            "metrics": {
+                "f1": f1,
+                "cohens_kappa": kappa,
+                "bootstrap_ci": {"minority_f1": {"lower": ci_lower}},
+            },
+        },
+    }
+
+
 class _SpyLimiter:
     """Context-manager probe for provider limiter wiring."""
 
@@ -110,6 +153,23 @@ def test_bakeoff_emits_scores_and_unconfirmed_slate(tiny_config, tiny_registry, 
     slate = load_slate(tiny_registry.proposed_slate)
     assert slate.confirmed is False
     assert len(slate.models) >= 1
+    assert out["proposed_slate"]["recommended"] == out["proposed_slate"]["selected"][0]
+    assert isinstance(out["proposed_slate"]["rationale"], str)
+    selected_row = out["proposed_slate"]["selected"][0]
+    assert set(selected_row) == {
+        "model_id",
+        "prompt_id",
+        "accuracy",
+        "f1",
+        "cohens_kappa",
+        "f1_ci_lower",
+        "abstain_rate",
+        "n_valid",
+        "clears",
+    }
+    assert (selected_row["model_id"], selected_row["prompt_id"]) in _selected_prompt_pairs(
+        slate,
+    )
 
 
 def test_bakeoff_missing_labels_raises(tiny_config, tiny_registry, tmp_path):
@@ -144,6 +204,220 @@ def test_bakeoff_vllm_arm_degrades_without_aborting(tiny_config, tiny_registry, 
     assert "error" in by_model[("gemma", "v1")]["scores"]
     # Proposed slate is built from the surviving (scored) arm.
     assert any(m["id"] == "m1" for m in out["proposed_slate"]["models"])
+
+
+def test_build_proposed_slate_emits_ranked_summary_and_recommendation() -> None:
+    results = [
+        _scored_result("m1", "v1", f1=0.80, kappa=0.75, ci_lower=0.72),
+        _scored_result(
+            "m2",
+            "v2",
+            f1=0.92,
+            kappa=0.90,
+            ci_lower=0.80,
+            abstain_rate=0.4,
+            n_valid=30,
+        ),
+        _scored_result("m3", "v3", f1=0.99, kappa=0.10, ci_lower=0.05),
+    ]
+
+    slate = _build_proposed_slate(
+        results,
+        kappa_threshold=0.7,
+        f1_ci_floor=0.7,
+        agreement_threshold=0.85,
+    )
+
+    assert slate["confirmed"] is False
+    assert [row["model_id"] for row in slate["selected"]] == ["m2", "m1"]
+    assert slate["recommended"] == slate["selected"][0]
+    assert "clears both" in slate["rationale"]
+    assert slate["selected"][0] == {
+        "model_id": "m2",
+        "prompt_id": "v2",
+        "accuracy": 0.9,
+        "f1": 0.92,
+        "cohens_kappa": 0.9,
+        "f1_ci_lower": 0.8,
+        "abstain_rate": 0.4,
+        "n_valid": 30,
+        "clears": True,
+    }
+    assert {model["id"] for model in slate["models"]} == {"m1", "m2"}
+
+
+def test_build_proposed_slate_fallback_keeps_contract() -> None:
+    results = [
+        _scored_result("m1", "v1", f1=0.70, kappa=0.60, ci_lower=0.30),
+        _scored_result("m2", "v2", f1=0.85, kappa=0.65, ci_lower=0.40),
+    ]
+
+    slate_dict = _build_proposed_slate(
+        results,
+        kappa_threshold=0.7,
+        f1_ci_floor=0.7,
+        agreement_threshold=0.85,
+    )
+
+    assert slate_dict["selected"] == [
+        {
+            "model_id": "m2",
+            "prompt_id": "v2",
+            "accuracy": 0.9,
+            "f1": 0.85,
+            "cohens_kappa": 0.65,
+            "f1_ci_lower": 0.4,
+            "abstain_rate": 0.0,
+            "n_valid": 50,
+            "clears": False,
+        },
+    ]
+    assert slate_dict["recommended"] == slate_dict["selected"][0]
+    assert "fallback" in slate_dict["rationale"]
+
+
+def test_build_proposed_slate_excludes_no_provider_arms_from_recommendation() -> None:
+    results = [
+        _scored_result(
+            "old-model",
+            "v9",
+            provider=None,
+            f1=0.99,
+            kappa=0.95,
+            ci_lower=0.90,
+        ),
+        _scored_result("m1", "v1", f1=0.50, kappa=0.20, ci_lower=0.10),
+    ]
+
+    slate_dict = _build_proposed_slate(
+        results,
+        kappa_threshold=0.7,
+        f1_ci_floor=0.7,
+        agreement_threshold=0.85,
+    )
+
+    assert slate_dict["recommended"]["model_id"] == "m1"
+    assert slate_dict["selected"] == [
+        {
+            "model_id": "m1",
+            "prompt_id": "v1",
+            "accuracy": 0.9,
+            "f1": 0.5,
+            "cohens_kappa": 0.2,
+            "f1_ci_lower": 0.1,
+            "abstain_rate": 0.0,
+            "n_valid": 50,
+            "clears": False,
+        },
+    ]
+    assert any(
+        row["model_id"] == "old-model" and row["provider"] is None
+        for row in slate_dict["arms"]
+    )
+
+
+def test_rebuild_slate_from_results_validates_and_yields_selected_pairs(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    results = [
+        _scored_result("m1", "v1", f1=0.80, kappa=0.75, ci_lower=0.72),
+        _scored_result("m2", "v2", f1=0.92, kappa=0.90, ci_lower=0.80),
+    ]
+    tiny_registry.bakeoff_results.parent.mkdir(parents=True, exist_ok=True)
+    tiny_registry.bakeoff_results.write_text(json.dumps(results))
+
+    proposed = rebuild_proposed_slate_from_results(
+        tiny_registry,
+        kappa_threshold=tiny_config.qc.kappa_threshold,
+        f1_ci_floor=tiny_config.qc.f1_ci_floor,
+        agreement_threshold=tiny_config.qc.agreement_threshold,
+    )
+
+    assert tiny_registry.proposed_slate.exists()
+    assert json.loads(tiny_registry.proposed_slate.read_text()) == proposed
+    slate = load_slate(tiny_registry.proposed_slate)
+    pairs = _selected_prompt_pairs(slate)
+    assert pairs == {("m1", "v1"), ("m2", "v2")}
+
+
+def test_full_store_bakeoff_artifacts_include_store_only_no_provider_arms(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+) -> None:
+    _write_template(tiny_registry)
+    prompt_path = _prompts(tmp_path)[0]
+    store_path = tmp_path / "bakeoff_store.csv"
+    AnnotationStore(store_path).append_many(
+        [
+            LabelRecord(
+                EIN2="00-1",
+                source_id="old-model__v9",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="old-model",
+                prompt_id="v9",
+                temperature=0.0,
+                binary_label=BinaryLabel.RELIGIOUS,
+            ),
+            LabelRecord(
+                EIN2="00-2",
+                source_id="old-model__v9",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="old-model",
+                prompt_id="v9",
+                temperature=0.0,
+                binary_label=BinaryLabel.RELIGIOUS,
+            ),
+            LabelRecord(
+                EIN2="00-3",
+                source_id="old-model__v9",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="old-model",
+                prompt_id="v9",
+                temperature=0.0,
+                binary_label=BinaryLabel.NONRELIGIOUS,
+            ),
+        ],
+    )
+
+    out = run_bakeoff(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=[prompt_path],
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        annotator_factory=_factory(),
+        store_path=store_path,
+    )
+
+    by_source = {row["source_id"]: row for row in out["results"]}
+    assert set(by_source) == {"m1__v1", "old-model__v9"}
+    assert by_source["old-model__v9"]["provider"] is None
+    assert by_source["old-model__v9"]["currently_configured"] is False
+
+    proposed = out["proposed_slate"]
+    assert proposed["selection_scope"] == "full_store"
+    assert {row["source_id"] for row in proposed["arms"]} == set(by_source)
+    assert proposed["not_currently_configured"] == [
+        row for row in proposed["arms"] if row["source_id"] == "old-model__v9"
+    ]
+    assert proposed["recommended"]["model_id"] == "m1"
+    assert all(row["model_id"] != "old-model" for row in proposed["selected"])
+
+    slate = load_slate(tiny_registry.proposed_slate)
+    assert _selected_prompt_pairs(slate) == {("m1", "v1")}
+    written_results = json.loads(tiny_registry.bakeoff_results.read_text())
+    assert {row["source_id"] for row in written_results} == set(by_source)
+
+    rebuilt = rebuild_bakeoff_artifacts_from_store(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=[prompt_path],
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        store_path=store_path,
+    )
+    assert {row["source_id"] for row in rebuilt["results"]} == set(by_source)
+    assert rebuilt["proposed_slate"]["recommended"]["model_id"] == "m1"
 
 
 def test_bakeoff_deduplicates_predictions_before_scoring(
