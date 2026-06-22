@@ -1,6 +1,7 @@
 """Tests for T2.A: annotation hardening (schema + annotators)."""
 
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -200,6 +201,51 @@ def test_openai_annotator_guided_json_false_omits_response_format() -> None:
     assert "response_format" not in call_args
 
 
+def test_openai_annotator_flags_bad_binary_label(caplog) -> None:
+    """Out-of-enum labels still parse to records but are visible as drift."""
+    annotator = OpenAIAnnotator(
+        model_id="gpt-4o-mini",
+        prompt_id="v1",
+        prompt_text="Classify.",
+        api_key="test",
+    )
+    raw = json.dumps(
+        {
+            "binary_label": "faith_based",
+            "confidence": 0.8,
+            "domains_present": None,
+            "evidence_spans": None,
+            "boundary_notes": None,
+            "reason": "mentions faith",
+        }
+    )
+
+    caplog.set_level(logging.WARNING)
+    record = annotator._parse_raw(raw, ein2="00-bad-label")
+
+    assert record.binary_label is None
+    assert record.raw_response == raw
+    assert record.reason == "mentions faith"
+    assert record.error == "invalid binary_label: 'faith_based'"
+    assert "Non-conformant LLM response" in caplog.text
+    assert "invalid binary_label: 'faith_based'" in caplog.text
+
+
+def test_openai_error_record_uses_error_not_reason() -> None:
+    """Provider failures must not masquerade as model reasoning."""
+    annotator = OpenAIAnnotator(
+        model_id="gpt-4o-mini",
+        prompt_id="v1",
+        prompt_text="Classify.",
+        api_key="test",
+    )
+
+    record = annotator._error_record("00-error", "request failed")
+
+    assert record.reason is None
+    assert record.error == "request failed"
+
+
 # ── vLLM annotator tests ─────────────────────────────────────────────────────
 
 
@@ -308,6 +354,44 @@ def test_vllm_annotator_guided_json_false_omits_extra_body() -> None:
     assert "extra_body" not in call_args
 
 
+def test_vllm_annotator_flags_missing_required_key(caplog) -> None:
+    """Missing required keys remain graceful but are logged and marked."""
+    annotator = VLLMAnnotator(
+        model_id="gemma-3-27b-it",
+        prompt_id="v1",
+        prompt_text="Classify.",
+    )
+    raw = (
+        '```json\n{"binary_label": "religious", "confidence": 0.9, '
+        '"domains_present": null, "evidence_spans": null, '
+        '"boundary_notes": null}\n```'
+    )
+
+    caplog.set_level(logging.WARNING)
+    record = annotator._parse_raw(raw, ein2="00-missing-reason")
+
+    assert record.binary_label == BinaryLabel.RELIGIOUS
+    assert record.raw_response == raw
+    assert record.reason is None
+    assert record.error == "missing required keys: reason"
+    assert "Non-conformant LLM response" in caplog.text
+    assert "missing required keys: reason" in caplog.text
+
+
+def test_vllm_error_record_uses_error_not_reason() -> None:
+    """Provider failures must not masquerade as model reasoning."""
+    annotator = VLLMAnnotator(
+        model_id="gemma-3-27b-it",
+        prompt_id="v1",
+        prompt_text="Classify.",
+    )
+
+    record = annotator._error_record("00-error", "server unavailable")
+
+    assert record.reason is None
+    assert record.error == "server unavailable"
+
+
 # ── AnnotationStore tests ────────────────────────────────────────────────────
 
 
@@ -390,11 +474,11 @@ def test_system_fingerprint_persisted_in_store(tmp_path) -> None:
     assert record.system_fingerprint == "fp_xyz"
 
 
-def test_store_keeps_free_text_fields_single_line_csv(tmp_path) -> None:
-    """Raw LLM text round-trips without embedded physical CSV newlines."""
+def test_store_keeps_free_text_fields_plain_csv(tmp_path) -> None:
+    """Raw LLM text round-trips through standard quoted CSV cells."""
     path = tmp_path / "bakeoff_labels.csv"
-    raw_response = '{\n  "binary_label": "religious",\n  "reason": "a, b"\n}'
-    reason = "line one\nline two, with comma"
+    raw_response = '{\n  "binary_label": "religious",\n  "reason": "a, b \"quoted\""\n}'
+    reason = "line one\nline two, with comma and \"quote\""
     boundary_notes = "quoted \"edge\"\ncase"
     store = AnnotationStore(path)
     store.append(
@@ -409,15 +493,60 @@ def test_store_keeps_free_text_fields_single_line_csv(tmp_path) -> None:
             raw_response=raw_response,
             reason=reason,
             boundary_notes=boundary_notes,
+            error="request failed, retry \"later\"\ntrace",
         )
     )
 
-    lines = path.read_text().splitlines()
-    assert len(lines) == 2
-    restored = store.records_for_ein2("00-1")[0]
+    raw_csv = path.read_text()
+    assert r"\"" not in raw_csv
+    assert 'line two, with comma and ""quote""' in raw_csv
+
+    reloaded = AnnotationStore(path)
+    df = reloaded.to_frame()
+    restored = LabelRecord.from_flat_dict(df.to_dict("records")[0])
     assert restored.raw_response == raw_response
     assert restored.reason == reason
     assert restored.boundary_notes == boundary_notes
+    assert restored.error == "request failed, retry \"later\"\ntrace"
+
+
+def test_error_field_defaults_and_backward_compatible_load(tmp_path) -> None:
+    """Older CSVs missing error are reindexed and hydrate error as None."""
+    assert AnnotationStore.COLUMNS[-1] == "error"
+
+    path = tmp_path / "store.csv"
+    old_df = pd.DataFrame(
+        [
+            {
+                "EIN2": "00-1",
+                "source_id": "m1__v1",
+                "source_type": "llm_prompt",
+                "label": 1.0,
+                "confidence": 0.9,
+                "model_id": "m1",
+                "prompt_id": "v1",
+                "temperature": 0.0,
+                "seed": 42,
+                "run_timestamp": "2024-01-01T00:00:00+00:00",
+                "raw_response": "{}",
+                "reason": "test",
+                "domains_present": None,
+                "evidence_spans": None,
+                "boundary_notes": None,
+                "binary_label": "religious",
+                "system_fingerprint": None,
+            }
+        ]
+    )
+    old_df.to_csv(path, index=False)
+
+    store = AnnotationStore(path)
+    df = store.to_frame()
+    assert "error" in df.columns
+    assert pd.isna(df.loc[0, "error"])
+
+    record = store.records_for_ein2("00-1")[0]
+    assert record.error is None
 
 
 def test_already_done_uses_cached_set(tmp_path) -> None:
@@ -561,5 +690,6 @@ def test_label_record_round_trip_with_none_fields() -> None:
     flat = record.to_flat_dict()
     restored = LabelRecord.from_flat_dict(flat)
     assert restored.system_fingerprint is None
+    assert restored.error is None
     assert restored.reason is None
     assert restored.domains_present is None

@@ -117,8 +117,9 @@ def test_openai_batch_response_success_and_error_parse_to_label_records() -> Non
     assert success.raw_response == raw_label
     assert error.binary_label is None
     assert error.label is None
-    assert "batch_status_429" in str(error.reason)
-    assert "rate limit" in str(error.reason)
+    assert error.reason is None
+    assert "batch_status_429" in str(error.error)
+    assert "rate limit" in str(error.error)
 
 
 def test_stage03_batches_only_openai_groups_when_enabled(
@@ -323,7 +324,8 @@ def test_openai_batch_error_file_rows_are_terminal(tmp_path, monkeypatch) -> Non
 
     assert len(records) == 1
     assert records[0].binary_label is None
-    assert "invalid request" in str(records[0].reason)
+    assert records[0].reason is None
+    assert "invalid request" in str(records[0].error)
 
 
 def test_submit_openai_batch_uses_mock_client_no_network(tmp_path) -> None:

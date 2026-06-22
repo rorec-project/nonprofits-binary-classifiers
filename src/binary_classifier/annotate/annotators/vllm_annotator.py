@@ -8,6 +8,7 @@ Gemma-3 runs away emitting whitespace under the latter; see ``annotate``.
 """
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -19,7 +20,10 @@ from binary_classifier.annotate.schema import (
     LabelRecord,
     SourceType,
     build_json_schema,
+    conformance_error,
 )
+
+logger = logging.getLogger(__name__)
 
 # Matches a leading ```json / ``` fence and the trailing ``` fence that some
 # instruction-tuned models (e.g. Gemma-3) wrap around structured JSON output
@@ -162,6 +166,15 @@ class VLLMAnnotator(Annotator):
         except json.JSONDecodeError:
             return self._error_record(ein2, "JSONDecodeError")
 
+        err = conformance_error(data)
+        if err is not None:
+            logger.warning(
+                "Non-conformant LLM response from %s for EIN2=%s: %s",
+                self._build_source_id(),
+                ein2,
+                err,
+            )
+
         binary_label_str = data.get("binary_label")
         try:
             binary_label = BinaryLabel(binary_label_str) if binary_label_str else None
@@ -183,9 +196,10 @@ class VLLMAnnotator(Annotator):
             evidence_spans=data.get("evidence_spans"),
             boundary_notes=data.get("boundary_notes"),
             raw_response=raw,
+            error=err,
         )
 
-    def _error_record(self, ein2: str, reason: str) -> LabelRecord:
+    def _error_record(self, ein2: str, error: str) -> LabelRecord:
         """Return a record representing a failed annotation."""
         return LabelRecord(
             EIN2=ein2,
@@ -197,6 +211,7 @@ class VLLMAnnotator(Annotator):
             seed=self.seed,
             binary_label=None,
             confidence=None,
-            reason=reason,
+            reason=None,
             raw_response=None,
+            error=error,
         )
