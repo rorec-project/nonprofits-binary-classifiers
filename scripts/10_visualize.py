@@ -21,11 +21,20 @@ from binary_classifier.data.load import load_missions
 from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.viz import (
+    bakeoff_summary,
+    canary_drift,
     documentation_curve,
     ngram_log_odds,
     pr_curve,
     prevalence_forest,
+    production_annotation_summary,
     reliability_diagram,
+)
+from binary_classifier.viz.style import (
+    PAGE_WIDTH,
+    figure_size,
+    standardize_figsize,
+    style_context,
 )
 
 if TYPE_CHECKING:
@@ -69,6 +78,9 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
     registry.figures_dir.mkdir(parents=True, exist_ok=True)
     rendered = 0
     for render_step in (
+        _maybe_render_bakeoff_summary,
+        _maybe_render_production_summary,
+        _maybe_render_canary_drift,
         _maybe_render_documentation_curve,
         _maybe_render_pr_curve,
         _maybe_render_reliability_diagram,
@@ -82,6 +94,118 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
         logger.warning("No figures rendered; all visualization inputs were skipped.")
         return
     logger.info("Rendered %d figure(s) to %s", rendered, registry.figures_dir)
+
+
+def _maybe_render_bakeoff_summary(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render the bake-off summary figure if stage-02 results exist.
+
+    Args:
+        _cfg: Unused task configuration, accepted for a uniform renderer
+            signature.
+        registry: Path registry with the bake-off results path.
+
+    Returns:
+        True when a figure is written, otherwise False.
+
+    """
+    path = registry.bakeoff_results
+    if not path.exists():
+        logger.warning("Skipping bake-off summary; missing input: %s", path)
+        return False
+    try:
+        results = _load_json(path)
+        _save_plot(
+            registry,
+            "bakeoff_summary",
+            lambda ax: bakeoff_summary(results, ax),
+            figsize=figure_size(width=PAGE_WIDTH, height=5.5),
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping bake-off summary from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_production_summary(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render production annotation diagnostics from available stage-03 CSVs.
+
+    Args:
+        _cfg: Unused task configuration, accepted for a uniform renderer
+            signature.
+        registry: Path registry with annotation-store and silver-label paths.
+
+    Returns:
+        True when a figure is written, otherwise False.
+
+    """
+    input_paths = (registry.annotation_store, registry.silver_labels)
+    existing_paths = [path for path in input_paths if path.exists()]
+    if not existing_paths:
+        logger.warning(
+            "Skipping production annotation summary; missing inputs: %s",
+            ", ".join(str(path) for path in input_paths),
+        )
+        return False
+
+    for path in existing_paths:
+        try:
+            frame = _production_summary_frame(path)
+            _save_plot(
+                registry,
+                "production_annotation_summary",
+                lambda ax, frame=frame: production_annotation_summary(frame, ax),
+                figsize=figure_size(
+                    width=PAGE_WIDTH, height=max(4.0, 0.35 * len(frame) + 1.5)
+                ),
+            )
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Skipping production annotation summary from %s: %s", path, exc
+            )
+            continue
+        return True
+
+    logger.warning("Skipping production annotation summary; no usable input found.")
+    return False
+
+
+def _maybe_render_canary_drift(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render canary drift diagnostics if the audit JSONL exists.
+
+    Args:
+        _cfg: Unused task configuration, accepted for a uniform renderer
+            signature.
+        registry: Path registry with the interim artifact directory.
+
+    Returns:
+        True when a figure is written, otherwise False.
+
+    """
+    path = registry.interim_dir / "canary_drift_audit.jsonl"
+    if not path.exists():
+        logger.warning("Skipping canary drift; missing input: %s", path)
+        return False
+    try:
+        rows = _load_jsonl_rows(path)
+        _save_plot(
+            registry,
+            "canary_drift",
+            lambda ax: canary_drift(rows, ax),
+            figsize=figure_size(width=PAGE_WIDTH, aspect=0.6),
+        )
+    except (json.JSONDecodeError, OSError, ValueError) as exc:
+        logger.warning("Skipping canary drift from %s: %s", path, exc)
+        return False
+    return True
 
 
 def _maybe_render_documentation_curve(
@@ -299,11 +423,11 @@ def _save_plot(
     *,
     figsize: tuple[float, float],
 ) -> None:
-    """Draw and save a plot as PNG and SVG.
+    """Draw and save a plot as PDF, SVG, and PNG.
 
     Args:
         registry: Path registry with the output figure directory.
-        name: Base filename for both output formats.
+        name: Base filename for all output formats.
         draw: Callable that draws on the provided axes.
         figsize: Matplotlib figure size.
 
@@ -311,17 +435,27 @@ def _save_plot(
         None.
 
     """
-    fig, ax = plt.subplots(figsize=figsize)
-    try:
-        draw(ax)
-        fig.tight_layout()
-        png_path = registry.figures_dir / f"{name}.png"
-        svg_path = registry.figures_dir / f"{name}.svg"
-        fig.savefig(png_path, dpi=200, bbox_inches="tight")
-        fig.savefig(svg_path, bbox_inches="tight")
-        logger.info("Rendered %s to %s and %s", name, png_path, svg_path)
-    finally:
-        plt.close(fig)
+    registry.figures_dir.mkdir(parents=True, exist_ok=True)
+    with style_context():
+        fig, ax = plt.subplots(figsize=standardize_figsize(figsize))
+        try:
+            draw(ax)
+            fig.tight_layout()
+            pdf_path = registry.figures_dir / f"{name}.pdf"
+            svg_path = registry.figures_dir / f"{name}.svg"
+            png_path = registry.figures_dir / f"{name}.png"
+            fig.savefig(pdf_path, bbox_inches="tight")
+            fig.savefig(svg_path, bbox_inches="tight")
+            fig.savefig(png_path, dpi=300, bbox_inches="tight")
+            logger.info(
+                "Rendered %s to %s, %s, and %s",
+                name,
+                pdf_path,
+                svg_path,
+                png_path,
+            )
+        finally:
+            plt.close(fig)
 
 
 def _load_json(path: Path) -> object:
@@ -448,6 +582,16 @@ def _silver_with_text(
     if joined.empty:
         raise ValueError("no silver-label EIN2 values matched mission text.")
     return joined
+
+
+def _production_summary_frame(path: Path) -> pd.DataFrame:
+    """Read a production-summary CSV with minimal silver-label normalization."""
+    frame = pd.read_csv(path)
+    if "label" not in frame.columns and "silver_label" in frame.columns:
+        frame = frame.rename(columns={"silver_label": "label"})
+    if "source_id" not in frame.columns and path.name == "silver_labels.csv":
+        frame = frame.assign(source_id="silver_label")
+    return frame
 
 
 def _parse_args() -> argparse.Namespace:
