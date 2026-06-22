@@ -36,10 +36,12 @@ Return ONLY a JSON object with these exact keys:
   "confidence": 0.0-1.0,
   "domains_present": ["faith_tradition", ...],
   "evidence_spans": ["verbatim span 1", ...],
-  "boundary_notes": "short note"
+  "boundary_notes": "short note",
+  "reason": "concise justification for the chosen binary_label"
 }
 ```
 
 - ``binary_label`` is the source of truth. ``religious`` → 1, ``nonreligious`` → 0, ``ambiguous_review``/``insufficient_information`` → abstain (NaN).
 - ``confidence`` = 1.0 when the text is long, concrete, and explicit; drop below 0.5 for short or boilerplate text.
-- ``boundary_notes`` should briefly explain why the case is hard (or why it is easy).
+- ``boundary_notes`` should flag edge-case difficulty (saint name, spiritual without tradition, 501(c)(3) boilerplate, faith-heritage); keep brief or empty when clear.
+- ``reason`` is the concise overall justification for the chosen ``binary_label``; always populate it.

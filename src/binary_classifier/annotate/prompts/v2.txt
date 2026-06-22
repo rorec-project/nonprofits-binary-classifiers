@@ -35,10 +35,12 @@ Respond ONLY with a JSON object exactly matching this schema:
   "confidence": 0.0-1.0,
   "domains_present": ["faith_tradition", ...],
   "evidence_spans": ["verbatim span 1", ...],
-  "boundary_notes": "short note"
+  "boundary_notes": "short note",
+  "reason": "concise justification for the chosen binary_label"
 }
 ```
 
 - ``binary_label`` is source of truth: ``religious`` → 1, ``nonreligious`` → 0, ``ambiguous_review``/``insufficient_information`` → abstain.
 - ``confidence`` should be high when the text is concrete and explicit; low when short, boilerplate, or borderline.
-- ``boundary_notes`` flag hard cases so human reviewers can spot-check efficiently.
+- ``boundary_notes`` flag edge-case difficulty (saint name, spiritual-without-tradition, 501(c)(3) boilerplate, faith-heritage); keep brief or empty when clear.
+- ``reason`` is the concise overall justification for the chosen ``binary_label``; always populate it.

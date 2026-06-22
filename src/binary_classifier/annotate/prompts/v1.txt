@@ -33,7 +33,8 @@ Respond ONLY with a JSON object matching this schema (no markdown, no preamble):
   "confidence": 0.0-1.0,
   "domains_present": ["faith_tradition", ...],
   "evidence_spans": ["verbatim span 1", ...],
-  "boundary_notes": "short note on why it is/isn't ambiguous"
+  "boundary_notes": "short note on why it is/isn't ambiguous",
+  "reason": "concise overall justification for the chosen binary_label"
 }
 ```
 
@@ -41,4 +42,5 @@ Respond ONLY with a JSON object matching this schema (no markdown, no preamble):
 - ``confidence`` = 1.0 when every domain and span is crystal clear; lower when the text is short, boilerplate, or uses borderline language.
 - ``domains_present`` must include every domain that has observable evidence in the text.
 - ``evidence_spans`` must be verbatim substrings; at least one span for ``religious`` or ``nonreligious``.
-- ``boundary_notes`` should flag hard cases (saint names, spiritual-but-not-tradition, 501(c)(3) boilerplate, faith-heritage framing).
+- ``boundary_notes`` should flag edge-case difficulty (saint names, spiritual-but-not-tradition, 501(c)(3) boilerplate, faith-heritage framing); keep it brief or empty when the case is clear.
+- ``reason`` is a concise overall justification for the chosen ``binary_label`` and must always be populated, distinct from ``boundary_notes``.
