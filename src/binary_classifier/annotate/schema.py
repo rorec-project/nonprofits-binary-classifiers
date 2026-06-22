@@ -4,6 +4,11 @@ Defines the ``LabelRecord`` pydantic model that is the canonical output of every
 annotator, and the ``AnnotationStore`` helper that reads/writes the long/tidy
 label table. The schema is designed to be weak-supervision-ready: one row per
 (EIN2, source_id) so that multiple model x prompt labels can be aggregated later.
+
+CSV contract: free-text fields (reason, boundary_notes, raw_response) are stored
+as plain RFC-4180-quoted strings; only list fields (domains_present, evidence_spans)
+are JSON-encoded. The ``error`` field captures provider/parsing failures and is
+never present in the LLM-output schema (build_json_schema).
 """
 
 import json
@@ -87,6 +92,22 @@ def build_json_schema() -> dict[str, Any]:
     }
 
 
+def conformance_error(data: dict[str, Any]) -> str | None:
+    """Return a compact schema-conformance message, if the response drifted."""
+    schema = build_json_schema()
+    missing = sorted(set(schema["required"]) - data.keys())
+    allowed_labels = set(schema["properties"]["binary_label"]["enum"])
+    binary_label = data.get("binary_label")
+    bad_label = "binary_label" in data and binary_label not in allowed_labels
+
+    issues = []
+    if missing:
+        issues.append(f"missing required keys: {', '.join(missing)}")
+    if bad_label:
+        issues.append(f"invalid binary_label: {binary_label!r}")
+    return "; ".join(issues) if issues else None
+
+
 # ── Pydantic model ───────────────────────────────────────────────────────────
 
 
@@ -97,26 +118,6 @@ def normalize_ein2(value: Any) -> Any:
     if isinstance(value, float) and value.is_integer():
         return str(int(value)).strip()
     return str(value).strip()
-
-
-def _csv_safe_text(value: str | None) -> str | None:
-    """Encode free-text fields so CSV stores stay one physical row per record."""
-    if value is None:
-        return None
-    return json.dumps(value)
-
-
-def _restore_csv_safe_text(value: Any) -> Any:
-    """Decode text written by ``_csv_safe_text`` while accepting legacy rows."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if not isinstance(value, str):
-        return value
-    try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError:
-        return value
-    return decoded if isinstance(decoded, str) else value
 
 
 class LabelRecord(BaseModel):
@@ -189,6 +190,12 @@ class LabelRecord(BaseModel):
         description="Raw JSON string returned by the LLM.",
     )
 
+    # Error tracking (not part of the LLM-output schema)
+    error: str | None = Field(
+        None,
+        description="Error message if annotation failed.",
+    )
+
     @field_validator("EIN2", mode="before")
     @classmethod
     def _normalize_ein2(cls, value: Any) -> Any:
@@ -236,17 +243,18 @@ class LabelRecord(BaseModel):
             "temperature": self.temperature,
             "seed": self.seed,
             "run_timestamp": self.run_timestamp.isoformat(),
-            "raw_response": _csv_safe_text(self.raw_response),
-            "reason": _csv_safe_text(self.reason),
+            "raw_response": self.raw_response,
+            "reason": self.reason,
             "domains_present": json.dumps(self.domains_present)
             if self.domains_present is not None
             else None,
             "evidence_spans": json.dumps(self.evidence_spans)
             if self.evidence_spans is not None
             else None,
-            "boundary_notes": _csv_safe_text(self.boundary_notes),
+            "boundary_notes": self.boundary_notes,
             "binary_label": self.binary_label.value if self.binary_label else None,
             "system_fingerprint": self.system_fingerprint,
+            "error": self.error,
         }
 
     @classmethod
@@ -273,8 +281,8 @@ class LabelRecord(BaseModel):
                 if row.get("run_timestamp")
                 else datetime.now(UTC)
             ),
-            raw_response=_restore_csv_safe_text(row.get("raw_response")),
-            reason=_restore_csv_safe_text(row.get("reason")),
+            raw_response=_clean(row.get("raw_response")),
+            reason=_clean(row.get("reason")),
             domains_present=(
                 json.loads(row["domains_present"])
                 if isinstance(row.get("domains_present"), str)
@@ -286,13 +294,14 @@ class LabelRecord(BaseModel):
                 if isinstance(row.get("evidence_spans"), str) and row["evidence_spans"]
                 else None
             ),
-            boundary_notes=_restore_csv_safe_text(row.get("boundary_notes")),
+            boundary_notes=_clean(row.get("boundary_notes")),
             binary_label=(
                 BinaryLabel(row["binary_label"])
                 if isinstance(row.get("binary_label"), str) and row["binary_label"]
                 else None
             ),
             system_fingerprint=_clean(row.get("system_fingerprint")),
+            error=_clean(row.get("error")),
         )
 
 
@@ -326,6 +335,7 @@ class AnnotationStore:
         "boundary_notes",
         "binary_label",
         "system_fingerprint",
+        "error",
     ]
 
     def __init__(self, path: Path) -> None:
