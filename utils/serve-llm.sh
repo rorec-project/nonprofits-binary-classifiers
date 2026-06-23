@@ -44,6 +44,8 @@ USAGE="Usage: serve-llm.sh {annotate|coding|both} | --status [role] | --stop [ro
 
 load_env() {
   local required="${1:-1}"
+  local caller_has_tp="${LLM_TENSOR_PARALLEL+x}"
+  local caller_tp="${LLM_TENSOR_PARALLEL:-}"
 
   ENV_FILE=""
   for d in /work/*/; do
@@ -72,6 +74,13 @@ load_env() {
   # env.sh loads the CUDA module + GPU cache redirects — load-bearing for vLLM.
   # shellcheck disable=SC1090
   [ -f "${ENV_SH}" ] && source "${ENV_SH}"
+
+  # Allow one-off launch overrides such as
+  # `LLM_TENSOR_PARALLEL=4 bash utils/serve-llm.sh annotate`. env.sh sources
+  # .env internally, so explicit caller overrides must be restored afterwards.
+  if [ -n "${caller_has_tp}" ]; then
+    export LLM_TENSOR_PARALLEL="${caller_tp}"
+  fi
 }
 
 # ── Role → (model, port, max-model-len) resolution ────────────────────────────
@@ -80,7 +89,8 @@ annotate_model_id() {
   # Stage 03's source of truth is the confirmed production slate. Before G2
   # exists, fall back to the first configured vLLM bake-off candidate so the same
   # launcher still works for stage-02 smoke tests.
-  ( cd "${PROJECT}" && uv run python - <<'PY'
+  (
+    cd "${PROJECT}" && uv run python - <<'PY'
 import sys
 from pathlib import Path
 
@@ -122,38 +132,38 @@ PY
 
 role_model() {
   case "$1" in
-    annotate) annotate_model_id ;;
-    coding)   printf '%s' "${LLM_CODING_MODEL:-}" ;;
+  annotate) annotate_model_id ;;
+  coding) printf '%s' "${LLM_CODING_MODEL:-}" ;;
   esac
 }
 
 role_port() {
   case "$1" in
-    annotate) printf '%s' "${LLM_ANNOTATE_PORT:-8000}" ;;
-    coding)   printf '%s' "${LLM_CODING_PORT:-8001}" ;;
+  annotate) printf '%s' "${LLM_ANNOTATE_PORT:-8000}" ;;
+  coding) printf '%s' "${LLM_CODING_PORT:-8001}" ;;
   esac
 }
 
 role_max_len() {
   case "$1" in
-    annotate) printf '%s' "${LLM_ANNOTATE_MAX_MODEL_LEN:-8192}" ;;
-    coding)   printf '%s' "${LLM_CODING_MAX_MODEL_LEN:-8192}" ;;
+  annotate) printf '%s' "${LLM_ANNOTATE_MAX_MODEL_LEN:-8192}" ;;
+  coding) printf '%s' "${LLM_CODING_MAX_MODEL_LEN:-8192}" ;;
   esac
 }
 
 # ── Process / health helpers ──────────────────────────────────────────────────
 
-vllm_pids() {  # $1 = model id
+vllm_pids() { # $1 = model id
   [ -n "${1:-}" ] || return 1
   ps aux | grep -F "vllm serve $1" | grep -v grep | awk '{print $2}'
 }
 
-port_ready() {  # $1 = port
+port_ready() { # $1 = port
   [ -n "${1:-}" ] || return 1
   curl -sf "http://localhost:$1/health" >/dev/null 2>&1
 }
 
-print_endpoint() {  # $1 role  $2 model  $3 port
+print_endpoint() { # $1 role  $2 model  $3 port
   local model_short
   model_short="$(basename "$2")"
   echo ""
@@ -169,15 +179,15 @@ print_endpoint() {  # $1 role  $2 model  $3 port
 }
 
 ensure_vllm() {
-  if ! ( cd "${PROJECT}" && uv run python -c "import vllm" ) 2>/dev/null; then
+  if ! (cd "${PROJECT}" && uv run python -c "import vllm") 2>/dev/null; then
     echo "--- vllm not in .venv; running: uv sync --extra serve ---"
-    ( cd "${PROJECT}" && uv sync --extra serve )
+    (cd "${PROJECT}" && uv sync --extra serve)
   fi
 }
 
 # ── Start one role ────────────────────────────────────────────────────────────
 
-serve_one() {  # $1 role  $2 gpu_mem_util
+serve_one() { # $1 role  $2 gpu_mem_util
   local role="$1" util="$2" model port max_len log attempts
   model="$(role_model "${role}")"
   port="$(role_port "${role}")"
@@ -235,19 +245,19 @@ serve_one() {  # $1 role  $2 gpu_mem_util
       --enable-auto-tool-choice
     )
   fi
-  ( cd "${PROJECT}" && PYTHONPATH="${PROJECT}/utils/vllm_compat:${PYTHONPATH:-}" \
-      nohup uv run vllm serve "${model}" \
-      --host 0.0.0.0 \
-      --port "${port}" \
-      --served-model-name "${model}" \
-      --tensor-parallel-size "${LLM_TENSOR_PARALLEL:-1}" \
-      --max-model-len "${max_len}" \
-      --gpu-memory-utilization "${util}" \
-      --dtype auto \
-      --attention-config '{"flash_attn_version": 2}' \
-      --api-key "${LLM_API_KEY:-sk-ucloud}" \
-      "${extra_flags[@]}" \
-      &>>"${log}" & )
+  (cd "${PROJECT}" && PYTHONPATH="${PROJECT}/utils/vllm_compat:${PYTHONPATH:-}" \
+    nohup uv run vllm serve "${model}" \
+    --host 0.0.0.0 \
+    --port "${port}" \
+    --served-model-name "${model}" \
+    --tensor-parallel-size "${LLM_TENSOR_PARALLEL:-1}" \
+    --max-model-len "${max_len}" \
+    --gpu-memory-utilization "${util}" \
+    --dtype auto \
+    --attention-config '{"flash_attn_version": 2}' \
+    --api-key "${LLM_API_KEY:-sk-ucloud}" \
+    "${extra_flags[@]}" \
+    &>>"${log}" &)
   echo "    logs: ${log}"
 
   # The first launch on Blackwell JIT-compiles FlashInfer kernels (~5 min) before
@@ -310,7 +320,7 @@ if [[ "${1:-}" == "--status" ]]; then
     [ -n "${m}" ] && [ -n "$(vllm_pids "${m}")" ] && state="running"
     ready="no"
     port_ready "${p}" && ready="yes"
-    echo "[${r}] ${state}  ready=${ready}  model=${m:-<unset>}  port=${p}"
+    echo "[${r}] ${state}  ready=${ready}  model=${m:-<unset>}  port=${p}  tp=${LLM_TENSOR_PARALLEL:-1}"
     [ "${state}" = "running" ] && print_endpoint "${r}" "${m}" "${p}"
   done
   exit 0
@@ -320,16 +330,16 @@ fi
 
 MODE="${1:-}"
 case "${MODE}" in
-  annotate | coding | both) ;;
-  "" | -h | --help)
-    echo "${USAGE}" >&2
-    exit 2
-    ;;
-  *)
-    echo "ERROR: unknown role '${MODE}'." >&2
-    echo "${USAGE}" >&2
-    exit 2
-    ;;
+annotate | coding | both) ;;
+"" | -h | --help)
+  echo "${USAGE}" >&2
+  exit 2
+  ;;
+*)
+  echo "ERROR: unknown role '${MODE}'." >&2
+  echo "${USAGE}" >&2
+  exit 2
+  ;;
 esac
 
 load_env 1
