@@ -162,7 +162,7 @@ All configuration — drive names, git identity, LLM serving, network, and secre
 | -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `init.sh`      | UCloud (Initialization or manual) | Lean runtime: find `.env`, assert drives, export `HF_HOME`/`UV_*`, write + auto-source `env.sh`, create symlinks, `uv python install 3.13` + `uv sync`, optional model pre-pull.                                                                                                           |
 | `devenv.sh`    | UCloud (interactive SSH only)     | Optional dev/agent overlay: Neovim + LazyVim (+ dotfiles), Claude Code, opencode, XDG dirs. Persists on the project drive; writes its own `devenv.sh` env file. Never run by batch/GPU jobs.                                                                                               |
-| `serve-llm.sh` | UCloud (interactive SSH / GPU)    | Role-based vLLM: `annotate` (Gemma arm for stages 02/03, id from the YAML), `coding` (`LLM_CODING_MODEL`), or `both` concurrently on one B200 (two ports, split VRAM). Waits for `/health`, prints endpoints. `--status`/`--stop [role]`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md). |
+| `serve-llm.sh` | UCloud (interactive SSH / GPU)    | Role-based vLLM: `annotate` (confirmed production vLLM model after G2, first YAML vLLM candidate before G2), `coding` (`LLM_CODING_MODEL`), or `both` concurrently on one B200 (two ports, split VRAM). Waits for `/health`, prints endpoints. `--status`/`--stop [role]`. See [Coding LLM appendix](UCLOUD_CODING_LLM.md). |
 | `run.sh`       | UCloud (Batch param or SSH)       | Segment runner: source `.env` when present, derive runtime env, `git pull`, run stages. If `DATA_DRIVE` is missing, cache paths use `/work/__UNSET__DATA_DRIVE` and fail loudly.                                                                                                           |
 
 ### Running stages — `run.sh`
@@ -386,15 +386,15 @@ VLLM_BASE_URL=http://127.0.0.1:8001/v1 \
 
 Pass criteria: `/health` responds, chat completions return normal assistant content, Stage 02 parses a valid label record, `reason` is populated, `error` is empty, and no conformance warning reports missing required keys or an invalid enum.
 
-**For the bake-off, serve DeepSeek with the explicit `CUDA_VISIBLE_DEVICES` + `PYTHONPATH` command above, not `serve-llm.sh annotate`.** That launcher always serves the *first* `vllm` candidate in the YAML — currently `google/gemma-3-27b-it`, listed before DeepSeek:
+**For the bake-off, serve DeepSeek with the explicit `CUDA_VISIBLE_DEVICES` + `PYTHONPATH` command above if you are scoring multiple open-weight candidates on separate ports.** After G2, `serve-llm.sh annotate` prefers the confirmed `production_slate.json`; before G2 it falls back to the first `vllm` candidate in the YAML:
 
 ```bash
-bash utils/serve-llm.sh annotate     # Gemma on :LLM_ANNOTATE_PORT (default 8000) -- NOT DeepSeek
+bash utils/serve-llm.sh annotate     # production vLLM model on :LLM_ANNOTATE_PORT
 ```
 
-`serve-llm.sh annotate` reads that one model id straight from the YAML and starts it with `--served-model-name <id>`, so the served model can never drift from the one the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
+`serve-llm.sh annotate` reads the confirmed production vLLM model when `production_slate.json` exists, otherwise the first configured vLLM bake-off candidate, and starts it with `--served-model-name <id>`, so the served model does not drift from the model the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
 
-`serve-llm.sh annotate` is the simple one-annotation-model launcher, useful when only Gemma is enabled. With multiple open-weight bake-off candidates (the current default), use the explicit `CUDA_VISIBLE_DEVICES` + port pattern from "One node, many GPUs, many ports" above so each candidate gets its own endpoint — that's exactly what the DeepSeek command above does.
+`serve-llm.sh annotate` is the simple one-production-model launcher. With multiple open-weight bake-off candidates before G2, use the explicit `CUDA_VISIBLE_DEVICES` + port pattern from "One node, many GPUs, many ports" above so each candidate gets its own endpoint — that's exactly what the DeepSeek command above does.
 
 **DeepSeek-V4-Flash also works as the interactive *coding* model** (`LLM_CODING_MODEL` in `.env`, served via `serve-llm.sh coding` — a different role from `annotate`), tested at `--tensor-parallel-size 1` on a single B200. `serve-llm.sh coding` applies the same model-specific flags automatically when this exact id is configured. It needs a full B200 to itself (~146 GiB weights), so it cannot co-locate with `annotate` via `serve-llm.sh both`. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md#deepseek-aideepseek-v4-flash-as-the-coding-model) for the sizing math and tradeoffs.
 

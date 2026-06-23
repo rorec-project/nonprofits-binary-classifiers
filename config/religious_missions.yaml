@@ -41,13 +41,6 @@ model_slate:
       reasoning_effort: minimal
     - id: google/gemma-3-27b-it
       provider: vllm
-    # Open-weight bake-off candidate. UCloud smoke test passed (chat
-    # completions + guided JSON both work with `--tokenizer-mode deepseek_v4
-    # --reasoning-parser deepseek_v4`); see docs/RUNNING_ON_UCLOUD.md's
-    # "DeepSeek-V4-Flash setup" for the vLLM serve command and the
-    # nvidia-cutlass-dsl wheel workaround it depends on
-    # (utils/vllm_compat/sitecustomize.py). Comment out to drop it from the
-    # bake-off without losing its already-scored rows in the store.
     - id: deepseek-ai/DeepSeek-V4-Flash
       provider: vllm
   production: deepseek-ai/DeepSeek-V4-Flash

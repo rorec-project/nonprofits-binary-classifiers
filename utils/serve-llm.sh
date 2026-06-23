@@ -3,11 +3,10 @@
 #
 # Two roles, each on its own port, normally share one GPU (a B200's 183 GB
 # fits both at once with small/medium models):
-#   annotate — the open-weight Gemma arm for pipeline stages 02/03. The model id
-#              is read from the vLLM bake-off candidate in
-#              config/religious_missions.yaml — the single source of truth shared
-#              with the annotator client, so the served model never drifts from
-#              the one the pipeline asks for.
+#   annotate — the open-weight production annotation arm for stages 02/03. The
+#              model id prefers the confirmed production_slate.json and falls
+#              back to the first vLLM bake-off candidate before G2 exists, so the
+#              served model matches the model the pipeline asks for.
 #   coding   — interactive dev assistant (Opencode); LLM_CODING_MODEL from .env.
 #              If set to deepseek-ai/DeepSeek-V4-Flash, this role needs a full
 #              B200 to itself (~146 GiB weights alone) -- `both` mode will not
@@ -78,9 +77,47 @@ load_env() {
 # ── Role → (model, port, max-model-len) resolution ────────────────────────────
 
 annotate_model_id() {
-  # Single switch point: the model id is the vLLM candidate in the YAML, never
-  # hardcoded here (mirrors utils/init.sh's pre-pull step).
-  ( cd "${PROJECT}" && uv run python -c "from binary_classifier.config import load_config; print(next((c.id for c in load_config('config/religious_missions.yaml').model_slate.bakeoff_candidates if c.provider=='vllm'), ''))" )
+  # Stage 03's source of truth is the confirmed production slate. Before G2
+  # exists, fall back to the first configured vLLM bake-off candidate so the same
+  # launcher still works for stage-02 smoke tests.
+  ( cd "${PROJECT}" && uv run python - <<'PY'
+import sys
+from pathlib import Path
+
+from binary_classifier.config import load_config, load_slate
+from binary_classifier.paths import PathRegistry
+
+config_path = Path("config/religious_missions.yaml")
+cfg = load_config(config_path)
+registry = PathRegistry(config_path)
+slate_path = registry.production_slate
+if slate_path.exists():
+    slate = load_slate(slate_path)
+    if slate.confirmed:
+        models = [model.id for model in slate.models if model.provider == "vllm"]
+        if len(models) == 1:
+            print(models[0])
+            raise SystemExit(0)
+        if len(models) > 1:
+            print(
+                "ERROR: production_slate.json lists multiple vLLM production "
+                "models; serve them manually on separate ports.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+print(
+    next(
+        (
+            candidate.id
+            for candidate in cfg.model_slate.bakeoff_candidates
+            if candidate.provider == "vllm"
+        ),
+        "",
+    )
+)
+PY
+  )
 }
 
 role_model() {

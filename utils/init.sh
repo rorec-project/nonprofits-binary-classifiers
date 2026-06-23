@@ -211,10 +211,49 @@ fi
 uv sync
 
 # ─── Optional: pre-pull the open-weight annotator into the shared HF cache ────
-# Single switch point: the model id is derived from the YAML's vLLM candidate,
-# never hardcoded. Skips cleanly if the vLLM arm is commented out.
+# Single switch point: the model id prefers the confirmed production slate and
+# falls back to the YAML's first vLLM candidate before G2 exists. Skips cleanly
+# if no vLLM arm is configured.
 if [ "${PREPULL_MODEL}" -eq 1 ]; then
-  MODEL_ID="$(uv run python -c "from binary_classifier.config import load_config; print(next((c.id for c in load_config('config/religious_missions.yaml').model_slate.bakeoff_candidates if c.provider=='vllm'), ''))")"
+  MODEL_ID="$(
+    uv run python - <<'PY'
+import sys
+from pathlib import Path
+
+from binary_classifier.config import load_config, load_slate
+from binary_classifier.paths import PathRegistry
+
+config_path = Path("config/religious_missions.yaml")
+cfg = load_config(config_path)
+registry = PathRegistry(config_path)
+slate_path = registry.production_slate
+if slate_path.exists():
+    slate = load_slate(slate_path)
+    if slate.confirmed:
+        models = [model.id for model in slate.models if model.provider == "vllm"]
+        if len(models) == 1:
+            print(models[0])
+            raise SystemExit(0)
+        if len(models) > 1:
+            print(
+                "ERROR: production_slate.json lists multiple vLLM production "
+                "models; pre-pull them manually.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+print(
+    next(
+        (
+            candidate.id
+            for candidate in cfg.model_slate.bakeoff_candidates
+            if candidate.provider == "vllm"
+        ),
+        "",
+    )
+)
+PY
+  )"
   if [ -n "${MODEL_ID}" ]; then
     echo "--- Pre-pulling ${MODEL_ID} into ${HF_HOME} ---"
     uv run hf download "${MODEL_ID}"
