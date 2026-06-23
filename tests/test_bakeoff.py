@@ -149,6 +149,23 @@ def test_bakeoff_emits_scores_and_unconfirmed_slate(tiny_config, tiny_registry, 
     # Proposed slate is written, unconfirmed, and production is NOT written.
     assert tiny_registry.proposed_slate.exists()
     assert tiny_registry.bakeoff_results.exists()
+    bakeoff_labels = pd.read_csv(tiny_registry.bakeoff_store)
+    assert "raw_response" not in bakeoff_labels.columns
+    assert {
+        "binary_label",
+        "confidence",
+        "reason",
+        "domains_present",
+        "evidence_spans",
+        "boundary_notes",
+        "text",
+    }.issubset(bakeoff_labels.columns)
+    expected_text = {
+        "00-1": "a church",
+        "00-2": "a charity",
+        "00-3": "a bank",
+    }
+    assert bakeoff_labels.set_index("EIN2")["text"].to_dict() == expected_text
     assert not tiny_registry.production_slate.exists()
     slate = load_slate(tiny_registry.proposed_slate)
     assert slate.confirmed is False
@@ -418,6 +435,66 @@ def test_full_store_bakeoff_artifacts_include_store_only_no_provider_arms(
     )
     assert {row["source_id"] for row in rebuilt["results"]} == set(by_source)
     assert rebuilt["proposed_slate"]["recommended"]["model_id"] == "m1"
+
+
+def test_rebuild_backfills_bakeoff_text_without_raw_response(
+    tiny_config,
+    tiny_registry,
+    tmp_path,
+) -> None:
+    """Existing bake-off stores gain mission text without re-annotation."""
+    _write_template(tiny_registry)
+    store_path = tmp_path / "bakeoff_store.csv"
+    AnnotationStore(store_path).append_many(
+        [
+            LabelRecord(
+                EIN2="00-1",
+                source_id="m1__v1",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="m1",
+                prompt_id="v1",
+                temperature=0.0,
+                binary_label=BinaryLabel.RELIGIOUS,
+            ),
+            LabelRecord(
+                EIN2="00-2",
+                source_id="m1__v1",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="m1",
+                prompt_id="v1",
+                temperature=0.0,
+                binary_label=BinaryLabel.RELIGIOUS,
+            ),
+            LabelRecord(
+                EIN2="00-3",
+                source_id="m1__v1",
+                source_type=SourceType.LLM_PROMPT,
+                model_id="m1",
+                prompt_id="v1",
+                temperature=0.0,
+                binary_label=BinaryLabel.NONRELIGIOUS,
+            ),
+        ],
+    )
+    assert "text" not in pd.read_csv(store_path).columns
+    assert "raw_response" in pd.read_csv(store_path).columns
+
+    rebuild_bakeoff_artifacts_from_store(
+        tiny_config,
+        tiny_registry,
+        prompt_paths=[_prompts(tmp_path)[0]],
+        candidates=[BakeoffCandidate(id="m1", provider="openai")],
+        store_path=store_path,
+    )
+
+    labels = pd.read_csv(store_path)
+    assert "text" in labels.columns
+    assert "raw_response" not in labels.columns
+    assert labels.set_index("EIN2")["text"].to_dict() == {
+        "00-1": "a church",
+        "00-2": "a charity",
+        "00-3": "a bank",
+    }
 
 
 def test_bakeoff_deduplicates_predictions_before_scoring(

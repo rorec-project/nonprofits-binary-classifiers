@@ -5,10 +5,11 @@ annotator, and the ``AnnotationStore`` helper that reads/writes the long/tidy
 label table. The schema is designed to be weak-supervision-ready: one row per
 (EIN2, source_id) so that multiple model x prompt labels can be aggregated later.
 
-CSV contract: free-text fields (reason, boundary_notes, raw_response) are stored
-as plain RFC-4180-quoted strings; only list fields (domains_present, evidence_spans)
-are JSON-encoded. The ``error`` field captures provider/parsing failures and is
-never present in the LLM-output schema (build_json_schema).
+CSV contract: free-text fields (text when persisted, reason, boundary_notes,
+and raw_response when persisted) are stored as plain RFC-4180-quoted strings;
+only list fields (domains_present, evidence_spans) are JSON-encoded. The
+``error`` field captures provider/parsing failures and is never present in the
+LLM-output schema (build_json_schema).
 """
 
 import json
@@ -134,6 +135,10 @@ class LabelRecord(BaseModel):
         ...,
         description="Unique run identifier: model_id + prompt_id.",
     )
+    text: str | None = Field(
+        None,
+        description="Original input text that was labeled, when persisted.",
+    )
 
     # Source metadata
     source_type: SourceType = Field(..., description="Origin of the label.")
@@ -234,6 +239,7 @@ class LabelRecord(BaseModel):
         """
         return {
             "EIN2": self.EIN2,
+            "text": self.text,
             "source_id": self.source_id,
             "source_type": self.source_type.value,
             "label": self.label,
@@ -268,6 +274,7 @@ class LabelRecord(BaseModel):
 
         return cls(
             EIN2=normalize_ein2(row["EIN2"]),
+            text=_clean(row.get("text")),
             source_id=row["source_id"],
             source_type=SourceType(row["source_type"]),
             label=_clean(row.get("label")),
@@ -319,6 +326,7 @@ class AnnotationStore:
     # Exact column order for the tidy store
     COLUMNS: list[str] = [
         "EIN2",
+        "text",
         "source_id",
         "source_type",
         "label",
@@ -338,14 +346,26 @@ class AnnotationStore:
         "error",
     ]
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        persist_raw_response: bool = True,
+        persist_text: bool = False,
+    ) -> None:
         """Initialise the store.
 
         Args:
             path: Path to the CSV or Parquet file.
+            persist_raw_response: Whether to write the redundant raw provider JSON
+                payload to disk. Loaded frames always expose the canonical column.
+            persist_text: Whether to write the original input text to disk. Loaded
+                frames always expose the canonical column.
 
         """
         self.path: Path = path
+        self.persist_raw_response = persist_raw_response
+        self.persist_text = persist_text
         self._df: pd.DataFrame | None = None
         self._done_set: set[tuple[str, str]] | None = None
 
@@ -370,14 +390,45 @@ class AnnotationStore:
             self._df = pd.DataFrame(columns=self.COLUMNS)
         return self._df
 
+    def _storage_columns(self) -> list[str]:
+        """Return columns written to disk for this store instance."""
+        columns = self.COLUMNS
+        if not self.persist_text:
+            columns = [col for col in columns if col != "text"]
+        if not self.persist_raw_response:
+            columns = [col for col in columns if col != "raw_response"]
+        return columns
+
+    def storage_columns(self) -> list[str]:
+        """Return the persisted column order for this store instance."""
+        return self._storage_columns()
+
+    def replace_frame(self, frame: pd.DataFrame) -> None:
+        """Replace the backing frame and rewrite the store."""
+        df = frame.copy()
+        for col in self.COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+        self._df = df[self.COLUMNS]
+        self._save()
+        self._done_set = None
+
+    def _ensure_existing_csv_schema(self) -> None:
+        """Rewrite existing CSVs whose header does not match storage columns."""
+        if self.path.suffix == ".parquet" or not self.path.exists():
+            return
+        existing_columns = list(pd.read_csv(self.path, nrows=0).columns)
+        if existing_columns != self._storage_columns():
+            self._save()
+
     def _save(self) -> None:
         """Persist the backing dataframe."""
         df = self._load()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
-            df.to_parquet(self.path, index=False)
+            df[self._storage_columns()].to_parquet(self.path, index=False)
         else:
-            df.to_csv(self.path, index=False)
+            df[self._storage_columns()].to_csv(self.path, index=False)
 
     def _build_done_set(self) -> set[tuple[str, str]]:
         """Build a cached set of (EIN2, source_id) pairs from the store."""
@@ -391,7 +442,7 @@ class AnnotationStore:
         else:
             df = pd.read_csv(self.path, usecols=["EIN2", "source_id"])
         self._done_set = set(
-            zip(df["EIN2"].map(normalize_ein2), df["source_id"], strict=True)
+            zip(df["EIN2"].map(normalize_ein2), df["source_id"], strict=True),
         )
         return self._done_set
 
@@ -412,16 +463,18 @@ class AnnotationStore:
         """Append a single record to the store."""
         row = record.to_flat_dict()
         row_df = pd.DataFrame([row], columns=self.COLUMNS)
+        write_df = row_df[self._storage_columns()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
             df = self._load()
             self._df = pd.concat([df, row_df], ignore_index=True)
             self._save()
         else:
+            self._ensure_existing_csv_schema()
             if self.path.exists():
-                row_df.to_csv(self.path, mode="a", index=False, header=False)
+                write_df.to_csv(self.path, mode="a", index=False, header=False)
             else:
-                row_df.to_csv(self.path, index=False)
+                write_df.to_csv(self.path, index=False)
             if self._df is not None:
                 self._df = pd.concat([self._df, row_df], ignore_index=True)
         if self._done_set is not None:
@@ -433,16 +486,18 @@ class AnnotationStore:
             return
         rows = [r.to_flat_dict() for r in records]
         rows_df = pd.DataFrame(rows, columns=self.COLUMNS)
+        write_df = rows_df[self._storage_columns()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.suffix == ".parquet":
             df = self._load()
             self._df = pd.concat([df, rows_df], ignore_index=True)
             self._save()
         else:
+            self._ensure_existing_csv_schema()
             if self.path.exists():
-                rows_df.to_csv(self.path, mode="a", index=False, header=False)
+                write_df.to_csv(self.path, mode="a", index=False, header=False)
             else:
-                rows_df.to_csv(self.path, index=False)
+                write_df.to_csv(self.path, index=False)
             if self._df is not None:
                 self._df = pd.concat([self._df, rows_df], ignore_index=True)
         if self._done_set is not None:

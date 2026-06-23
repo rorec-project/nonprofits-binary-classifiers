@@ -510,6 +510,78 @@ def test_store_keeps_free_text_fields_plain_csv(tmp_path) -> None:
     assert restored.error == "request failed, retry \"later\"\ntrace"
 
 
+def test_store_can_omit_redundant_raw_response_column(tmp_path) -> None:
+    """Bake-off stores can persist parsed fields without raw provider JSON."""
+    path = tmp_path / "bakeoff_labels.csv"
+    raw_response = '{"binary_label":"religious","confidence":0.8}'
+    store = AnnotationStore(path, persist_raw_response=False)
+    store.append(
+        LabelRecord(
+            EIN2="00-1",
+            source_id="m1__v1",
+            source_type=SourceType.LLM_PROMPT,
+            model_id="m1",
+            prompt_id="v1",
+            temperature=0.0,
+            binary_label=BinaryLabel.RELIGIOUS,
+            confidence=0.8,
+            reason="parsed reason",
+            domains_present=["faith_tradition"],
+            evidence_spans=["church"],
+            boundary_notes="parsed boundary",
+            raw_response=raw_response,
+            text="mission text",
+        )
+    )
+
+    written = pd.read_csv(path)
+    assert "raw_response" not in written.columns
+    assert "text" not in written.columns
+    assert written.loc[0, "binary_label"] == "religious"
+    assert written.loc[0, "confidence"] == 0.8
+    assert written.loc[0, "reason"] == "parsed reason"
+    assert written.loc[0, "domains_present"] == '["faith_tradition"]'
+    assert written.loc[0, "evidence_spans"] == '["church"]'
+    assert written.loc[0, "boundary_notes"] == "parsed boundary"
+
+    reloaded = AnnotationStore(path, persist_raw_response=False)
+    frame = reloaded.to_frame()
+    assert "raw_response" in frame.columns
+    assert pd.isna(frame.loc[0, "raw_response"])
+
+
+def test_store_can_persist_input_text_when_requested(tmp_path) -> None:
+    """Bake-off stores can keep the original mission text without raw JSON."""
+    path = tmp_path / "bakeoff_labels.csv"
+    store = AnnotationStore(
+        path,
+        persist_raw_response=False,
+        persist_text=True,
+    )
+    store.append(
+        LabelRecord(
+            EIN2="00-1",
+            text="line one\nline two, with comma",
+            source_id="m1__v1",
+            source_type=SourceType.LLM_PROMPT,
+            model_id="m1",
+            prompt_id="v1",
+            temperature=0.0,
+            binary_label=BinaryLabel.RELIGIOUS,
+            raw_response='{"binary_label":"religious"}',
+        )
+    )
+
+    written = pd.read_csv(path)
+    assert "text" in written.columns
+    assert "raw_response" not in written.columns
+    assert written.loc[0, "text"] == "line one\nline two, with comma"
+
+    restored = AnnotationStore(path, persist_text=True).records_for_ein2("00-1")[0]
+    assert restored.text == "line one\nline two, with comma"
+    assert restored.raw_response is None
+
+
 def test_error_field_defaults_and_backward_compatible_load(tmp_path) -> None:
     """Older CSVs missing error are reindexed and hydrate error as None."""
     assert AnnotationStore.COLUMNS[-1] == "error"

@@ -29,7 +29,7 @@ from binary_classifier.annotate.concurrency import (
     annotate_with_provider_limit,
     build_provider_limiters,
 )
-from binary_classifier.annotate.schema import AnnotationStore
+from binary_classifier.annotate.schema import AnnotationStore, normalize_ein2
 from binary_classifier.config import BakeoffCandidate, BinaryClassifierConfig
 from binary_classifier.metrics import compute_metric_bundle
 from binary_classifier.paths import PathRegistry
@@ -164,7 +164,11 @@ def run_bakeoff(
         limit=limit,
     )
 
-    store = AnnotationStore(_store_path)
+    store = AnnotationStore(
+        _store_path,
+        persist_raw_response=False,
+        persist_text=True,
+    )
 
     store_lock = threading.Lock()
     errors_lock = threading.Lock()
@@ -183,15 +187,14 @@ def run_bakeoff(
         for _, row in prompt_dev.iterrows():
             if store.already_done(row["EIN2"], source_id):
                 continue
-            batch.append(
-                annotate_with_provider_limit(
-                    annotator,
-                    spec.provider,
-                    row["text"],
-                    row["EIN2"],
-                    provider_limiters,
-                ),
+            record = annotate_with_provider_limit(
+                annotator,
+                spec.provider,
+                row["text"],
+                row["EIN2"],
+                provider_limiters,
             )
+            batch.append(record.model_copy(update={"text": _clean_text(row["text"])}))
         if batch:
             with store_lock:
                 store.append_many(batch)
@@ -218,6 +221,8 @@ def run_bakeoff(
                     logger.warning("Bake-off arm %s failed: %s", source_id, exc)
                     with errors_lock:
                         arm_errors[source_id] = str(exc)
+
+    _backfill_bakeoff_store_text(store, prompt_dev)
 
     results = _score_results_from_store(
         store=store,
@@ -285,6 +290,48 @@ def _load_coded_prompt_dev(human_labels_path: Path, limit: int | None) -> pd.Dat
     if limit:
         sub = sub.head(limit)
     return sub
+
+
+def _clean_text(value: object) -> str | None:
+    """Return text suitable for persistence without stringifying nulls."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    return str(value)
+
+
+def _backfill_bakeoff_store_text(
+    store: AnnotationStore,
+    prompt_dev: pd.DataFrame,
+) -> None:
+    """Populate mission text for resumed bake-off stores before scoring."""
+    if not store.path.exists():
+        return
+
+    text_lookup = {
+        ein2: text
+        for ein2, text in zip(
+            prompt_dev["EIN2"].map(normalize_ein2),
+            prompt_dev["text"].map(_clean_text),
+            strict=True,
+        )
+    }
+    df = store.to_frame()
+    if df.empty:
+        return
+
+    fill_values = df["EIN2"].map(text_lookup)
+    missing_text = df["text"].isna() & fill_values.notna()
+    storage_columns = store.storage_columns()
+    if store.path.suffix == ".parquet":
+        existing_columns = list(pd.read_parquet(store.path).columns)
+    else:
+        existing_columns = list(pd.read_csv(store.path, nrows=0).columns)
+    schema_changed = existing_columns != storage_columns
+    if not missing_text.any() and not schema_changed:
+        return
+
+    df.loc[missing_text, "text"] = fill_values[missing_text]
+    store.replace_frame(df)
 
 
 def _build_proposed_slate(
@@ -684,8 +731,15 @@ def rebuild_bakeoff_artifacts_from_store(
         limit=limit,
     )
 
+    store = AnnotationStore(
+        _store_path,
+        persist_raw_response=False,
+        persist_text=True,
+    )
+    _backfill_bakeoff_store_text(store, prompt_dev)
+
     results = _score_results_from_store(
-        store=AnnotationStore(_store_path),
+        store=store,
         human_df=human_df,
         groups=groups,
         provider_specs=_provider_specs(cfg, _candidates),
