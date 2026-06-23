@@ -74,7 +74,7 @@ cat ~/.ssh/id_ed25519.pub         # copy the output, paste into UCloud
 ```
 
 5. **Allocate a Public IP** in **Resources → IP addresses → Create public IP** (one-time; static across all future jobs). Select provider DeiC Interactive HPC (SDU/K8s), open port `8000` TCP. Note the assigned address — it never changes. This is used to reach the coding vLLM from your laptop (see [Coding LLM appendix](UCLOUD_CODING_LLM.md)); the annotation pipeline's vLLM is job-local only and does not need it.
-6. **Gemma is gated:** accept the license for `google/gemma-3-27b-it` on huggingface.co and create an **HF token**.
+6. **Gemma is gated:** accept the license for `google/gemma-3-27b-it` on huggingface.co and create an **HF token**. (`deepseek-ai/DeepSeek-V4-Flash`, the other default open-weight candidate, is not gated — no extra license step needed for it.)
 7. **Create the `.env`** on the project drive via the UCloud web file editor or upload. Use `.env.example` as the template. The file must be at `/work/<PROJECT_DRIVE>/.env`:
    ```
    DATA_DRIVE=<your-data-drive-name>
@@ -268,7 +268,7 @@ uv run ty check
 
 ## 8. Model / vLLM (config-authoritative + switchable)
 
-`config/religious_missions.yaml` is the **single source of truth** for the annotator. The default open-weight arm is `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`). Optional larger open-weight candidates, such as `deepseek-ai/DeepSeek-V4-Flash`, can be added to `model_slate.bakeoff_candidates` after a UCloud smoke test.
+`config/religious_missions.yaml` is the **single source of truth** for the annotator. The default open-weight arms are `google/gemma-3-27b-it` (~54 GB bf16, fits one B200's 192 GB at `--tensor-parallel-size 1`) and `deepseek-ai/DeepSeek-V4-Flash` (~160 GB, needs `--tensor-parallel-size 2` on two B200s, or 1 GPU solo for coding use — see "DeepSeek-V4-Flash setup" below). Both have passed their UCloud smoke test and are enabled by default in the YAML; comment either out to drop it from the bake-off without losing its already-scored rows in the store.
 
 ### One node, many GPUs, many ports
 
@@ -324,23 +324,25 @@ That final command writes the combined `bakeoff_results.json` and `proposed_slat
 
 ### DeepSeek-V4-Flash setup
 
-DeepSeek-V4-Flash is not a normal chat-template model. Its Hugging Face card says the release uses a custom `encoding/` implementation rather than a Jinja chat template. vLLM supports that encoding, but only when the DeepSeek-specific tokenizer/parser options are enabled. Treat DeepSeek as an optional bake-off candidate until the smoke test below passes.
+DeepSeek-V4-Flash is not a normal chat-template model. Its Hugging Face card says the release uses a custom `encoding/` implementation rather than a Jinja chat template. vLLM supports that encoding, but only when the DeepSeek-specific tokenizer/parser options are enabled.
 
-Add it to `config/religious_missions.yaml` only when you are ready to test it:
+It is already enabled by default in `config/religious_missions.yaml`:
 
 ```yaml
 - id: deepseek-ai/DeepSeek-V4-Flash
   provider: vllm
 ```
 
-Serve it on a 4xB200 group. Keep `--served-model-name` exactly equal to the YAML id:
+Comment it out if you don't have the GPU budget for it, or want a pure-Gemma/pure-OpenAI bake-off. The smoke test below has already passed against this exact vLLM build (0.22.1) — re-run it after any `uv sync` that changes the `vllm`/`nvidia-cutlass-dsl` pins, since that's what it's guarding against.
+
+Serve it on a multi-GPU group sized so `--tensor-parallel-size` evenly divides 64 (the model's attention head count) — 2 or 4 GPUs, not 3. The model's weights are ~160 GB (mostly fp8/int8), so TP=2 on two B200s already leaves comfortable headroom for KV cache; use a 4-GPU group only if another role (e.g. Gemma via `serve-llm.sh annotate`) isn't already occupying one of the node's GPUs. Keep `--served-model-name` exactly equal to the YAML id:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 uv run vllm serve deepseek-ai/DeepSeek-V4-Flash \
+CUDA_VISIBLE_DEVICES=1,2 PYTHONPATH="$PWD/utils/vllm_compat:${PYTHONPATH:-}" uv run vllm serve deepseek-ai/DeepSeek-V4-Flash \
   --host 0.0.0.0 \
   --port 8001 \
   --served-model-name deepseek-ai/DeepSeek-V4-Flash \
-  --tensor-parallel-size 4 \
+  --tensor-parallel-size 2 \
   --distributed-executor-backend mp \
   --dtype auto \
   --kv-cache-dtype fp8 \
@@ -354,6 +356,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 uv run vllm serve deepseek-ai/DeepSeek-V4-Flash \
   --enable-auto-tool-choice \
   --api-key "${LLM_API_KEY:-sk-ucloud}"
 ```
+
+**The `PYTHONPATH=utils/vllm_compat` prefix is required on this vLLM build.** The installed `nvidia-cutlass-dsl` wheel is missing a symbol (`increment_coord`) that its own `cute/__init__.py` imports — verified missing across every public PyPI release from 4.3.5 through 4.5.2 (the latest), so no version pin fixes it. Two DeepSeek-V4 NVIDIA kernel paths hit this at engine warmup: the Lightning Indexer (gated behind `has_cutedsl()`, which only checks the package is *installed*, not that it *imports*) and the KV compressor for `head_dim == 512` (which imports the cutedsl kernel unconditionally, with no fallback gate at all). `utils/vllm_compat/sitecustomize.py` works around both by pointing them at vLLM's own already-existing, signature-compatible triton kernels for these exact cases — not degraded fallbacks, the purpose-built kernels for this model. It edits no installed package files (so it survives `uv sync`), is scoped to this one `vllm serve` invocation via `PYTHONPATH` (propagates to the TP worker subprocesses vLLM spawns, which is where the crash actually happens), and never touches the Gemma server. See the comments in that file for the full diagnosis. Drop it once vLLM/cutlass-dsl ship a real fix.
 
 First verify the OpenAI-compatible chat endpoint:
 
@@ -382,17 +386,19 @@ VLLM_BASE_URL=http://127.0.0.1:8001/v1 \
 
 Pass criteria: `/health` responds, chat completions return normal assistant content, Stage 02 parses a valid label record, `reason` is populated, `error` is empty, and no conformance warning reports missing required keys or an invalid enum.
 
-Serve it with the role-based launcher (after `uv sync --extra serve`):
+**For the bake-off, serve DeepSeek with the explicit `CUDA_VISIBLE_DEVICES` + `PYTHONPATH` command above, not `serve-llm.sh annotate`.** That launcher always serves the *first* `vllm` candidate in the YAML — currently `google/gemma-3-27b-it`, listed before DeepSeek:
 
 ```bash
-bash utils/serve-llm.sh annotate     # Gemma on :LLM_ANNOTATE_PORT (default 8000)
+bash utils/serve-llm.sh annotate     # Gemma on :LLM_ANNOTATE_PORT (default 8000) -- NOT DeepSeek
 ```
 
-`serve-llm.sh annotate` reads the model id straight from the YAML's vLLM candidate and starts it with `--served-model-name <id>`, so the served model can never drift from the one the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
+`serve-llm.sh annotate` reads that one model id straight from the YAML and starts it with `--served-model-name <id>`, so the served model can never drift from the one the pipeline asks for. The pipeline's vLLM client reads `VLLM_BASE_URL` (exported by `env.sh` from `LLM_ANNOTATE_PORT`), defaulting to `http://127.0.0.1:8000/v1`. Weights cache under `HF_HOME`, so a restart does not re-download. The annotation vLLM is job-local — no external access needed.
 
-`serve-llm.sh annotate` is the simple one-annotation-model launcher. For several open-weight bake-off candidates on several GPUs, use the explicit `CUDA_VISIBLE_DEVICES` + port pattern above so each candidate has its own endpoint.
+`serve-llm.sh annotate` is the simple one-annotation-model launcher, useful when only Gemma is enabled. With multiple open-weight bake-off candidates (the current default), use the explicit `CUDA_VISIBLE_DEVICES` + port pattern from "One node, many GPUs, many ports" above so each candidate gets its own endpoint — that's exactly what the DeepSeek command above does.
 
-To also serve the interactive **coding** model for Opencode at the same time (the B200's 183 GB has room for both), run `bash utils/serve-llm.sh both` — Gemma on `LLM_ANNOTATE_PORT` and `LLM_CODING_MODEL` on `LLM_CODING_PORT`, each given `LLM_GPU_MEM_UTIL` of the GPU. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md) for laptop access. Use `serve-llm.sh --status` / `--stop [role]` to inspect or stop a role.
+**DeepSeek-V4-Flash also works as the interactive *coding* model** (`LLM_CODING_MODEL` in `.env`, served via `serve-llm.sh coding` — a different role from `annotate`), tested at `--tensor-parallel-size 1` on a single B200. `serve-llm.sh coding` applies the same model-specific flags automatically when this exact id is configured. It needs a full B200 to itself (~146 GiB weights), so it cannot co-locate with `annotate` via `serve-llm.sh both`. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md#deepseek-aideepseek-v4-flash-as-the-coding-model) for the sizing math and tradeoffs.
+
+To also serve the interactive **coding** model for Opencode at the same time, run `bash utils/serve-llm.sh both` — Gemma on `LLM_ANNOTATE_PORT` and `LLM_CODING_MODEL` on `LLM_CODING_PORT`, each given `LLM_GPU_MEM_UTIL` of the GPU. The B200's 183 GB has room for both **only when the coding model is small** (e.g. the `Qwen/Qwen3.6-35B-A3B` default) — see the previous paragraph if `LLM_CODING_MODEL` is `deepseek-ai/DeepSeek-V4-Flash`. See the [Coding LLM appendix](UCLOUD_CODING_LLM.md) for laptop access. Use `serve-llm.sh --status` / `--stop [role]` to inspect or stop a role.
 
 **Switching the annotation model — the single switch point:**
 
@@ -433,7 +439,7 @@ Attach **two scripts** at job submission:
 
 ## 11. Operational notes
 
-- **Cost / wall-time hygiene (B200 is expensive).** Run CPU-only s `cpu-amd-zen5`, not the GPU node. Right-size wall-time. **Stop the job when idle** — UCloud bills running jobs, including idle interactive ones. Use per-stage resume (`--limit`, resume-by-`EIN2`) for long stages.
+- **Cost / wall-time hygiene (B200 is expensive).** Run CPU-only stages on `cpu-amd-zen5`, not the GPU node. Right-size wall-time. **Stop the job when idle** — UCloud bills running jobs, including idle interactive ones. Use per-stage resume (`--limit`, resume-by-`EIN2`) for long stages.
 - **Outbound network assumption.** Jobs need outbound internet for OpenAI, HF Hub, GitHub, npm, and Anthropic (overlay). Confirm on the first run.
 - **Job templates.** UCloud supports importing parameters from previous runs. After configuring a job once (machine type, both Drives, `utils/init.sh` as Initialization, Batch mode if needed, SSH, and Public IP for coding LLM jobs), reuse it via **Import parameters** on a new job or upload the `JobParameters.json` from a completed job's output folder. This eliminates re-entering all fields on every submission.
 - **Disk / quota growth.** HF cache, uv cache, checkpoints, and `.venv` accumulate on the drives. Watch quota; occasionally prune stale checkpoints under `data/models`.

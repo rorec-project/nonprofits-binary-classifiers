@@ -328,13 +328,13 @@ class AnnotationStore:
         "temperature",
         "seed",
         "run_timestamp",
-        "raw_response",
         "reason",
         "domains_present",
         "evidence_spans",
         "boundary_notes",
         "binary_label",
         "system_fingerprint",
+        "raw_response",
         "error",
     ]
 

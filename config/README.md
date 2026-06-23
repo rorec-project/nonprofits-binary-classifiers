@@ -45,7 +45,7 @@ The default slate is calibrated for short nonprofit text. Override only if you h
 | Decision            | YAML key                         | Default                                                            | If unsure                                                                   |
 | ------------------- | -------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | Production model    | `model_slate.production`         | `gpt-5-mini`                                                       | Use the default                                                             |
-| Bake-off candidates | `model_slate.bakeoff_candidates` | `gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it` | Use the default; comment out the Gemma entry if no vLLM server is available |
+| Bake-off candidates | `model_slate.bakeoff_candidates` | `gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it`, `deepseek-ai/DeepSeek-V4-Flash` | Use the default; comment out either/both `vllm` entries if no vLLM server is available |
 
 ### 3. The four human gates
 
@@ -158,14 +158,15 @@ Controls which LLMs compete in the stage-02 bake-off and which model is the prod
 
 **Default bake-off candidates:**
 
-| id                      | provider | reasoning_effort |
-| ----------------------- | -------- | ---------------- |
-| `gpt-4o-mini`           | `openai` | `null`           |
-| `gpt-5-mini`            | `openai` | `minimal`        |
-| `gpt-5-nano`            | `openai` | `minimal`        |
-| `google/gemma-3-27b-it` | `vllm`   | `null`           |
+| id                            | provider | reasoning_effort |
+| ------------------------------ | -------- | ---------------- |
+| `gpt-4o-mini`                  | `openai` | `null`           |
+| `gpt-5-mini`                   | `openai` | `minimal`        |
+| `gpt-5-nano`                   | `openai` | `minimal`        |
+| `google/gemma-3-27b-it`        | `vllm`   | `null`           |
+| `deepseek-ai/DeepSeek-V4-Flash` | `vllm`   | `null`           |
 
-**Note:** OpenAI ids in the default are floating aliases. Pin them to dated snapshots before a production run. The Gemma arm requires a vLLM server running during the bake-off; comment it out for a pure-OpenAI bake-off. To test `deepseek-ai/DeepSeek-V4-Flash`, add it as a `provider: vllm` candidate and serve it with vLLM's DeepSeek-specific `--tokenizer-mode deepseek_v4 --reasoning-parser deepseek_v4` options; see `docs/RUNNING_ON_UCLOUD.md` for the UCloud smoke-test command.
+**Note:** OpenAI ids in the default are floating aliases. Pin them to dated snapshots before a production run. Each `vllm` arm requires its own vLLM server running on its own port during the bake-off (see `docs/RUNNING_ON_UCLOUD.md`'s "One node, many GPUs, many ports" and "DeepSeek-V4-Flash setup" sections); comment out either or both for a pure-OpenAI bake-off, or to skip just one open-weight arm. DeepSeek-V4-Flash additionally needs vLLM's DeepSeek-specific `--tokenizer-mode deepseek_v4 --reasoning-parser deepseek_v4 --tool-call-parser deepseek_v4` flags and a workaround for a broken `nvidia-cutlass-dsl` wheel (`utils/vllm_compat/sitecustomize.py`) — both already wired into `utils/serve-llm.sh` when this id is configured.
 
 **Pydantic classes:**
 
@@ -432,7 +433,7 @@ These are the only _required_ changes. Everything else can stay at default.
 
 ### Step 3: Review the model slate (optional)
 
-The default bake-off candidates (`gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it`) are text-agnostic. If the new `field` is still short nonprofit text, keep the slate. If you have no vLLM server, comment out the Gemma entry.
+The default bake-off candidates (`gpt-4o-mini`, `gpt-5-mini`, `gpt-5-nano`, `google/gemma-3-27b-it`, `deepseek-ai/DeepSeek-V4-Flash`) are text-agnostic. If the new `field` is still short nonprofit text, keep the slate. If you have no vLLM server, comment out the `vllm` entries.
 
 ### Step 4: Run the pipeline
 

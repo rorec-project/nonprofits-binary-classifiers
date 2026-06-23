@@ -25,7 +25,8 @@ paths:
 # each open-weight model on its own port/GPU group, run stage 02 with
 # `--only-model <id>` and matching `VLLM_BASE_URL`, then rebuild with
 # `--rebuild-from-store`. DeepSeek-V4-Flash needs vLLM's DeepSeek-specific
-# tokenizer/parser flags; see docs/RUNNING_ON_UCLOUD.md before enabling it.
+# tokenizer/parser flags and a cutlass-dsl workaround; see
+# docs/RUNNING_ON_UCLOUD.md's "DeepSeek-V4-Flash setup" before serving it.
 # Stage 03 only runs the human-confirmed slate (production_slate.json), so
 # `production` below is just the default seed.
 model_slate:
@@ -40,11 +41,15 @@ model_slate:
       reasoning_effort: minimal
     - id: google/gemma-3-27b-it
       provider: vllm
-    # Optional open-weight bake-off candidate. Enable only after a UCloud smoke
-    # test confirms vLLM chat completions + guided JSON work with
-    # `--tokenizer-mode deepseek_v4 --reasoning-parser deepseek_v4`.
-    # - id: deepseek-ai/DeepSeek-V4-Flash
-    #   provider: vllm
+    # Open-weight bake-off candidate. UCloud smoke test passed (chat
+    # completions + guided JSON both work with `--tokenizer-mode deepseek_v4
+    # --reasoning-parser deepseek_v4`); see docs/RUNNING_ON_UCLOUD.md's
+    # "DeepSeek-V4-Flash setup" for the vLLM serve command and the
+    # nvidia-cutlass-dsl wheel workaround it depends on
+    # (utils/vllm_compat/sitecustomize.py). Comment out to drop it from the
+    # bake-off without losing its already-scored rows in the store.
+    - id: deepseek-ai/DeepSeek-V4-Flash
+      provider: vllm
   production: gpt-5-mini
 
 # Quality Score Q thresholds for the sample selection.

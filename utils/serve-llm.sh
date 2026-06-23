@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # utils/serve-llm.sh — serve vLLM model(s) on a UCloud interactive job.
 #
-# Two roles, each on its own port, share one GPU (a B200's 183 GB fits both):
+# Two roles, each on its own port, normally share one GPU (a B200's 183 GB
+# fits both at once with small/medium models):
 #   annotate — the open-weight Gemma arm for pipeline stages 02/03. The model id
 #              is read from the vLLM bake-off candidate in
 #              config/religious_missions.yaml — the single source of truth shared
 #              with the annotator client, so the served model never drifts from
 #              the one the pipeline asks for.
 #   coding   — interactive dev assistant (Opencode); LLM_CODING_MODEL from .env.
+#              If set to deepseek-ai/DeepSeek-V4-Flash, this role needs a full
+#              B200 to itself (~146 GiB weights alone) -- `both` mode will not
+#              fit it alongside annotate on the same GPU; use separate GPUs
+#              (CUDA_VISIBLE_DEVICES) or run coding solo. See
+#              docs/UCLOUD_CODING_LLM.md for sizing math and tradeoffs.
 #
 # Usage:
 #   bash utils/serve-llm.sh annotate          # serve the annotation model
@@ -169,7 +175,31 @@ serve_one() {  # $1 role  $2 gpu_mem_util
   # `ImportError: cannot import name 'unwrap' from 'cutlass.cute.tuple'`. We never
   # send images (text-only annotation), so pin the FA version to 2 — a prebuilt
   # kernel that needs no CuTe/cutlass import — to bypass the broken FA4 path.
-  ( cd "${PROJECT}" && nohup uv run vllm serve "${model}" \
+  # (Harmless no-op for DeepSeek-V4-Flash: its MLA-sparse backend never
+  # consults flash_attn_version — verified by inspection of the selected
+  # DEEPSEEK_SPARSE_SWA backend.)
+  #
+  # DeepSeek-V4-Flash hits the SAME broken cutlass-dsl wheel a second and
+  # third way (Lightning Indexer + KV compressor kernels), with no CLI flag
+  # to dodge it. utils/vllm_compat/sitecustomize.py works around both --
+  # see its header comment and docs/RUNNING_ON_UCLOUD.md's "DeepSeek-V4-Flash
+  # setup" section for the full diagnosis. PYTHONPATH-loading it is harmless
+  # for every other model (it only intercepts deepseek_v4-specific imports),
+  # so it's applied unconditionally here rather than gated per-model.
+  local extra_flags=()
+  if [ "${model}" = "deepseek-ai/DeepSeek-V4-Flash" ]; then
+    extra_flags=(
+      --kv-cache-dtype fp8
+      --max-num-batched-tokens "${max_len}"
+      --trust-remote-code
+      --tokenizer-mode deepseek_v4
+      --reasoning-parser deepseek_v4
+      --tool-call-parser deepseek_v4
+      --enable-auto-tool-choice
+    )
+  fi
+  ( cd "${PROJECT}" && PYTHONPATH="${PROJECT}/utils/vllm_compat:${PYTHONPATH:-}" \
+      nohup uv run vllm serve "${model}" \
       --host 0.0.0.0 \
       --port "${port}" \
       --served-model-name "${model}" \
@@ -179,6 +209,7 @@ serve_one() {  # $1 role  $2 gpu_mem_util
       --dtype auto \
       --attention-config '{"flash_attn_version": 2}' \
       --api-key "${LLM_API_KEY:-sk-ucloud}" \
+      "${extra_flags[@]}" \
       &>>"${log}" & )
   echo "    logs: ${log}"
 
@@ -284,6 +315,11 @@ if [ "${MODE}" = "both" ]; then
   serve_one annotate "${LLM_GPU_MEM_UTIL:-0.45}"
   serve_one coding "${LLM_GPU_MEM_UTIL:-0.45}"
 else
-  # Sole tenant: give the one model most of the GPU.
-  serve_one "${MODE}" "${LLM_GPU_MEM_UTIL_SOLO:-0.90}"
+  # Sole tenant: give the one model most of the GPU. 0.95 (not 0.90) because
+  # DeepSeek-V4-Flash's ~146 GiB weights leave only ~37 GiB of headroom on a
+  # 183 GiB B200 at 0.90 -- too little for KV cache + CUDA graph memory once
+  # other overhead is accounted for. 0.95 was verified to leave a working
+  # ~14 GiB KV cache (~40K tokens) for it; smaller models have ample room at
+  # either setting.
+  serve_one "${MODE}" "${LLM_GPU_MEM_UTIL_SOLO:-0.95}"
 fi

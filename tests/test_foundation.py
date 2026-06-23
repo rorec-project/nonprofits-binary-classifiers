@@ -27,10 +27,10 @@ def test_real_yaml_loads_with_slate_list() -> None:
     candidates = cfg.model_slate.bakeoff_candidates
     assert isinstance(candidates, list)
     assert all(isinstance(c, BakeoffCandidate) for c in candidates)
-    # Three OpenAI tiers + one open-weight comparison arm.
+    # Three OpenAI tiers + two open-weight comparison arms (Gemma, DeepSeek).
     providers = [c.provider for c in candidates]
     assert providers.count("openai") == 3
-    assert providers.count("vllm") == 1
+    assert providers.count("vllm") == 2
     # GPT-5 tiers carry reasoning_effort; gpt-4o-mini does not.
     by_id = {c.id: c for c in candidates}
     assert by_id["gpt-5-mini-2025-08-07"].reasoning_effort == "minimal"
