@@ -50,7 +50,7 @@ model_slate:
     # bake-off without losing its already-scored rows in the store.
     - id: deepseek-ai/DeepSeek-V4-Flash
       provider: vllm
-  production: gpt-5-mini
+  production: deepseek-ai/DeepSeek-V4-Flash
 
 # Quality Score Q thresholds for the sample selection.
 q_thresholds:

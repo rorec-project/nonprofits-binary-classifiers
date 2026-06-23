@@ -1,0 +1,61 @@
+{
+  "confirmed": true,
+  "models": [
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Flash",
+      "provider": "vllm",
+      "reasoning_effort": null
+    }
+  ],
+  "selected": [
+    {
+      "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "prompt_id": "v2",
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "cohens_kappa": 1.0,
+      "f1_ci_lower": 1.0,
+      "abstain_rate": 0.22,
+      "n_valid": 39,
+      "clears": true
+    },
+    {
+      "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "prompt_id": "v3",
+      "accuracy": 0.9743589743589743,
+      "f1": 0.9655172413793104,
+      "cohens_kappa": 0.9451476793248945,
+      "f1_ci_lower": 0.875,
+      "abstain_rate": 0.22,
+      "n_valid": 39,
+      "clears": true
+    },
+    {
+      "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "prompt_id": "v1",
+      "accuracy": 0.9555555555555556,
+      "f1": 0.9411764705882353,
+      "cohens_kappa": 0.9056603773584906,
+      "f1_ci_lower": 0.8333333333333334,
+      "abstain_rate": 0.10,
+      "n_valid": 45,
+      "clears": true
+    }
+  ],
+  "recommended": {
+    "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+    "prompt_id": "v2",
+    "accuracy": 1.0,
+    "f1": 1.0,
+    "cohens_kappa": 1.0,
+    "f1_ci_lower": 1.0,
+    "abstain_rate": 0.22,
+    "n_valid": 39,
+    "clears": true
+  },
+  "rationale": "DeepSeek-V4-Flash with all 3 prompts for majority-vote robustness and graded soft targets. Prompt v2 is perfect on prompt-dev (F1=1.0); v3 and v1 add abstain recovery and inter-prompt disagreement signal.",
+  "selection_scope": "full_store",
+  "kappa_threshold": 0.7,
+  "f1_ci_floor": 0.7,
+  "agreement_threshold": 0.85
+}
