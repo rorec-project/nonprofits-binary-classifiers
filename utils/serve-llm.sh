@@ -8,9 +8,13 @@
 #              back to the first vLLM bake-off candidate before G2 exists, so the
 #              served model matches the model the pipeline asks for.
 #   coding   — interactive dev assistant (Opencode); LLM_CODING_MODEL from .env.
-#              If set to deepseek-ai/DeepSeek-V4-Flash, this role needs a full
-#              B200 to itself (~146 GiB weights alone) -- `both` mode will not
-#              fit it alongside annotate on the same GPU; use separate GPUs
+#              Three tested coding models, each with different GPU requirements:
+#                deepseek-ai/DeepSeek-V4-Flash  — ~146 GiB, fits one B200
+#                deepseek-ai/DeepSeek-V4-Pro    — ~960 GiB FP4+FP8, needs 8×B200
+#                moonshotai/Kimi-K2.7-Code      — ~595 GiB INT4, needs 8×B200
+#              V4-Flash runs on a single B200; V4-Pro and Kimi K2.7 require a full
+#              8× B200 UCloud node (`gpu-nvidia-b200` product). `both` mode will not
+#              fit any of these alongside annotate on the same GPU; use separate GPUs
 #              (CUDA_VISIBLE_DEVICES) or run coding solo. See
 #              docs/UCLOUD_CODING_LLM.md for sizing math and tradeoffs.
 #
@@ -243,6 +247,36 @@ serve_one() { # $1 role  $2 gpu_mem_util
       --reasoning-parser deepseek_v4
       --tool-call-parser deepseek_v4
       --enable-auto-tool-choice
+    )
+  fi
+  # Unlike V4-Flash (~146 GiB, fits one B200), V4-Pro (~960 GiB) and Kimi
+  # K2.7-Code (~595 GiB) require a full 8× B200 UCloud node (`gpu-nvidia-b200`
+  # product) and cannot run on a single GPU. With TP=8 they also need
+  # --enable-expert-parallel for proper expert-packing across nodes.
+  if [[ "${model}" == deepseek-ai/DeepSeek-V4-Pro ]]; then
+    extra_flags=(
+      --kv-cache-dtype fp8
+      --trust-remote-code
+      --enable-expert-parallel
+      --data-parallel-size 8
+      --block-size 256
+      --tokenizer-mode deepseek_v4
+      --reasoning-parser deepseek_v4
+      --tool-call-parser deepseek_v4
+      --enable-auto-tool-choice
+      --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'
+      --attention_config.use_fp4_indexer_cache=True
+      --moe-backend deep_gemm_mega_moe
+      --speculative_config '{"method":"mtp","num_speculative_tokens":2}'
+    )
+  fi
+  if [[ "${model}" == moonshotai/Kimi-K2.7-Code ]]; then
+    extra_flags=(
+      --trust-remote-code
+      --tool-call-parser kimi_k2
+      --enable-auto-tool-choice
+      --reasoning-parser kimi_k2
+      --mm-encoder-tp-mode data
     )
   fi
   (cd "${PROJECT}" && PYTHONPATH="${PROJECT}/utils/vllm_compat:${PYTHONPATH:-}" \
