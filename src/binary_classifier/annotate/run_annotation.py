@@ -388,7 +388,11 @@ def run_annotation_matrix(
             "Start-from-scratch: removed existing annotation store %s", store_path
         )
 
-    store = AnnotationStore(store_path)
+    store = AnnotationStore(
+        store_path,
+        persist_raw_response=False,
+        persist_text=True,
+    )
     df = df.copy()
     df["EIN2"] = df["EIN2"].map(normalize_ein2)
     if provider_limiters is None and cfg is not None:
