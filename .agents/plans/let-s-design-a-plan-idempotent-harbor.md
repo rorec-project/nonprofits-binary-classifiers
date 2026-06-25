@@ -197,7 +197,7 @@ Waves: **W0** = T1.0 → **W1** = {T1.1, T1.2, T1.3, T1.4, T1.6, T1.7} (parallel
 | T2.1 | QC metric bundle + CIs | `qc/agreement.py`, `scripts/04_quality_check.py`, `tests/test_metrics.py` | PR1 |
 | T2.5 | Registry path migration (remainder) | `annotate/bakeoff_prompts.py`, `paths.py` | T2.A |
 | T2.6 | Evidence-span guard | `qc/evidence.py` (new), `scripts/04_quality_check.py` | T2.1 |
-| T2.7 | Docs (architecture) | `AGENTS.md`, `.agents/architecture/configuration.md` | T2.A,T2.1 |
+| T2.7 | Docs (architecture) | `AGENTS.md`, `docs/agents/configuration.md` | T2.A,T2.1 |
 | T2.8 | README user guide | `README.md` | all |
 
 Waves: **WA** = {T2.A, T2.1} (disjoint) → **WB** = {T2.5, T2.6} → **WC** = {T2.7} → **WD** = {T2.8}.

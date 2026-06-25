@@ -249,7 +249,7 @@ internally inconsistent, and the architecture notes lag the code.
   names "how to run each stage with the different options," this is the central
   gap to close — ideally extend the Operator Guide with a Step 7–11 section and a
   per-stage CLI table.
-- **D2 (Medium) — architecture docs are stale.** `.agents/architecture/pipeline.md`
+- **D2 (Medium) — architecture docs are stale.** `docs/agents/pipeline.md`
   still says *"Stages 01–04 exist. Training, evaluation, and inference-at-scale are
   roadmap"* and *"runs 01→04"*; `configuration.md` lists 05–11 under "Roadmap hooks."
   Both contradict `run_pipeline.py`'s `_STAGE_MODULES` (01–09 wired). These are

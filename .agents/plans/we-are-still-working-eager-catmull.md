@@ -204,7 +204,7 @@ shared files (`config.py`, `paths.py`, `run_pipeline.py`, `preflight.py`,
   diffing (classifier-era analogue of stage-03 canary fingerprinting). Report-only.
 - **Docs superseding notes are deliverables**: PR-2 records the sweep replacement +
   encoder-grid reduction in `.agents/plans/we-work-on-the-floofy-wreath.md` (memo),
-  `.agents/architecture/configuration.md` (roadmap hooks), and `README.md`; PR-6
+  `docs/agents/configuration.md` (roadmap hooks), and `README.md`; PR-6
   records word-clouds → n-gram log-odds bars (statistically interpretable, no new dep).
 - DVC migration stays deferred (configuration.md) — out of scope, do not touch.
 
@@ -849,7 +849,7 @@ Acceptance: Tier-1 green; smoke run `scripts/06_train.py --config config/smoke.y
 cache).
 
 **T2.8 — docs superseding notes** (owns `.agents/plans/we-work-on-the-floofy-wreath.md`
-(append memo), `.agents/architecture/configuration.md`, `README.md`) [parallel-ok]
+(append memo), `docs/agents/configuration.md`, `README.md`) [parallel-ok]
 Operations: append a dated "Superseded decisions (June 2026)" memo: sweep
 {0.5k..16k} → full-pool + {25/50/100%} documentation curve (cite arXiv:2504.15432,
 Card et al. 2020); encoder grid −RoBERTa/−DistilBERT (cite arXiv:2504.08716);
@@ -1079,7 +1079,7 @@ Tests: each renders to a tmp PNG under the `Agg` backend from fabricated inputs.
 Acceptance: Tier-1 green.
 
 **T6.2 — script + docs** (owns `scripts/10_visualize.py`,
-`.agents/architecture/pipeline.md` (viz note), README viz note) [parallel-ok]
+`docs/agents/pipeline.md` (viz note), README viz note) [parallel-ok]
 Operations: script renders every figure whose input artifact exists (skip + log
 otherwise) into `figures_dir` as PNG and SVG; `--config` flag only. Docs: record the
 word-cloud → log-odds substitution rationale.
@@ -1222,7 +1222,7 @@ baselines) · `…-imbalanced-text-evaluation.md` (metric bundle) ·
 `…-calibration-quantification-prevalence.md` (calibration/quantification) ·
 `…-llm-weak-supervision-noisy-labels.md` (noisy-label gating) ·
 `.agents/plans/we-work-on-the-floofy-wreath.md` (+ annex; original locked decisions)
-· `.agents/architecture/{configuration,pipeline}.md` · `docs/RUNNING_ON_UCLOUD.md`.
+· `docs/agents/{configuration,pipeline}.md` · `docs/RUNNING_ON_UCLOUD.md`.
 
 Literature (key): PPI Science 2023 arXiv:2301.09633 · PPI++ arXiv:2311.01453 ·
 Stratified PPI arXiv:2406.04291 · DSL arXiv:2306.04746 · Alexandari ICML 2020

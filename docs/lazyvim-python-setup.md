@@ -1,6 +1,6 @@
 # LazyVim + Python (uv / ruff / ty) — Setup Memo
 
-Personal editor setup for working on this project in LazyVim with the Astral toolchain. **Optional and out of band:** the pipeline runs from any shell via `uv run …` — none of this is required to build or run the classifier. Project lint/type _rules_ live in `pyproject.toml`; see [`python-standards.md`](../.agents/architecture/conventions/python-standards.md).
+Personal editor setup for working on this project in LazyVim with the Astral toolchain. **Optional and out of band:** the pipeline runs from any shell via `uv run …` — none of this is required to build or run the classifier. Project lint/type _rules_ live in `pyproject.toml`; see [`python-standards.md`](agents/conventions/python-standards.md).
 
 ## Tools
 

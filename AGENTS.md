@@ -18,12 +18,26 @@ Act as a **pragmatic ML research engineer**. You care about reproducibility (see
 
 Read the relevant doc before working in that area.
 
-- **Project overview** — [overview.md](.agents/architecture/overview.md): what this is, approach, status
-- **Pipeline** — [pipeline/pipeline.md](.agents/architecture/pipeline/pipeline.md): stage map, inputs, status
-- **Configuration** — [pipeline/configuration.md](.agents/architecture/pipeline/configuration.md): config-driven design, retasking
-- **Human gates** — [pipeline/human-gates.md](.agents/architecture/pipeline/human-gates.md): G1–G4 checkpoints
-- **Gotchas** — [operations/gotchas.md](.agents/architecture/operations/gotchas.md): data layout, local setup, roadmaps
-- **Python conventions** — [conventions/python-standards.md](.agents/architecture/conventions/python-standards.md)
-- **Comments style** — [conventions/comments.md](.agents/architecture/conventions/comments.md)
-- **Git workflow** — [workflow/git.md](.agents/architecture/workflow/git.md)
-- **Pre-flight checks** — [workflow/pre-flight-checks.md](.agents/architecture/workflow/pre-flight-checks.md)
+- **Project overview** — [overview.md](docs/agents/overview.md): what this is, approach, status
+- **Pipeline** — [pipeline/pipeline.md](docs/agents/pipeline/pipeline.md): stage map, inputs, status
+- **Configuration** — [pipeline/configuration.md](docs/agents/pipeline/configuration.md): config-driven design, retasking
+- **Human gates** — [pipeline/human-gates.md](docs/agents/pipeline/human-gates.md): G1–G4 checkpoints
+- **Gotchas** — [operations/gotchas.md](docs/agents/operations/gotchas.md): data layout, local setup, roadmaps
+- **Python conventions** — [conventions/python-standards.md](docs/agents/conventions/python-standards.md)
+- **Comments style** — [conventions/comments.md](docs/agents/conventions/comments.md)
+- **Git workflow** — [workflow/git.md](docs/agents/workflow/git.md)
+- **Pre-flight checks** — [workflow/pre-flight-checks.md](docs/agents/workflow/pre-flight-checks.md)
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues are the repo's issue tracker, and external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one root `CONTEXT.md` and one root `docs/adr/`. See `docs/agents/domain.md`.

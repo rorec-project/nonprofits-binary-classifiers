@@ -68,7 +68,7 @@ config/
   religious_missions.yaml   # the first task config (entity=missions, field=LONGEST_MISSION, label=religious, SEED, model slate, thresholds)
 ```
 
-**Conventions (mandatory):** `uv run python …`; Ruff (line length 88); `pathlib.Path` everywhere; imports stdlib→third-party→local; Google/NumPy docstrings explaining business/economic intent; section-header comments above blocks, never inline (`.agents/architecture/conventions/`). Drop `bert-base-uncased`. Fix `pyproject.toml` (`python-dotenv` not `dotenv`), add `pyarrow`, `crowd-kit`, `cleanlab`, and the full **`vllm`** (B200-pinned, for self-hosted serving — not just a client, so `uv.lock` reproduces it); keep Python `>=3.13`. `requirements.txt` stays legacy (ignored).
+**Conventions (mandatory):** `uv run python …`; Ruff (line length 88); `pathlib.Path` everywhere; imports stdlib→third-party→local; Google/NumPy docstrings explaining business/economic intent; section-header comments above blocks, never inline (`docs/agents/conventions/`). Drop `bert-base-uncased`. Fix `pyproject.toml` (`python-dotenv` not `dotenv`), add `pyarrow`, `crowd-kit`, `cleanlab`, and the full **`vllm`** (B200-pinned, for self-hosted serving — not just a client, so `uv.lock` reproduces it); keep Python `>=3.13`. `requirements.txt` stays legacy (ignored).
 
 ---
 
@@ -130,7 +130,7 @@ The build is executed by an **orchestrator** that spawns **specialized sub-agent
 ### Standard briefing (every sub-agent receives this in fresh context)
 
 1. **Read the full plan** `.agents/plans/we-work-on-the-floofy-wreath.md` and the research annex `.agents/plans/we-work-on-the-floofy-wreath-annex.md` before doing anything.
-2. **Follow the conventions** in `.agents/architecture/conventions/` (uv only; Ruff line-length 88; `pathlib.Path`; imports stdlib→third-party→local; Google/NumPy docstrings explaining intent; section-header comments above blocks, never inline).
+2. **Follow the conventions** in `docs/agents/conventions/` (uv only; Ruff line-length 88; `pathlib.Path`; imports stdlib→third-party→local; Google/NumPy docstrings explaining intent; section-header comments above blocks, never inline).
 3. **Scope discipline:** create/edit only the files in your package; treat every other path as read-only. Do not guess on ambiguous design — surface it to the orchestrator as a blocker rather than inventing.
 4. **Reproducibility:** read `SEED`, paths, and the entity/field from `config/religious_missions.yaml`; carry `EIN2` through every artifact.
 5. **Return the reporting contract** (below) as your final message.

@@ -86,7 +86,7 @@ estimate* — preserve everything that supports it.
   `# type: ignore`. Python 3.13.
 - **Paths:** `pathlib.Path` only; prefer `PathRegistry` properties.
 - **Docstrings:** Google style (match the package).
-- **Comments** (`.agents/architecture/conventions/comments.md`): heavy,
+- **Comments** (`docs/agents/conventions/comments.md`): heavy,
   scan-friendly **section comments above code (never inline)** explaining the
   *why* / methodology / data provenance / non-obvious calculations — not syntax.
 
@@ -336,8 +336,8 @@ reading call sites:
   documented; defaults match the YAML after T2.
 
 ### T10 — Thin-doc sync  *(Wave 2)*
-- **Owns:** `AGENTS.md`, `.agents/architecture/pipeline.md`,
-  `.agents/architecture/configuration.md`.
+- **Owns:** `AGENTS.md`, `docs/agents/pipeline.md`,
+  `docs/agents/configuration.md`.
 - **Operations:** keep them as thin pointers; update stale specifics: optional
   deps, arms default, cross-checks default, decision-curve removal, lean curve.
 - **Acceptance:** no contradictions with README/config-README/YAML; ruff/ty N/A.

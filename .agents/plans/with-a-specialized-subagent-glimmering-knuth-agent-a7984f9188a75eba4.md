@@ -14,7 +14,7 @@ Verified against the actual code on branch `refactor/harmonize-pipeline`. Baseli
    parquet is not an issue *today*, but any future `.parquet` placed under `gold/` would still be
    ignored by line 4 and the plan's idiom would not save it. Worth a one-line note.
 
-2. **pipeline.md `results/` claim — WRONG.** Plan E says ".agents/architecture/pipeline.md `results/`
+2. **pipeline.md `results/` claim — WRONG.** Plan E says "docs/agents/pipeline.md `results/`
    → current `data/` layout." `pipeline.md` (31 lines) contains NO `results/` string; it already uses
    `data/` (pipeline.md:24). This edit target does not exist as described.
 

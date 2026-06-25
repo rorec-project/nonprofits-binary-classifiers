@@ -48,7 +48,7 @@ CURRENT = `.agents/plans/...-glimmering-knuth.md`. Neither file modified.
 
 ## Evidence
 
-- python-standards DROP: ORIGINAL:134 `.agents/architecture/conventions/python-standards.md`
+- python-standards DROP: ORIGINAL:134 `docs/agents/conventions/python-standards.md`
   example path → `data/interim/manifests/...`. CURRENT grep for
   `python-standards|conventions|interim/manifests` → NONE FOUND. Change #2 only lists
   *corrections* to pipeline.md / configuration.md / AGENTS.md / README — it does not

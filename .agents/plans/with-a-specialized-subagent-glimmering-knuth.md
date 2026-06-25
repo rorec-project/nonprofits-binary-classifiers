@@ -36,8 +36,8 @@ per task card**. Tasks are serialized because several touch the same files.
   files, line numbers shift. Always locate an edit site by its **function/symbol name** (stable), not the exact
   line; re-read the file before editing (already required). Re-run `pytest -q` to confirm the baseline (69
   passed) before T1.
-- **Follow existing repo conventions.** Before writing code, read `.agents/architecture/conventions/comments.md`
-  and `.agents/architecture/conventions/python-standards.md`, and match the surrounding style (Pydantic
+- **Follow existing repo conventions.** Before writing code, read `docs/agents/conventions/comments.md`
+  and `docs/agents/conventions/python-standards.md`, and match the surrounding style (Pydantic
   configs, the `PathRegistry` pathlib pattern, Google-style docstrings, seeded determinism).
 - **Citations are locked in the References appendix** at the end of this document — use those exact
   identifiers in code comments / docs; do not invent or rely on outside memory.
@@ -387,8 +387,8 @@ empty). Run `git check-ignore -v data/processed/gold/gold_to_code.csv` (expect *
 ### T12 — Docs sync: layout, frame, DVC note, roadmap [Workstreams A2/A3 + G-docs + E-docs + roadmap]
 
 **Depends on:** run **last** (docs describe the final state of all prior tasks).
-**Files:** `README.md`, `AGENTS.md`, `.agents/architecture/configuration.md`,
-`.agents/architecture/conventions/python-standards.md`. (Leave dated `.agents/docs/*` and `.agents/plans/*` as
+**Files:** `README.md`, `AGENTS.md`, `docs/agents/configuration.md`,
+`docs/agents/conventions/python-standards.md`. (Leave dated `.agents/docs/*` and `.agents/plans/*` as
 historical records.)
 **Operations:**
 
@@ -411,7 +411,7 @@ historical records.)
    **both**. `AGENTS.md:43` ("`data/` is a symlink … all gitignored") is false on two counts after T11 (`data/`
    is a real dir; only `…/silver` is the symlink; gold IS committed) — rewrite it. `README` line 83 (stale
    `train_test_datasets/...`) contradicts line 126 (new path) — reconcile the whole file.
-   `.agents/architecture/conventions/python-standards.md:37,40` example path
+    `docs/agents/conventions/python-standards.md:37,40` example path
    `data/processed/train_test_datasets/manifests/silver_manifest.csv` → `data/interim/manifests/silver_manifest.csv`.
 5. **Roadmap section:** record the 2026-aligned future stages (prevalence anchor + PPI++/QuaPy + per-stratum
    calibration; DeBERTa-v3-base; soft-label/label-smoothing + bf16; decision-curve + ECE; gated aggregation

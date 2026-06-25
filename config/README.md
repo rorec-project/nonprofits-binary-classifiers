@@ -479,6 +479,6 @@ No source code edits are needed, provided the upstream `NonProfitData` parquet e
 
 - `src/binary_classifier/config.py` -- Pydantic model definitions and `load_config()`.
 - `src/binary_classifier/paths.py` -- `PathRegistry` with every artifact path.
-- `.agents/architecture/configuration.md` -- Architecture-level config design and retasking notes.
-- `.agents/architecture/pipeline.md` -- How each pipeline stage consumes the config.
+- `docs/agents/configuration.md` -- Architecture-level config design and retasking notes.
+- `docs/agents/pipeline.md` -- How each pipeline stage consumes the config.
 - `scripts/run_pipeline.py` -- Orchestrator that wires config to stages with human gates.
