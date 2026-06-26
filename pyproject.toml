@@ -22,6 +22,7 @@ dependencies = [
   "sentencepiece>=0.2.0",
   "torch>=2.7.0",
   "transformers>=5.8.0,<6.0.0",
+  "protobuf>=6.33.6",
 ]
 
 [project.optional-dependencies]
@@ -37,11 +38,11 @@ quant = ["quapy>=0.2.0,<0.3"]
 
 [dependency-groups]
 dev = [
-    "ipykernel>=7.2.0",
-    "pytest>=9.0.3",
-    "requests>=2.34.2",
-    "ruff>=0.10.0",
-    "ty>=0.0.1a1",
+  "ipykernel>=7.2.0",
+  "pytest>=9.0.3",
+  "requests>=2.34.2",
+  "ruff>=0.10.0",
+  "ty>=0.0.1a1",
 ]
 
 [build-system]
@@ -66,11 +67,11 @@ force-exclude = true
 
 [tool.ruff.lint]
 extend-select = [
-  "B905",    # zip() without explicit strict= — catches bugs
-  "PD011",   # .values -> .to_numpy() — pandas 3.x compat
-  "UP017",   # datetime.UTC alias — modern stdlib
-  "UP035",   # collections.abc import — modern stdlib
-  "UP042",   # enum.StrEnum — modern stdlib
+  "B905",  # zip() without explicit strict= — catches bugs
+  "PD011", # .values -> .to_numpy() — pandas 3.x compat
+  "UP017", # datetime.UTC alias — modern stdlib
+  "UP035", # collections.abc import — modern stdlib
+  "UP042", # enum.StrEnum — modern stdlib
 ]
 ignore = [
   "F821", # undefined name -> covered by ty's `unresolved-reference`
