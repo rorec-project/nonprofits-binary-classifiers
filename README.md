@@ -98,6 +98,8 @@ The pipeline is driven by two human-coded artifacts and two human confirmations.
 
 Typical workflow:
 
+**FIXME:** Use `uv run torchrun` instead of `uv run python` for multi-GPU setup.
+
 ```bash
 # Stage 01: build sample + gold template. Then code gold_to_code.csv (G1).
 uv run python scripts/run_pipeline.py --stages 01
@@ -365,7 +367,7 @@ Stage 06 fine-tunes encoder models on the frozen silver labels, enumerating a gr
 - **Inputs:** frozen `silver_labels.csv`, config `training` section.
 - **Outputs:** `data/models/selection_report.json`, checkpoint directories under `data/models/`.
 - **Key options:** `--baselines-only`, `--sweep`, `--final`, `--encoder`, `--subset`, `--epochs`, `--seeds`, `--limit`.
-- **Caveat:** orchestrator runs stage 06 as two-phase sweep → final automatically.
+- **Caveat (multi-GPU):** HuggingFace's `Trainer` uses `DataParallel` by default when multiple GPUs are visible, which produces NaN gradients with bf16 + the custom soft-CE loss. Run with a single GPU (`CUDA_VISIBLE_DEVICES=0`) or launch via DDP (`uv run torchrun --nproc_per_node=4 scripts/06_train.py ...`). The pipeline orchestrator (`run_pipeline.py`) runs stage 06 as two-phase sweep → final automatically; for the orchestrator, set `CUDA_VISIBLE_DEVICES=0` in the shell.
 
 ### B7. Stage 07 — Evaluate
 
