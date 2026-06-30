@@ -421,6 +421,11 @@ def compute_metrics(eval_pred: transformers.EvalPrediction) -> dict[str, float]:
     """
     y_score = _positive_probs(eval_pred.predictions)
     y_true = _binarize(eval_pred.label_ids)
+
+    if np.isnan(y_score).any():
+        logger.warning("NaN predictions detected — returning zero metrics for this checkpoint.")
+        return {"pr_auc": 0.0, "minority_f1": 0.0, "mcc": 0.0}
+
     y_pred = (y_score >= 0.5).astype(int)
     return {
         "pr_auc": float(average_precision_score(y_true, y_score)),
