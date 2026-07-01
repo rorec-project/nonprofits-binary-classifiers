@@ -192,6 +192,7 @@ def finetune(
         model: Any = AutoModelForSequenceClassification.from_pretrained(
             encoder.id,
             num_labels=2,
+            torch_dtype=torch.bfloat16 if precision == "bf16" else torch.float32,
         )
         model.to(device)
 
@@ -367,6 +368,7 @@ def finetune_predictor(
     model: Any = AutoModelForSequenceClassification.from_pretrained(
         encoder.id,
         num_labels=2,
+        torch_dtype=torch.bfloat16 if precision == "bf16" else torch.float32,
     )
     model.to(device)
 
