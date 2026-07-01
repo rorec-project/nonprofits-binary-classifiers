@@ -21,6 +21,7 @@ from transformers import AutoModel, AutoTokenizer, set_seed
 from binary_classifier import metrics
 
 if TYPE_CHECKING:
+    from binary_classifier.config import BinaryClassifierConfig
     from binary_classifier.paths import PathRegistry
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class EmbeddingResult:
 
 
 def tfidf_logreg(
+    cfg: BinaryClassifierConfig,
     train_df: pd.DataFrame,
     eval_dfs: Mapping[str, pd.DataFrame],
     seed: int,
@@ -52,6 +54,7 @@ def tfidf_logreg(
     """Train and score a TF-IDF + logistic-regression baseline.
 
     Args:
+        cfg: Validated task configuration.
         train_df: Training frame containing ``text`` and ``hard_label``.
         eval_dfs: Named evaluation frames with ``text`` and either
             ``hard_label`` or ``human_label``.
@@ -114,6 +117,7 @@ def tfidf_logreg(
 
 
 def minilm_logreg(
+    cfg: BinaryClassifierConfig,
     train_df: pd.DataFrame,
     eval_dfs: Mapping[str, pd.DataFrame],
     seed: int,
@@ -124,11 +128,8 @@ def minilm_logreg(
 ) -> dict[str, Any]:
     """Train and score a MiniLM-embedding + logistic-regression baseline.
 
-    Embeddings are generated with plain ``transformers`` and cached under
-    ``registry.embeddings_dir``. Cache hits are accepted only when the saved EIN2
-    index exactly matches the requested ordered EIN2s.
-
     Args:
+        cfg: Validated task configuration.
         train_df: Training frame containing ``EIN2``, ``text``, and
             ``hard_label``.
         eval_dfs: Named evaluation frames containing ``EIN2``, ``text``, and

@@ -116,6 +116,7 @@ training:
     - id: microsoft/deberta-v3-base
       arm: primary
       max_length: 256
+      precision: fp32
     - id: answerdotai/ModernBERT-base
       arm: comparison
       max_length: 256
@@ -125,8 +126,9 @@ training:
   batch_size: 32
   epochs: 10
   weight_decay: 0.01
+  max_grad_norm: 1.0
   warmup_fraction: 0.06
-  early_stopping_patience: 4
+  early_stopping_patience: 3
   metric_for_best_model: pr_auc
   greater_is_better: true
   save_total_limit: 2

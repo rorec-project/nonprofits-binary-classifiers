@@ -170,9 +170,12 @@ def finetune(
     start = perf_counter()
     transformers.set_seed(seed)
     torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.benchmark = False
     device = resolve_device(cfg.training.device)
     precision = resolve_precision(cfg.training.precision, device)
+    if encoder.precision is not None:
+        precision = encoder.precision
 
     slug = _model_slug(encoder.id)
     run_id = _run_id(slug, targets, arm, train_fraction, seed)
@@ -222,6 +225,7 @@ def finetune(
             num_train_epochs=cfg.training.epochs,
             per_device_train_batch_size=cfg.training.batch_size,
             weight_decay=cfg.training.weight_decay,
+            max_grad_norm=cfg.training.max_grad_norm,
             save_total_limit=cfg.training.save_total_limit,
             bf16=(precision == "bf16"),
             report_to=cfg.training.report_to or "none",
@@ -355,6 +359,8 @@ def finetune_predictor(
     transformers.set_seed(seed)
     device = resolve_device(cfg.training.device)
     precision = resolve_precision(cfg.training.precision, device)
+    if encoder.precision is not None:
+        precision = encoder.precision
 
     tokenizer: Any = AutoTokenizer.from_pretrained(encoder.id)
     _assert_cls_sep_startup(tokenizer)
@@ -380,6 +386,7 @@ def finetune_predictor(
         learning_rate=cfg.training.learning_rate,
         warmup_ratio=cfg.training.warmup_fraction,
         weight_decay=cfg.training.weight_decay,
+        max_grad_norm=cfg.training.max_grad_norm,
         bf16=(precision == "bf16"),
         report_to="none",
         disable_tqdm=True,

@@ -359,6 +359,7 @@ def write_selection_report(
     """
     eligible = set(eligible_cells) if eligible_cells is not None else None
     cell_rows: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+    seen: dict[tuple[str, str, str, int], Mapping[str, Any]] = {}
     for row in rows:
         model = str(row.get("model", ""))
         if model.startswith("baseline:"):
@@ -366,6 +367,11 @@ def write_selection_report(
         key = (model, str(row.get("targets")), str(row.get("arm")))
         if eligible is not None and key not in eligible:
             continue
+        seed = int(row["seed"])
+        dedup_key = (*key, seed)
+        if dedup_key in seen:
+            continue
+        seen[dedup_key] = row
         cell_rows.setdefault(key, []).append(row)
 
     if not cell_rows:
@@ -595,9 +601,10 @@ def _run_baseline(
     eval_dfs = {"dev": dev_df, "validation": validation_df}
     start = perf_counter()
     if spec.model == "tfidf_logreg":
-        return tfidf_logreg(run_train, eval_dfs, seed=spec.seed)
+        return tfidf_logreg(cfg, run_train, eval_dfs, seed=spec.seed)
     if spec.model == "minilm_logreg":
         return minilm_logreg(
+            cfg,
             run_train,
             eval_dfs,
             seed=spec.seed,

@@ -470,6 +470,7 @@ class EncoderArm(BaseModel):
     id: str
     arm: Literal["primary", "comparison"] = "comparison"
     max_length: int = 256
+    precision: str | None = None
 
 
 class TrainingConfig(BaseModel):
@@ -526,6 +527,7 @@ class TrainingConfig(BaseModel):
     batch_size: int = 32
     epochs: int = 10
     weight_decay: float = 0.01
+    max_grad_norm: float = 1.0
     warmup_fraction: float = 0.06
     early_stopping_patience: int = 4
     metric_for_best_model: str = "pr_auc"
