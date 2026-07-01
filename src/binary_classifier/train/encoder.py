@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -214,6 +215,10 @@ def finetune(
         class_weights = _class_weights(train_df) if arm == "class_weighted" else None
         compute_loss = _build_loss_func(class_weights=class_weights)
 
+        n_gpu = max(1, torch.cuda.device_count())
+        effective_batch_size = cfg.training.batch_size * n_gpu
+        total_steps = math.ceil(len(train_df) / effective_batch_size) * cfg.training.epochs
+        warmup_steps = math.ceil(cfg.training.warmup_fraction * total_steps)
         args = TrainingArguments(
             output_dir=str(checkpoints_dir),
             eval_strategy="epoch",
@@ -221,7 +226,7 @@ def finetune(
             load_best_model_at_end=True,
             metric_for_best_model=cfg.training.metric_for_best_model,
             greater_is_better=cfg.training.greater_is_better,
-            warmup_ratio=cfg.training.warmup_fraction,
+            warmup_steps=warmup_steps,
             learning_rate=cfg.training.learning_rate,
             num_train_epochs=cfg.training.epochs,
             per_device_train_batch_size=cfg.training.batch_size,
@@ -381,12 +386,14 @@ def finetune_predictor(
     )
     runs_base = Path(run_root) if run_root is not None else registry.runs_dir
     output_dir = runs_base / "oof" / f"{_model_slug(encoder.id)}-{arm}-s{seed}"
+    total_steps = math.ceil(len(train_df) / cfg.training.batch_size) * cfg.training.epochs
+    warmup_steps = math.ceil(cfg.training.warmup_fraction * total_steps)
     args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=cfg.training.epochs,
         per_device_train_batch_size=cfg.training.batch_size,
         learning_rate=cfg.training.learning_rate,
-        warmup_ratio=cfg.training.warmup_fraction,
+        warmup_steps=warmup_steps,
         weight_decay=cfg.training.weight_decay,
         max_grad_norm=cfg.training.max_grad_norm,
         bf16=(precision == "bf16"),
