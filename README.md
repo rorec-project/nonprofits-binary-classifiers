@@ -20,18 +20,18 @@ A reproducible, config-driven binary text classifier for US nonprofit missions. 
        │ code gold_to_code.csv 0/1                 │ confirm production_slate.json
        ▼                                           ▼
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ 04 QC / Freeze│────▶│ 05 Anchor    │────▶│ 06 Train     │
-│ silver labels  │     │   sample     │     │ sweep → refit│
+│ 04 QC/ Freeze│────▶│ 05 Anchor    │────▶│ 06 Train     │
+│ silver labels│     │   sample     │     │ sweep → refit│
 └──────────────┘     └──────────────┘     └──────────────┘
        │                    │                     │
        │                    │ [HUMAN G4]          │ [HUMAN G3]
        │                    │ code anchor_to_code │ confirm test_unlock.json
        ▼                    ▼                     ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ 07 Evaluate  │────▶│ 08 Infer     │────▶│ 09 Prevalence│
-│ calibration  │     │ full corpus  │     │ PPI++ + EMQ  │
-│ frozen test  │     │ rule layer   │     │ population CI│
-└──────────────┘     └──────────────┘     └──────────────┘
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  07 Evaluate │────▶│ 08 Infer     │────▶│09 Prevalence │────▶│ 10 Visualize │
+│ calibration  │     │ full corpus  │     │ PPI++ + EMQ  │     │ figures      │
+│ frozen test  │     │ rule layer   │     │ population CI│     │              │
+└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
 ```
 
 **The core loop:** cheap AI labels ⇄ small human gold check. A few models × a few prompts label the silver pool; a human codes a tiny gold set to pick the best models and validate quality. The gold is then **locked out** of training so the model never sees the final exam. The trained classifier is run over the whole corpus, and a statistical quantification layer turns the raw predictions into a corrected population share with bootstrap confidence intervals.
@@ -121,15 +121,15 @@ uv run python scripts/run_pipeline.py --stages 05
 # data/processed/gold/selected_model.json, then create test_unlock.json (G3).
 uv run python scripts/run_pipeline.py --stages 06
 
-# Stage 07-09: evaluate → infer → prevalence.
-uv run python scripts/run_pipeline.py --stages 07,08,09
+# Stage 07-10: evaluate → infer → prevalence → visualize.
+uv run python scripts/run_pipeline.py --stages 07,08,09,10
 ```
 
 If gates are not satisfied, the pipeline exits **gracefully** with a clear message — no GPU work or API spend is wasted.
 
 ---
 
-## The 9 Stages in a nutshell
+## The 10 Stages in a nutshell
 
 Below is a one-paragraph summary of each stage. For full technical details (I/O schemas, columns, thresholds, and CLI flags), see [Appendix B: Stage-by-stage technical reference](#appendix-b-stage-by-stage-technical-reference).
 
@@ -145,11 +145,13 @@ Below is a one-paragraph summary of each stage. For full technical details (I/O 
 
 6. **Stage 06 — Train** runs a selection sweep (encoder arms × seeds) on the silver labels, then automatically refits the best configuration across **5 final seeds**. Produces `selection_report.json` and checkpoint directories. [Details → B6](#b6-stage-06)
 
-7. **Stage 07 — Evaluate** reports minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, bootstrap intervals, and calibration metrics on the **frozen test set** (G3). The acceptance gate uses `min_pr_auc`, `min_minority_f1_ci_lower`, and `max_ece`. [Details → B7](#b7-stage-07)
+7. **Stage 07 — Evaluate** reports minority-class precision/recall/F1, MCC, balanced accuracy, PR-AUC, bootstrap intervals, and calibration metrics on the **frozen test set** (G3). Produces base-rate precision diagnostics and enriches the calibrator payload with PR-curve points. The acceptance gate uses `min_pr_auc`, `min_minority_f1_ci_lower`, and `max_ece`. [Details → B7](#b7-stage-07)
 
-8. **Stage 08 — Infer** runs the selected classifier over HIGH/MEDIUM rows, routes LOW/bare-label rows through the high-precision rule layer, and persists `EIN2` + positive-class probabilities. [Details → B8](#b8-stage-08)
+8. **Stage 08 — Infer** runs the selected classifier over HIGH/MEDIUM rows, routes LOW/bare-label rows through the high-precision rule layer, and writes three binary labels (recall-first, max-F1, base-rate) plus calibrated probabilities per row. Expands deduplicated predictions back to every raw `EIN2` in `predictions_full.parquet`. [Details → B8](#b8-stage-08)
 
-9. **Stage 09 — Prevalence** estimates the population share over all nonprofits with PPI++ as the primary estimator, plus an EMQ cross-check (vendored SLD). Reports bootstrap confidence intervals and, when enabled, per-NTEE-stratum breakdowns. [Details → B9](#b9-stage-09)
+9. **Stage 09 — Prevalence** estimates the per-organization population share over all nonprofits. The LOW tier is split into classifier-routed rows (PPI) and rule-only rows (Rogan-Gladen). Reports bootstrap confidence intervals and, when enabled, per-NTEE-stratum breakdowns. [Details → B9](#b9-stage-09)
+
+10. **Stage 10 — Visualize** renders paper-quality figures from evaluation, inference, and prevalence artifacts: PR/ROC curves, confusion matrices at all three thresholds, score distributions, prevalence decomposition, rule-validation intervals, quantification sensitivity, and subgroup performance. [Details → B10](#b10-stage-10)
 
 ---
 
@@ -198,8 +200,14 @@ If any threshold is missed, the pipeline exits non-zero and prints guidance. The
 
 ### Output files
 
-- `data/processed/evaluation/test_evaluation.json` — full frozen-test metrics: PR-AUC, minority-class precision/recall/F1, MCC, balanced accuracy, bootstrap 2000-resample CIs, length-binned subgroup reports, and calibration diagnostics (Platt + temperature scaling).
-- `data/processed/prevalence/prevalence_report.json` — population prevalence estimate with PPI++ primary and EMQ cross-check, 95% bootstrap CI, and per-NTEE stratum estimates where available.
+- `data/processed/evaluation/test_evaluation.json` — full frozen-test metrics: PR-AUC, minority-class precision/recall/F1, MCC, balanced accuracy, bootstrap 2000-resample CIs, per-row test scores, confusion matrices at all three thresholds, and calibration diagnostics (Platt + temperature scaling).
+- `data/processed/evaluation/calibrator.json` — fitted calibrator parameters, thresholds, and PR-curve points.
+- `data/processed/evaluation/base_rate_precision.json` — base-rate-corrected precision diagnostics at the population prior.
+- `data/processed/predictions/predictions.parquet` — deduplicated per-text-row predictions with three binary labels and calibrated probabilities.
+- `data/processed/predictions/predictions_full.parquet` — per-organization release artifact, expanded from deduplicated predictions to every raw `EIN2`.
+- `data/processed/prevalence/prevalence_report.json` — population prevalence estimate with PPI++ primary, LOW decomposition, 95% bootstrap CI, and per-NTEE stratum estimates where available.
+- `data/processed/viz/` — PNG/SVG figures for all evaluation and prevalence diagnostics.
+- `data/processed/run_manifest.json` — reproducibility manifest: git SHA, config hash, environment lock, input row counts.
 
 ### Reading the prevalence report
 
@@ -207,12 +215,17 @@ Open `prevalence_report.json`. The top-level fields of interest are:
 
 - `hm.weighted_ppi` — the primary PPI++ estimate with design weights, plus upper/lower confidence bounds.
 - `hm.unweighted_ppi` — the unweighted PPI++ estimate for comparison.
-- `composite` — the Rogan-Gladen corrected composite over all tiers.
+- `low.sub_strata` — the LOW tier split into `low_via_classifier` (PPI estimate) and `rule` (Rogan-Gladen estimate), with raw-EIN2 counts and shares.
+- `low.sensitivity_band` — bounds on the estimate under systematic rule-layer misclassification (present when `low_tier_sensitivity: true`).
+- `composite` — the share-weighted composite over all tiers and sub-strata.
 - `cross_checks.emq` — the EMQ (Saerens 2002) sensitivity check.
 - `cross_checks.kdey` — the KDEy estimate (present if `quant` extra is installed).
-- `low.sensitivity_band` — bounds on the estimate under systematic rule-layer misclassification (present when `low_tier_sensitivity: true`).
+- `estimand_statements` — describes what each stratum targets (per-organization estimand).
+- `n.total_raw_ein2` — total raw organizations in the estimate.
+- `tier_shares` — tier shares over raw `EIN2` counts.
+- `hm.sensitivity_anchor_residual_multiplicity_weighted` — one-line sensitivity comparing multiplicity-weighted vs unweighted anchor residual.
 
-> **Important caveat — LOW-tier missions:** The silver/gold sampling frame is HIGH+MEDIUM only (`Q >= 3.0`). LOW-quality records (bare labels, fragments) are excluded from stage 01 and handled by the rule layer at inference. The prevalence report folds them back in via the anchor sample, but the LOW-tier rate is a high-precision rule estimate, not a classifier score. Any claim about the _full_ nonprofit population must include the LOW-tier sensitivity bounds, which the report provides when `prevalence.low_tier_sensitivity: true` in the config.
+> **Important caveat — LOW-tier missions:** The silver/gold sampling frame is HIGH+MEDIUM only (`Q >= 3.0`). LOW-quality records (bare labels, fragments) are excluded from stage 01 and handled by the rule layer at inference. The prevalence report folds them back in via the anchor sample, with the LOW tier decomposed into classifier-routed rows (PPI) and pure-rule rows (Rogan-Gladen). Any claim about the _full_ nonprofit population must include the LOW-tier sensitivity bounds, which the report provides when `prevalence.low_tier_sensitivity: true` in the config.
 
 ---
 
@@ -302,9 +315,9 @@ scripts/
   07_evaluate.py       # Stage 07: calibration + frozen-test acceptance gate
   08_infer.py          # Stage 08: full-corpus inference with LOW-tier rule routing
   09_prevalence.py     # Stage 09: population prevalence (PPI++ + Rogan–Gladen)
-  10_visualize.py      # Stage 10: script-only figure renderer
+  10_visualize.py      # Stage 10: figure renderer (evaluation, prevalence, inference plots)
   11_aggregation_compare.py # Stage 11: script-only aggregation comparison
-  run_pipeline.py      # Orchestrator: chains 01→09 with human gates G1–G4
+  run_pipeline.py      # Orchestrator: chains 01→10 with human gates G1–G4
 config/
   religious_missions.yaml   # First task config (entity=missions, field=LONGEST_MISSION)
 ```
@@ -371,33 +384,35 @@ Stage 06 fine-tunes encoder models on the frozen silver labels, enumerating a gr
 
 ### B7. Stage 07 — Evaluate
 
-Stage 07 loads the human-confirmed checkpoint, calibrates its raw probabilities on the anchor set, selects an operating threshold, and scores the frozen test split in a one-shot evaluation. Calibration compares Platt scaling (Platt 1999) against temperature scaling (Guo et al. 2017) through stratified K-fold cross-fitting: each method fits on K-1 folds, scores the held-out fold, and the winner is the method with the lowest mean out-of-fold Brier score, with log-loss as tiebreaker. Platt is retained as the default because its intercept can absorb prior-shift offsets from the enriched training pool; isotonic regression is excluded because it overfits at the anchor's typical size. The threshold search iterates over all unique validation probabilities and selects the highest-recall threshold whose precision meets the 0.80 floor; if no candidate achieves the floor, it falls back to the maximum-precision threshold and flags `floor_unattainable`. The rule layer applied to LOW-tier texts is separately validated on the anchor, with sensitivity and specificity reported alongside Wilson confidence intervals. The frozen-test report records minority-class precision/recall/F1, MCC, PR-AUC with bootstrap 2,000-resample CIs, length-binned subgroup analyses, and calibration diagnostics, then checks acceptance: PR-AUC ≥ 0.90, minority-F1 CI lower bound ≥ 0.70, and ECE ≤ 0.05. Failing any check blocks the pipeline but preserves the report for audit.
+Stage 07 loads the human-confirmed checkpoint, calibrates its raw probabilities on the anchor set, selects an operating threshold, and scores the frozen test split in a one-shot evaluation. Calibration compares Platt scaling (Platt 1999) against temperature scaling (Guo et al. 2017) through stratified K-fold cross-fitting: each method fits on K-1 folds, scores the held-out fold, and the winner is the method with the lowest mean out-of-fold Brier score, with log-loss as tiebreaker. Platt is retained as the default because its intercept can absorb prior-shift offsets from the enriched training pool; isotonic regression is excluded because it overfits at the anchor's typical size. The threshold search iterates over all unique validation probabilities and selects the highest-recall threshold whose precision meets the 0.80 floor; if no candidate achieves the floor, it falls back to the maximum-precision threshold and flags `floor_unattainable`. The rule layer applied to LOW-tier texts is separately validated on the anchor, with sensitivity and specificity reported alongside Wilson confidence intervals. The calibrator payload includes `pr_curve_points`, `max_f1_threshold`, and achieved precision/recall. A base-rate precision module derives a third threshold targeting a configurable precision floor at the population prior, with design-weighted and unweighted estimates and bootstrap CIs. The frozen-test report records per-row test scores, confusion matrices at all three thresholds (operating, max-F1, base-rate), PR and ROC curve points, minority-class precision/recall/F1, MCC, PR-AUC with bootstrap 2,000-resample CIs, length-binned subgroup analyses, and calibration diagnostics, then checks acceptance: PR-AUC ≥ 0.90, minority-F1 CI lower bound ≥ 0.70, and ECE ≤ 0.05. Failing any check blocks the pipeline but preserves the report for audit.
 
 - **Inputs:** frozen test split (G1 + G3), selected checkpoint, `anchor_to_code.csv` (G4).
-- **Outputs:** `data/processed/evaluation/test_evaluation.json`.
+- **Outputs:** `data/processed/evaluation/test_evaluation.json`, `data/processed/evaluation/calibrator.json`, `data/processed/evaluation/base_rate_precision.json`.
 - **Caveat:** failing acceptance checks blocks pipeline but preserves report.
 
 ### B8. Stage 08 — Infer
 
-Stage 08 runs full-corpus inference through a five-route decision matrix driven by the quality tier and the deterministic rule layer. HIGH- and MEDIUM-quality rows route directly to the classifier. LOW-quality and bare-label rows first encounter the rule layer: strong religious-lexicon hits are labeled positive (route `rule_strong_positive`), very short texts with no religious signal are labeled negative (`rule_short_negative`), and ambiguous texts either fall through to the classifier (`low_via_classifier`) or abstain (`rule_abstain`) depending on the `rule_ambiguous_to_classifier` configuration flag. The rule layer is safer for LOW-tier texts because they tend to be too short or boilerplate for reliable classifier calibration, whereas a lexicon rule with known precision bounds from anchor validation provides a verifiable floor on decision quality. The output is a parquet file with positive-class probabilities and model-version metadata for every row in the corpus.
+Stage 08 runs full-corpus inference through a five-route decision matrix driven by the quality tier and the deterministic rule layer. HIGH- and MEDIUM-quality rows route directly to the classifier. LOW-quality and bare-label rows first encounter the rule layer: strong religious-lexicon hits are labeled positive (route `rule_strong_positive`), very short texts with no religious signal are labeled negative (`rule_short_negative`), and ambiguous texts either fall through to the classifier (`low_via_classifier`) or abstain (`rule_abstain`) depending on the `rule_ambiguous_to_classifier` configuration flag. The rule layer is safer for LOW-tier texts because they tend to be too short or boilerplate for reliable classifier calibration, whereas a lexicon rule with known precision bounds from anchor validation provides a verifiable floor on decision quality. Every prediction row carries three binary labels (`pred_label` at the operating threshold, `pred_label_maxf1`, `pred_label_baserate`) plus the calibrated probability. Stale shards are cleaned up automatically on re-run. After inference, deduplicated predictions are expanded back to every raw `EIN2` via the `predictions_full.parquet` artifact, so downstream consumers get one row per organization.
 
 - **Inputs:** full corpus, selected checkpoint, rule layer configuration.
-- **Outputs:** `data/processed/predictions/predictions.parquet`.
+- **Outputs:** `data/processed/predictions/predictions.parquet` (deduplicated per-text-row), `data/processed/predictions/predictions_full.parquet` (per-organization).
 - **Key options:** `--limit`.
 
 ### B9. Stage 09 — Prevalence
 
-Stage 09 estimates population prevalence using prediction-powered inference (PPI++) as the primary method (Angelopoulos et al. 2023; arXiv:2311.01453). PPI++ constructs a debiasing term from the anchor sample's prediction errors and applies it to the full-corpus probabilities, yielding an asymptotically unbiased prevalence estimate with valid confidence intervals. The power-tuning parameter λ automatically interpolates between the unbiased but wide CI from labeled data alone (λ = 0) and the narrowest possible CI under a perfectly calibrated model (λ = 1). Design weights derived from the anchor's cell-level inclusion probabilities follow the Horvitz-Thompson estimator and are passed directly to ppi_py. A cross-check uses expectation-maximization for quantification (EMQ, vendored from Saerens 2002), which assumes the class-conditional score densities shift by a known factor between the anchor and the population — a different identifying assumption than PPI++'s correct-model-specification approach — and disagreement between the two methods serves as a diagnostic red flag for model misspecification or covariate shift. Settings default to 95% bootstrap CIs with 2,000 resamples, per-NTEE stratum reporting where n ≥ 10, and optional LOW-tier sensitivity bounds.
+Stage 09 estimates **per-organization** population prevalence over all raw `EIN2` entries. The HIGH+MEDIUM tier uses prediction-powered inference (PPI++, Angelopoulos et al. 2023; arXiv:2311.01453), which constructs a debiasing term from the anchor sample's prediction errors and applies it to the full-corpus probabilities, yielding an asymptotically unbiased prevalence estimate with valid confidence intervals. The unlabeled corpus probabilities are expanded by raw-EIN2 multiplicity so the estimand is per-organization rather than per-unique-text. The LOW tier is decomposed into two sub-strata: classifier-routed rows (`low_via_classifier`) are estimated via PPI, while pure-rule rows use Rogan-Gladen correction with rule-layer sensitivity/specificity from anchor validation. These sub-strata are recombined with raw-EIN2 tier shares into the composite estimate. Design weights derived from the anchor's cell-level inclusion probabilities follow the Horvitz-Thompson estimator. A cross-check uses expectation-maximization for quantification (EMQ, vendored from Saerens 2002). Settings default to 95% bootstrap CIs with 2,000 resamples, per-NTEE stratum reporting where n ≥ 10, and optional LOW-tier sensitivity bands.
 
-- **Inputs:** predictions, anchor sample labels (G4), design weights.
+- **Inputs:** predictions (deduplicated or per-organization), anchor sample labels (G4), design weights.
 - **Outputs:** `data/processed/prevalence/prevalence_report.json`.
+- **Caveat:** when `predictions_full.parquet` is available, tier shares and multiplicity weights are computed from raw `EIN2` counts rather than deduplicated text rows.
 
-### B10. Stage 10 — Visualization (script-only, not orchestrated)
+### B10. Stage 10 — Visualization
 
-Stage 10 is a script-only figure renderer that produces PNG and SVG visualizations under the output directory. It skips missing inputs gracefully rather than failing. Signed n-gram log-odds bars replace word clouds because they are reproducible, statistically interpretable, and avoid introducing a new word-cloud dependency. The module runs independently of the main pipeline, rendering plots for whichever upstream stage produced the latest artifacts.
+Stage 10 renders paper-quality figures from the evaluation, inference, and prevalence artifacts. It produces PR and ROC curves with operating-point annotations, confusion matrices at all three thresholds, calibrated-score distributions by tier with threshold bands, a prevalence decomposition waterfall, rule-validation Wilson-interval plots, quantification-sensitivity comparisons, and subgroup-performance dot plots. All figures use paper-width sizing via `viz.style` and are emitted as PNG, SVG, and PDF simultaneously. The module is wired into the pipeline orchestrator and runs after stage 09, but also runs standalone via its script.
 
-- **Outputs:** PNG and SVG figures under `data/processed/viz/`.
-- **Caveat:** script-only; skips missing inputs gracefully.
+- **Inputs:** evaluation, inference, and prevalence artifacts.
+- **Outputs:** PNG, SVG, and PDF figures under `data/processed/viz/`.
+- **Caveat:** skips missing inputs gracefully rather than failing.
 
 ### B11. Stage 11 — Aggregation diagnostics (script-only, not orchestrated)
 
