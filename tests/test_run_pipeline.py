@@ -116,6 +116,12 @@ def test_stage_05_module_import_resolves() -> None:
     assert callable(getattr(module, func_name))
 
 
+def test_stage_10_module_loader_resolves() -> None:
+    module_name, func_name = rp._STAGE_MODULES["10"]
+    module = rp._load_stage_10_module(module_name)
+    assert callable(getattr(module, func_name))
+
+
 def test_stage_05_runs_with_force(tiny_config, tiny_registry, monkeypatch) -> None:
     calls: list[tuple[str, bool | None]] = []
     monkeypatch.setattr(

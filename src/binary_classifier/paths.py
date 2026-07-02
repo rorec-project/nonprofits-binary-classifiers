@@ -293,6 +293,11 @@ class PathRegistry:
         return self.processed_dir / "figures"
 
     @property
+    def run_manifest(self) -> Path:
+        """Reproducibility manifest for the current local run."""
+        return self.processed_dir / "run_manifest.json"
+
+    @property
     def aggregation_compare(self) -> Path:
         """Aggregation-comparison diagnostics artifact."""
         return self.interim_dir / "aggregation_compare.json"

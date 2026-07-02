@@ -239,6 +239,8 @@ Hyperparameters for the LLM-as-primary labeler that runs across the full silver 
 
 **Note:** Resume is keyed by `(EIN2, source_id)` rather than row count, ensuring idempotency across interrupted runs (addresses legacy audit issue R-08).
 
+**Opt-in canary drift audit:** `uv run python scripts/03_annotate.py --canary --config <config>` re-annotates the monitor slice and writes `data/interim/canary_drift_audit.jsonl`. This is intentionally outside the default `run_pipeline.py` chain; run it only when checking annotation drift against prior monitor outputs.
+
 **Pydantic class:** `AnnotationConfig` (line 354 of `config.py`)
 
 ---

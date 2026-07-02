@@ -21,6 +21,7 @@ non-zero exit, no wasted GPU/API work):
 
 import argparse
 import importlib
+import importlib.util
 import logging
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ from binary_classifier.config import load_config
 from binary_classifier.log_utils import setup_logging
 from binary_classifier.paths import PathRegistry
 from binary_classifier.qc.preflight import validate_gates
+from binary_classifier.repro.manifest import write_run_manifest
 
 # ── Stage registry ───────────────────────────────────────────────────────────
 
@@ -42,6 +44,7 @@ _STAGE_MODULES = {
     "07": ("binary_classifier.evaluation.evaluate", "run_evaluation"),
     "08": ("binary_classifier.inference.predict", "run_inference"),
     "09": ("binary_classifier.prevalence.estimate", "run_prevalence"),
+    "10": ("scripts/10_visualize.py", "run_visualization"),
 }
 
 # Graceful gate-failure exit code (distinct from CLI misuse, which is 1).
@@ -55,7 +58,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full pipeline "
         "(01 sample → 02 bake-off → 03 annotate → 04 QC → 05 anchor → "
-        "06 train → 07 evaluate → 08 infer → 09 prevalence) "
+        "06 train → 07 evaluate → 08 infer → 09 prevalence → 10 visualize) "
         "with human gates.",
     )
     parser.add_argument(
@@ -103,7 +106,10 @@ def _run_stage(
 ) -> None:
     """Import and execute a single stage."""
     module_name, func_name = _STAGE_MODULES[stage_id]
-    module = importlib.import_module(module_name)
+    if stage_id == "10":
+        module = _load_stage_10_module(module_name)
+    else:
+        module = importlib.import_module(module_name)
     func = getattr(module, func_name)
 
     if stage_id in {"01", "05"}:
@@ -114,6 +120,18 @@ def _run_stage(
         func(cfg, registry, limit=infer_limit)
     else:
         func(cfg, registry)
+
+
+def _load_stage_10_module(script_path: str):
+    """Load the numeric stage-10 script without relocating its thin CLI."""
+    path = Path(__file__).resolve().parents[1] / script_path
+    spec = importlib.util.spec_from_file_location("stage10_visualize", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load stage 10 module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_stage_06(cfg, registry) -> None:
@@ -261,6 +279,14 @@ def run_pipeline(
     if "09" in requested:
         logging.info("Running stage 09 ...")
         _run_stage("09", cfg, registry, annotate_limit, infer_limit, force)
+
+    if "10" in requested:
+        logging.info("Running stage 10 ...")
+        _run_stage("10", cfg, registry, annotate_limit, infer_limit, force)
+
+    manifest = write_run_manifest(cfg, registry)
+    logging.info("Wrote run manifest to %s", registry.run_manifest)
+    logging.debug("Run manifest keys: %s", sorted(manifest))
 
 
 # ── Main entrypoint ───────────────────────────────────────────────────────────
