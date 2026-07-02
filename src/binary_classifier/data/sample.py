@@ -490,7 +490,16 @@ def validate_label_set_disjointness(
 
 
 def validate_label_set_disjointness_from_registry(registry: "PathRegistry") -> int:
-    """Check persisted manifests and return the number of human EIN2s checked."""
+    """Check that silver is disjoint from gold/anchor and return the number of
+    human EIN2s checked.
+
+    The silver source is ``silver_labels.csv`` when it exists (stage 04's
+    post-guard artifact, already cleaned via
+    :func:`~binary_classifier.qc.agreement._exclude_gold_manifest_ein2s`),
+    falling back to the raw ``silver_manifest.csv`` for pre-stage-04 checks.
+    The gold/anchor sources are always the manifests, which are the definitive
+    record of human-labeled EIN2s.
+    """
     if not registry.silver_manifest.exists() or not registry.gold_manifest.exists():
         missing = [
             str(path)
@@ -500,7 +509,19 @@ def validate_label_set_disjointness_from_registry(registry: "PathRegistry") -> i
         raise FileNotFoundError(
             "Cannot check label-set disjointness; missing " + ", ".join(missing),
         )
-    silver = pd.read_csv(registry.silver_manifest)
+
+    silver_source = (
+        registry.silver_labels
+        if registry.silver_labels.exists()
+        else registry.silver_manifest
+    )
+    silver = pd.read_csv(silver_source)
+    logger.info(
+        "Checking disjointness from %s (%d silver rows)",
+        silver_source.name,
+        len(silver),
+    )
+
     gold = pd.read_csv(registry.gold_manifest)
     anchor = (
         pd.read_csv(registry.anchor_manifest)
