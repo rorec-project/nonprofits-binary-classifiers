@@ -22,13 +22,13 @@ from the within-stratum estimates.
 
 References
 ----------
-
 * Rogan, W. J., & Gladen, B. (1978). Estimating prevalence from the results of
   a screening test. *American Journal of Epidemiology*, 107(1), 71--76.
   https://doi.org/10.1093/oxfordjournals.aje.a112510
 * Forman, G. (2008). Quantifying Counts and Costs via Classification.
   *Data Mining and Knowledge Discovery*, 17(2), 221--252.
   https://doi.org/10.1007/s10618-008-0097-y
+
 """
 
 from __future__ import annotations

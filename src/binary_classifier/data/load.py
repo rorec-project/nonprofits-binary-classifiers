@@ -74,6 +74,7 @@ def load_missions(
     Raises:
         FileNotFoundError: If an upstream parquet is missing and
             ``data.allow_synthetic`` is ``False``.
+
     """
     paths = cfg.paths
     raw_dir = Path(paths.raw_dir).resolve()
@@ -169,6 +170,7 @@ def _generate_synthetic_parquets(
     Returns:
         Tuple of (missions_parquet_path, bmf_parquet_path). Both files live
         in a temporary directory registered for cleanup at process exit.
+
     """
     rng = np.random.default_rng(seed=cfg.SEED)
     n = 1_000

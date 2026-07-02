@@ -1,26 +1,17 @@
 """Threshold selection for binary classification decisions.
 
 This module selects operating thresholds from validation probabilities,
-supporting precision-floor and max-F1 policies.  Threshold selection is
+supporting precision-floor and max-F1 policies. Threshold selection is
 performed after calibration and before final evaluation, ensuring the
 deployed threshold satisfies the project's precision requirements.
 
-Data provenance
-    Thresholds are derived from validation-set probabilities (calibrated) and
-    human labels, then applied to the held-out test set.
-
-Methodology
-    Candidate thresholds are the unique observed probabilities.  Under the
-    precision-floor policy, the selector takes the highest-recall threshold
-    whose precision meets the floor; if no candidate meets the floor, it falls
-    back to the maximum-precision threshold.  This framing follows Forman
-    (2008), who treats threshold choice as an explicit cost/trade-off decision.
-
-Key citations
-    * Forman (2008) — Quantifying counts and costs via classification.
-
-DOI
-    * Forman (2008): https://doi.org/10.1007/s10618-008-0097-y
+Thresholds are derived from validation-set probabilities (calibrated) and
+human labels, then applied to the held-out test set. Candidate thresholds
+are the unique observed probabilities. Under the precision-floor policy,
+the selector takes the highest-recall threshold whose precision meets the
+floor; if no candidate meets the floor, it falls back to the
+maximum-precision threshold. This framing follows Forman (2008,
+https://doi.org/10.1007/s10618-008-0097-y).
 """
 
 from collections.abc import Sequence
@@ -74,6 +65,7 @@ def pick_threshold(
     Raises:
         ValueError: If inputs are empty, misaligned, non-binary, non-finite, or
             if ``policy``/``precision_floor`` are invalid.
+
     """
     probs_arr, labels_arr = _validate_inputs(probs, labels)
     if policy not in {"precision_floor", "max_f1"}:
@@ -147,7 +139,7 @@ def _pr_curve_points(
                 "precision": precision,
                 "recall": recall,
                 "f1": f1,
-            }
+            },
         )
     return points
 

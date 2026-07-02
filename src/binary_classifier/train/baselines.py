@@ -336,7 +336,9 @@ def _load_or_compute_embeddings(
     if cached is not None:
         logger.info("Loaded cached embeddings from %s", embedding_path)
         return EmbeddingResult(
-            embeddings=cached, device=_resolve_device(device), precision="fp32"
+            embeddings=cached,
+            device=_resolve_device(device),
+            precision="fp32",
         )
 
     logger.info("Computing embeddings for %d EIN2s", len(requested_ein2s))

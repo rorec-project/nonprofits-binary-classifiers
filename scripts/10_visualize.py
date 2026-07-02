@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib
 
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # must be called before importing matplotlib.pyplot
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -29,8 +29,8 @@ from binary_classifier.viz import (
     ngram_log_odds,
     prevalence_decomposition,
     prevalence_forest,
-    quantification_sensitivity,
     production_annotation_summary,
+    quantification_sensitivity,
     reliability_diagram,
     rule_validation_intervals,
     score_distribution_by_tier_label,
@@ -180,7 +180,9 @@ def _maybe_render_production_summary(
             )
         except (OSError, ValueError) as exc:
             logger.warning(
-                "Skipping production annotation summary from %s: %s", path, exc
+                "Skipping production annotation summary from %s: %s",
+                path,
+                exc,
             )
             continue
         return True
@@ -303,7 +305,8 @@ def _maybe_render_frozen_test_confusion_matrices(
     path = registry.test_evaluation
     if not path.exists():
         logger.warning(
-            "Skipping frozen-test confusion matrices; missing input: %s", path
+            "Skipping frozen-test confusion matrices; missing input: %s",
+            path,
         )
         return False
     try:
@@ -319,7 +322,8 @@ def _maybe_render_frozen_test_confusion_matrices(
             registry,
             "frozen_test_confusion_matrices",
             lambda ax, payload=payload_mapping: frozen_test_confusion_matrices(
-                payload, ax
+                payload,
+                ax,
             ),
             figsize=figure_size(width=PAGE_WIDTH, height=3.0),
         )

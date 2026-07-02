@@ -59,7 +59,6 @@ from binary_classifier.evaluation.calibration import (
 from binary_classifier.evaluation.base_rate import base_rate_report
 from binary_classifier.evaluation.subgroups import subgroup_report
 from binary_classifier.evaluation.thresholds import pick_threshold
-from binary_classifier.inference.router import route
 from binary_classifier.qc.preflight import (
     _validate_anchor_labels,
     _validate_test_unlock,
@@ -83,8 +82,8 @@ _ANCHOR_SCORE_COLUMNS = [
 
 
 def run_evaluation(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     predictor: Any | None = None,
 ) -> None:
@@ -133,7 +132,8 @@ def run_evaluation(
     missions = load_missions(cfg)
     anchor = _load_anchor_frame(registry, missions)
     raw_anchor = _predict_positive_probabilities(
-        scorer, anchor["mission_text"].tolist()
+        scorer,
+        anchor["mission_text"].tolist(),
     )
     labels_anchor = anchor["human_label"].astype(int).tolist()
 
@@ -173,6 +173,7 @@ def run_evaluation(
         pd.read_parquet(registry.anchor_oof_scores),
         operating_threshold=float(calibrator_payload["threshold"]),
         max_f1_threshold=float(calibrator_payload["max_f1_threshold"]),
+        operating_pr_curve_points=calibrator_payload["pr_curve_points"],
         target=float(cfg.evaluation.base_rate_precision_target),
         population_base_rate=cfg.evaluation.population_base_rate,
         seed=int(cfg.SEED),
@@ -242,14 +243,14 @@ def run_evaluation(
         raise RuntimeError(_acceptance_failure_message(verdict))
 
 
-def _load_and_verify_selected_model(registry: "PathRegistry") -> dict[str, Any]:
+def _load_and_verify_selected_model(registry: PathRegistry) -> dict[str, Any]:
     """Load ``selected_model.json`` and verify its checkpoint SHA-256."""
     path = registry.selected_model
     if not path.exists():
         raise RuntimeError(
             f"Selected model artifact not found at {path}. Run stage 06, copy the "
             "selected_model_skeleton to selected_model.json after human review, "
-            "then re-run stage 07."
+            "then re-run stage 07.",
         )
     raw = json.loads(path.read_text())
     if not isinstance(raw, dict):
@@ -260,21 +261,21 @@ def _load_and_verify_selected_model(registry: "PathRegistry") -> dict[str, Any]:
     if not relpath or not expected_sha or expected_sha.startswith("TODO_"):
         raise RuntimeError(
             f"{path} must contain reviewed checkpoint_relpath and "
-            "checkpoint_sha256 values from a completed final stage-06 run."
+            "checkpoint_sha256 values from a completed final stage-06 run.",
         )
     checkpoint_path = _checkpoint_path(registry.models_dir, relpath)
     if not checkpoint_path.exists():
         raise RuntimeError(
             f"Selected checkpoint file not found at {checkpoint_path}. Restore the "
             "checkpoint under models_dir or update selected_model.json after "
-            "human review."
+            "human review.",
         )
     actual_sha = _sha256_file(checkpoint_path)
     if actual_sha != expected_sha:
         raise RuntimeError(
             f"Selected checkpoint SHA-256 mismatch for {checkpoint_path}: expected "
             f"{expected_sha}, got {actual_sha}. Recreate selected_model.json from "
-            "the reviewed stage-06 artifact before unlocking test evaluation."
+            "the reviewed stage-06 artifact before unlocking test evaluation.",
         )
     selected["checkpoint_path"] = str(checkpoint_path)
     return selected
@@ -307,7 +308,7 @@ def _load_checkpoint_predictor(selected: Mapping[str, Any]) -> Any:
         raise RuntimeError(
             "Default stage-07 predictor loading requires torch and transformers. "
             "Install runtime dependencies or pass an injected predictor with "
-            "predict_proba(texts)."
+            "predict_proba(texts).",
         ) from exc
 
     tokenizer: Any = AutoTokenizer.from_pretrained(tokenizer_id)
@@ -336,15 +337,13 @@ def _raise_gate_problems(name: str, problems: Sequence[str]) -> None:
         raise RuntimeError(f"{name} gate failed before stage 07 work:\n{joined}")
 
 
-def _load_anchor_frame(
-    registry: "PathRegistry", missions: pd.DataFrame
-) -> pd.DataFrame:
+def _load_anchor_frame(registry: PathRegistry, missions: pd.DataFrame) -> pd.DataFrame:
     anchor = pd.read_csv(registry.anchor_coding_template)
     required = {"EIN2", "tier", "human_label"}
     missing = required - set(anchor.columns)
     if missing:
         raise ValueError(
-            f"{registry.anchor_coding_template} missing columns {sorted(missing)}."
+            f"{registry.anchor_coding_template} missing columns {sorted(missing)}.",
         )
     anchor = anchor[["EIN2", "tier", "human_label"]].copy()
     anchor["EIN2"] = _normalize_ein2(anchor["EIN2"])
@@ -372,7 +371,7 @@ def _load_anchor_frame(
     if missing_text.any():
         raise ValueError(
             "Could not join source mission text for "
-            f"{int(missing_text.sum())} anchor EIN2(s)."
+            f"{int(missing_text.sum())} anchor EIN2(s).",
         )
     return anchor.reset_index(drop=True)
 
@@ -396,7 +395,7 @@ def _predict_positive_probabilities(predictor: Any, texts: Sequence[str]) -> np.
         raise ValueError("predict_proba must return shape (n,) or (n, 2).")
     if len(p1) != len(texts):
         raise ValueError(
-            f"predict_proba returned {len(p1)} rows for {len(texts)} input texts."
+            f"predict_proba returned {len(p1)} rows for {len(texts)} input texts.",
         )
     if not np.isfinite(p1).all() or ((p1 < 0.0) | (p1 > 1.0)).any():
         raise ValueError("predict_proba probabilities must be finite in [0, 1].")
@@ -404,13 +403,15 @@ def _predict_positive_probabilities(predictor: Any, texts: Sequence[str]) -> np.
 
 
 def _write_anchor_oof_scores(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     anchor: pd.DataFrame,
     raw_probs: np.ndarray,
     calibrated_probs: Sequence[float],
 ) -> None:
+    from binary_classifier.inference.router import route
+
     scores = pd.DataFrame(
         {
             "EIN2": anchor["EIN2"].astype(str),
@@ -436,11 +437,11 @@ def _write_anchor_oof_scores(
 
 
 def _calibrator_payload(
-    registry: "PathRegistry",
+    registry: PathRegistry,
     *,
     calibration_report: Mapping[str, Any],
     threshold_report: Mapping[str, Any],
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
 ) -> dict[str, Any]:
     deployed = cast(Mapping[str, Any], calibration_report["deployed"])
     return {
@@ -529,7 +530,7 @@ def _wilson_ci(
 
 
 def _read_frozen_test_labels(
-    registry: "PathRegistry",
+    registry: PathRegistry,
     missions: pd.DataFrame,
 ) -> pd.DataFrame:
     """Read the frozen test split; this is the only stage-07 test reader."""
@@ -566,8 +567,8 @@ def _read_frozen_test_labels(
 # population-prevalence estimate (PPI++), not a clinical treat-vs-abstain
 # decision.
 def _test_report(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     selected: Mapping[str, Any],
     metric_bundle: Mapping[str, Any],
@@ -684,7 +685,7 @@ def _sklearn_pr_curve_points(
     for idx, (p, r) in enumerate(zip(precision, recall, strict=True)):
         threshold = None if idx >= len(thresholds) else float(thresholds[idx])
         points.append(
-            {"threshold": threshold, "precision": float(p), "recall": float(r)}
+            {"threshold": threshold, "precision": float(p), "recall": float(r)},
         )
     return points
 
@@ -704,7 +705,7 @@ def _sklearn_roc_curve_points(
 # reserved for future calibration work; the research deliverable is a
 # calibrated prevalence estimate, so ECE is the primary diagnostic.
 def _acceptance_verdict(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     metric_bundle: Mapping[str, Any],
     anchor_calibration: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -751,7 +752,7 @@ def _acceptance_failure_message(verdict: Mapping[str, Any]) -> str:
     )
 
 
-def _config_hash(cfg: "BinaryClassifierConfig") -> str:
+def _config_hash(cfg: BinaryClassifierConfig) -> str:
     payload = json.dumps(cfg.model_dump(mode="json"), sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()
 

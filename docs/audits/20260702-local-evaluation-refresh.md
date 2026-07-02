@@ -143,6 +143,16 @@ Wave 4/Wave 5 documentation should now treat the following as the current figure
 
 **Pending §7 finalization.** The shared real `test_evaluation.json` still lacks `test_scores`, so this report does **not** publish real frozen-test PR/ROC points yet. Smoke renders them; the real versions are finalized only after the controlled UCloud rerun.
 
+| Metric | Operating (0.0577) | Max-F1 (0.608) | Base-rate (§1.5) |
+|--------|-------------------|-----------------|-------------------|
+| Precision | TBD (§7) | TBD (§7) | TBD (§7) |
+| Recall | TBD (§7) | TBD (§7) | TBD (§7) |
+| F1 | TBD (§7) | TBD (§7) | TBD (§7) |
+
+| Curve | PR-AUC | ROC-AUC |
+|-------|--------|---------|
+| Frozen test | TBD (§7) | TBD (§7) |
+
 ### Multi-threshold frozen-test confusion matrices
 
 **Pending §7 finalization.** The report therefore does **not** publish real frozen-test confusion matrices for:

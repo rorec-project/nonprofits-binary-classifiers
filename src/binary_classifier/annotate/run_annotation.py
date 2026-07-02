@@ -93,6 +93,7 @@ def load_canary_ein2s(registry: "PathRegistry") -> set[str]:
         FileNotFoundError: If stage 01 has not produced the monitor manifest.
         ValueError: If the manifest does not expose the required ``EIN2``
             column.
+
     """
     path = registry.monitor_manifest
     if not path.exists():
@@ -307,7 +308,7 @@ def run_annotation(
     if limit:
         annotation_manifest = annotation_manifest.head(limit)
     use_openai_batch = bool(
-        cfg.annotation.openai_batch and limit is None and not canary_only
+        cfg.annotation.openai_batch and limit is None and not canary_only,
     )
     if cfg.annotation.openai_batch and not use_openai_batch:
         logger.info("OpenAI batch mode disabled for limited/canary annotation run")
@@ -385,7 +386,8 @@ def run_annotation_matrix(
     if not resume and store_path.exists():
         store_path.unlink()
         logger.info(
-            "Start-from-scratch: removed existing annotation store %s", store_path
+            "Start-from-scratch: removed existing annotation store %s",
+            store_path,
         )
 
     store = AnnotationStore(
@@ -691,7 +693,8 @@ def _run_openai_batch_group(
     for custom_id in sorted(set(custom_to_ein2) - seen_custom_ids):
         records.append(
             annotator._error_record(
-                custom_to_ein2[custom_id], "missing_batch_response"
+                custom_to_ein2[custom_id],
+                "missing_batch_response",
             ),
         )
     return records
@@ -754,7 +757,7 @@ def _submit_and_download_openai_batch(
     if not output_file_id and not error_file_id:
         raise RuntimeError(
             f"OpenAI batch {batch.id} ended with status={batch.status} but no "
-            "output_file_id or error_file_id"
+            "output_file_id or error_file_id",
         )
 
 
@@ -858,7 +861,7 @@ def _update_batch_metadata_status(metadata_path: Path, batch: Any) -> None:
             "output_file_id": getattr(batch, "output_file_id", None),
             "error_file_id": getattr(batch, "error_file_id", None),
             "updated_at": datetime.now(UTC).isoformat(),
-        }
+        },
     )
     _write_batch_metadata(metadata_path, metadata)
 

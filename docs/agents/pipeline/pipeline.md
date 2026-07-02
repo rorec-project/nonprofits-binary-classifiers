@@ -10,7 +10,7 @@ Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate
 
 1. **01 build_sample** — sample a silver pool + a small gold set; write seeded `EIN2` manifests.
 2. **02 bakeoff_prompts** — model × prompt bake-off on prompt-dev; pick the model slate + prompts.
-3. **03 annotate** — full matrix labeling into a resumable long/tidy store.
+3. **03 annotate** — full matrix labeling into a resumable long/tidy store. `--canary` flag produces a drift-audit report at `data/interim/canary_drift_audit.jsonl` for monitoring annotator behaviour over time; excluded from the default 01-09 chain.
 4. **04 quality_check** — freeze majority-vote silver labels after the LLM-vs-human agreement gate.
 5. **05 build_anchor** — full-frame anchor sample (incl. LOW) with design weights for prevalence.
 6. **06 train** — baselines + DeBERTa/ModernBERT sweep, model selection, final-seed refit.

@@ -290,7 +290,7 @@ def _validated_training_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if work["EIN2"].duplicated().any():
         duplicates = int(work["EIN2"].duplicated().sum())
         raise ValueError(
-            f"training frame contains duplicate EIN2 values: {duplicates}."
+            f"training frame contains duplicate EIN2 values: {duplicates}.",
         )
 
     p_pos = pd.to_numeric(work["p_pos"], errors="coerce")
@@ -330,7 +330,7 @@ def _aligned_oof_probs(train_df: pd.DataFrame, oof_probs: pd.DataFrame) -> pd.Da
     if oof["EIN2"].duplicated().any():
         duplicates = int(oof["EIN2"].duplicated().sum())
         raise ValueError(
-            f"OOF probabilities contain duplicate EIN2 values: {duplicates}."
+            f"OOF probabilities contain duplicate EIN2 values: {duplicates}.",
         )
 
     expected = train_df["EIN2"].astype(str).str.strip()

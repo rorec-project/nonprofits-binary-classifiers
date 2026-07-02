@@ -22,6 +22,7 @@ References:
     - Zhu et al. (2022), "Is BERT Robust to Label Noise? A Study on Learning
       with Noisy Labels in Text Classification", Insights.
       https://doi.org/10.18653/v1/2022.insights-1.8
+
 """
 
 from __future__ import annotations
@@ -614,7 +615,7 @@ def _run_baseline(
             batch_size=cfg.training.batch_size,
         )
     raise ValueError(
-        f"Unknown baseline {spec.model!r} after {perf_counter() - start:.3f}s"
+        f"Unknown baseline {spec.model!r} after {perf_counter() - start:.3f}s",
     )
 
 
@@ -636,7 +637,9 @@ def _run_encoder(
     )
     if spec.arm in {"hard", "pruned", "class_weighted"}:
         run_train, loss_spec = run_arm(
-            cast(ArmName, spec.arm), run_train, oof_probs=oof_probs
+            cast(ArmName, spec.arm),
+            run_train,
+            oof_probs=oof_probs,
         )
         targets = loss_spec.targets
         arm = loss_spec.arm
@@ -822,10 +825,10 @@ def _recommend_cell(
         "targets": str(incumbent["targets"]),
         "arm": str(incumbent["arm"]),
         "validation_pr_auc_mean": float(
-            _nested(incumbent, "validation_pr_auc", "mean")
+            _nested(incumbent, "validation_pr_auc", "mean"),
         ),
         "validation_minority_f1_mean": float(
-            _nested(incumbent, "validation_minority_f1", "mean")
+            _nested(incumbent, "validation_minority_f1", "mean"),
         ),
         "representative_seed": int(incumbent["representative_seed"]),
     }
@@ -833,7 +836,8 @@ def _recommend_cell(
 
 
 def _tie_rule_pair(
-    incumbent: Mapping[str, Any], challenger: Mapping[str, Any]
+    incumbent: Mapping[str, Any],
+    challenger: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], dict[str, Any]]:
     inc_mean = float(_nested(incumbent, "validation_pr_auc", "mean"))
     ch_mean = float(_nested(challenger, "validation_pr_auc", "mean"))
@@ -866,7 +870,8 @@ def _tie_rule_pair(
 
 
 def _simpler_cell(
-    left: Mapping[str, Any], right: Mapping[str, Any]
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     left_rank = _complexity_rank(left)
     right_rank = _complexity_rank(right)

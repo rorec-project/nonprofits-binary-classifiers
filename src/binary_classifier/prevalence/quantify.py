@@ -28,7 +28,6 @@ estimates.
 
 References
 ----------
-
 * Saerens, M., Latinne, P., & Decaestecker, C. (2002). Adjusting the Outputs of
   a Classifier to New a Priori Probabilities: A Simple Procedure.
   *Neural Computation*, 14(1), 21--41.
@@ -48,6 +47,7 @@ References
   http://nmis.isti.cnr.it/sebastiani/Publications/DMKD2024a.pdf
 * Moreo, A., Esuli, A., & Sebastiani, F. (2021). QuaPy: A Python-based open
   source framework for quantification. *ACM SIGIR*.
+
 """
 
 import importlib
@@ -176,7 +176,7 @@ def kdey_prevalence(
     kdey_cls = getattr(aggregative, "KDEyML", None)
     if kdey_cls is None:
         raise ImportError(
-            "QuaPy KDEy prevalence requires quapy.method.aggregative.KDEyML"
+            "QuaPy KDEy prevalence requires quapy.method.aggregative.KDEyML",
         )
 
     try:
@@ -207,6 +207,7 @@ class _PosteriorShim(BaseEstimator):
         Args:
             posteriors: Array of shape (n_samples, n_classes) with posterior
                 probabilities.
+
         """
         self.posteriors = posteriors
         self.classes_ = np.array([0, 1], dtype=np.int64)
@@ -228,6 +229,7 @@ class _PosteriorShim(BaseEstimator):
 
         Raises:
             ValueError: If the number of rows does not match.
+
         """
         if len(x) != len(self.posteriors):
             raise ValueError("posterior shim received an unexpected number of rows")
@@ -446,5 +448,5 @@ def _import_quapy_aggregative() -> Any:
         return importlib.import_module("quapy.method.aggregative")
     except Exception as exc:  # pragma: no cover - depends on optional install state.
         raise ImportError(
-            "QuaPy prevalence cross-checks require optional dependency quapy"
+            "QuaPy prevalence cross-checks require optional dependency quapy",
         ) from exc

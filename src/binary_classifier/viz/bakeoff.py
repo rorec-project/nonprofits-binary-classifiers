@@ -28,7 +28,7 @@ _THRESHOLD = 0.70
 _HIGH_ABSTAIN_RATE = 0.25
 
 
-def bakeoff_summary(results: object, ax: "Axes") -> None:
+def bakeoff_summary(results: object, ax: Axes) -> None:
     """Plot bake-off minority-F1 intervals and Cohen's kappa by model arm.
 
     Args:
@@ -126,7 +126,7 @@ def bakeoff_summary(results: object, ax: "Axes") -> None:
     logger.info("Rendered bake-off summary for %d arms", len(frame))
 
 
-def production_annotation_summary(df: pd.DataFrame, ax: "Axes") -> None:
+def production_annotation_summary(df: pd.DataFrame, ax: Axes) -> None:
     """Plot production annotation abstain and agreement diagnostics.
 
     Args:
@@ -141,7 +141,9 @@ def production_annotation_summary(df: pd.DataFrame, ax: "Axes") -> None:
 
     """
     _require_frame_columns(
-        df, {"EIN2", "source_id", "label"}, "production_annotation_summary"
+        df,
+        {"EIN2", "source_id", "label"},
+        "production_annotation_summary",
     )
 
     source_column = _production_source_column(df)
@@ -154,7 +156,7 @@ def production_annotation_summary(df: pd.DataFrame, ax: "Axes") -> None:
     )
     if matrix.empty:
         raise ValueError(
-            "production_annotation_summary has no model-task labels to plot."
+            "production_annotation_summary has no model-task labels to plot.",
         )
 
     abstain_rate = matrix.isna().mean(axis=0).sort_values(ascending=True)
@@ -245,7 +247,7 @@ def production_annotation_summary(df: pd.DataFrame, ax: "Axes") -> None:
     )
 
 
-def canary_drift(rows: object, ax: "Axes") -> None:
+def canary_drift(rows: object, ax: Axes) -> None:
     """Plot canary κ/α comparisons against the monitor baseline over runs.
 
     Args:
@@ -326,7 +328,7 @@ def _as_mapping_rows(data: object, plot_name: str) -> list[Mapping[str, Any]]:
         maybe_rows = data.get("results") or data.get("rows")
         if maybe_rows is None:
             raise ValueError(
-                f"{plot_name} expected a sequence of mappings, got a mapping."
+                f"{plot_name} expected a sequence of mappings, got a mapping.",
             )
         data = maybe_rows
     if not isinstance(data, Sequence) or isinstance(data, (str, bytes)):
@@ -346,7 +348,9 @@ def _as_mapping_rows(data: object, plot_name: str) -> list[Mapping[str, Any]]:
 
 
 def _require_frame_columns(
-    df: pd.DataFrame, required: set[str], plot_name: str
+    df: pd.DataFrame,
+    required: set[str],
+    plot_name: str,
 ) -> None:
     missing = sorted(required - set(df.columns))
     if missing:
@@ -376,7 +380,8 @@ def _bakeoff_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "prompt_id": str(_required_value(row, "prompt_id", "bakeoff_summary")),
         "source_id": str(_required_value(row, "source_id", "bakeoff_summary")),
         "f1": _finite_float(
-            _required_value(scores, "f1", "bakeoff_summary"), "scores.f1"
+            _required_value(scores, "f1", "bakeoff_summary"),
+            "scores.f1",
         ),
         "f1_ci_lower": _finite_float(
             _required_value(minority_f1, "lower", "bakeoff_summary"),

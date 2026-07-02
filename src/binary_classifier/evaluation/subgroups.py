@@ -70,6 +70,7 @@ def subgroup_report(
         ValueError: If inputs are misaligned, invalid, or length bins are not
             strictly increasing.
         KeyError: If a requested grouping column is missing.
+
     """
     y_true_arr, y_pred_arr = _validate_aligned(df, y_true, y_pred, y_prob)
     if min_n < 1:
@@ -93,7 +94,7 @@ def subgroup_report(
                 y_true_arr,
                 y_pred_arr,
                 min_n,
-            )
+            ),
         )
 
     return rows

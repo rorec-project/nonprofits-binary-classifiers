@@ -472,6 +472,7 @@ def serialize_calibrator(method: CalibrationMethod, params: Mapping[str, float])
 
     Returns:
         Stable JSON string containing ``method`` and ``params``.
+
     """
     payload = _calibrator_payload(method, params)
     return json.dumps(payload, sort_keys=True)
@@ -490,6 +491,7 @@ def deserialize_calibrator(
 
     Raises:
         ValueError: If the payload has an invalid schema.
+
     """
     try:
         raw = json.loads(payload)

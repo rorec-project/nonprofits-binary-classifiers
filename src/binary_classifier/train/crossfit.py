@@ -232,7 +232,8 @@ def _extract_predictor(result: Any) -> Any:
 
 
 def _predict_fold_probs(
-    predictor: Any, eval_df: pd.DataFrame
+    predictor: Any,
+    eval_df: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return validated ``(p0, p1)`` arrays from a predictor."""
     if hasattr(predictor, "predict_proba"):

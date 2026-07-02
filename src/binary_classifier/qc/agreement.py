@@ -26,6 +26,7 @@ References:
     distribution of classes in the data). It should be interpreted
     alongside the other metrics in the bundle, not as a standalone
     gate.
+
 """
 
 import logging

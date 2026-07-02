@@ -79,8 +79,8 @@ _MISSING_MISSION_SENTINEL = "__BINARY_CLASSIFIER_MISSING_MISSION__"
 
 
 def run_inference(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     predictor: Any | None = None,
     limit: int | None = None,
@@ -108,7 +108,8 @@ def run_inference(
     logger.info("Prepared %d inference rows", len(missions))
 
     calibrator = _load_calibrator(
-        registry.calibrator_path, registry.base_rate_precision
+        registry.calibrator_path,
+        registry.base_rate_precision,
     )
     selected = _load_selected_model(registry, require_checkpoint=predictor is None)
     encoder_id = selected.get("encoder_id")
@@ -135,7 +136,10 @@ def run_inference(
     )
 
     _delete_stale_shards(
-        registry, n_rows=len(missions), shard_size=shard_size, limit=limit
+        registry,
+        n_rows=len(missions),
+        shard_size=shard_size,
+        limit=limit,
     )
 
     shard_paths = _process_shards(
@@ -170,7 +174,7 @@ def run_inference(
 
 
 def resolve_device_precision(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     *,
     encoder_id: str | None = None,
 ) -> tuple[Device, Precision]:
@@ -189,7 +193,7 @@ def resolve_device_precision(
     except Exception as exc:  # pragma: no cover - production environment issue
         if cfg.inference.device != "auto":
             raise RuntimeError(
-                "Torch is required for explicit inference devices."
+                "Torch is required for explicit inference devices.",
             ) from exc
         return "cpu", "fp32"
 
@@ -228,7 +232,7 @@ def resolve_device_precision(
 
 
 def _prepare_inference_frame(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     missions: pd.DataFrame,
     *,
     limit: int | None,
@@ -262,7 +266,7 @@ def _prepare_inference_frame(
     if unknown:
         raise ValueError(
             "Router produced decision source(s) unsupported by the stage-08 "
-            f"prediction schema: {sorted(unknown)}."
+            f"prediction schema: {sorted(unknown)}.",
         )
     return frame
 
@@ -270,7 +274,7 @@ def _prepare_inference_frame(
 def _load_calibrator(path: Path, base_rate_path: Path) -> dict[str, Any]:
     if not path.exists():
         raise RuntimeError(
-            f"Calibrator artifact not found at {path}. Run stage 07 before stage 08."
+            f"Calibrator artifact not found at {path}. Run stage 07 before stage 08.",
         )
     raw = json.loads(path.read_text())
     if not isinstance(raw, dict):
@@ -288,7 +292,7 @@ def _load_calibrator(path: Path, base_rate_path: Path) -> dict[str, Any]:
     if not base_rate_path.exists():
         raise RuntimeError(
             f"Base-rate precision artifact not found at {base_rate_path}. "
-            "Run stage 07 before stage 08."
+            "Run stage 07 before stage 08.",
         )
     base_rate = json.loads(base_rate_path.read_text())
     if not isinstance(base_rate, dict) or "threshold" not in base_rate:
@@ -299,7 +303,7 @@ def _load_calibrator(path: Path, base_rate_path: Path) -> dict[str, Any]:
 
 
 def _delete_stale_shards(
-    registry: "PathRegistry",
+    registry: PathRegistry,
     *,
     n_rows: int,
     shard_size: int,
@@ -321,7 +325,7 @@ def _delete_stale_shards(
 
 
 def _load_selected_model(
-    registry: "PathRegistry",
+    registry: PathRegistry,
     *,
     require_checkpoint: bool,
 ) -> dict[str, Any]:
@@ -331,7 +335,7 @@ def _load_selected_model(
             raise RuntimeError(
                 f"Selected model artifact not found at {path}. Run stage 06, copy "
                 "the reviewed selected_model_skeleton to selected_model.json, "
-                "then re-run stage 08."
+                "then re-run stage 08.",
             )
         return {}
     raw = json.loads(path.read_text())
@@ -344,7 +348,7 @@ def _load_selected_model(
         return selected
     if not relpath or not expected_sha or expected_sha.startswith("TODO_"):
         raise RuntimeError(
-            f"{path} must contain reviewed checkpoint_relpath and checkpoint_sha256."
+            f"{path} must contain reviewed checkpoint_relpath and checkpoint_sha256.",
         )
     checkpoint_path = _checkpoint_path(registry.models_dir, relpath)
     if not checkpoint_path.exists():
@@ -353,7 +357,7 @@ def _load_selected_model(
     if actual_sha != expected_sha:
         raise RuntimeError(
             f"Selected checkpoint SHA-256 mismatch for {checkpoint_path}: expected "
-            f"{expected_sha}, got {actual_sha}."
+            f"{expected_sha}, got {actual_sha}.",
         )
     selected["checkpoint_path"] = str(checkpoint_path)
     return selected
@@ -376,7 +380,7 @@ def _load_checkpoint_predictor(
         raise RuntimeError(
             "Default stage-08 predictor loading requires torch and transformers. "
             "Install runtime dependencies or pass an injected predictor with "
-            "predict_proba(texts)."
+            "predict_proba(texts).",
         ) from exc
 
     tokenizer: Any = AutoTokenizer.from_pretrained(tokenizer_id)
@@ -405,8 +409,8 @@ def _load_checkpoint_predictor(
 
 
 def _process_shards(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     frame: pd.DataFrame,
     *,
     predictor: Any,
@@ -489,7 +493,7 @@ def _existing_shard_matches(
 
 
 def _predict_shard(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     shard: pd.DataFrame,
     *,
     predictor: Any,
@@ -508,7 +512,7 @@ def _predict_shard(
     output["pred_label_baserate"] = np.nan
 
     rule_mask = shard["decision_source"].isin(
-        {"rule_strong_positive", "rule_short_negative"}
+        {"rule_strong_positive", "rule_short_negative"},
     )
     output.loc[rule_mask, "pred_label"] = shard.loc[rule_mask, "rule_label"].astype(int)
 
@@ -528,14 +532,15 @@ def _predict_shard(
         method = cast(CalibrationMethod, calibrator["method"])
         params = cast(Mapping[str, float], calibrator["params"])
         calibrated = np.asarray(
-            apply_calibration(raw.tolist(), method, params), dtype=float
+            apply_calibration(raw.tolist(), method, params),
+            dtype=float,
         )
         threshold = float(calibrator["threshold"])
         classifier_index = output.index[classifier_mask]
         output.loc[classifier_index, "prob_raw"] = raw
         output.loc[classifier_index, "prob_calibrated"] = calibrated
         output.loc[classifier_index, "pred_label"] = (calibrated >= threshold).astype(
-            int
+            int,
         )
         output.loc[classifier_index, "pred_label_maxf1"] = (
             calibrated >= float(calibrator["max_f1_threshold"])
@@ -597,7 +602,7 @@ def _predict_positive_probabilities(predictor: Any, texts: Sequence[str]) -> np.
         raise ValueError("predict_proba must return shape (n,) or (n, 2).")
     if len(p1) != len(texts):
         raise ValueError(
-            f"predict_proba returned {len(p1)} rows for {len(texts)} input texts."
+            f"predict_proba returned {len(p1)} rows for {len(texts)} input texts.",
         )
     if not np.isfinite(p1).all() or ((p1 < 0.0) | (p1 > 1.0)).any():
         raise ValueError("predict_proba probabilities must be finite in [0, 1].")
@@ -631,21 +636,24 @@ def _merge_shards(paths: Sequence[Path]) -> pd.DataFrame:
     missing_columns = set(_PREDICTION_COLUMNS) - set(merged.columns)
     if missing_columns:
         raise ValueError(
-            f"Merged predictions missing columns {sorted(missing_columns)}."
+            f"Merged predictions missing columns {sorted(missing_columns)}.",
         )
     return merged[_PREDICTION_COLUMNS].copy()
 
 
 def _write_predictions_full(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     predictions: pd.DataFrame,
 ) -> None:
     """Expand deduplicated text predictions back to every raw EIN2 row."""
     deduped = load_missions(cfg, deduplicate=True)
     raw = load_missions(cfg, deduplicate=False)
     full = _expand_predictions_to_raw(
-        cfg, raw=raw, deduped=deduped, predictions=predictions
+        cfg,
+        raw=raw,
+        deduped=deduped,
+        predictions=predictions,
     )
     full.to_parquet(registry.predictions_full_parquet, index=False)
     logger.info(
@@ -657,7 +665,7 @@ def _write_predictions_full(
 
 
 def _expand_predictions_to_raw(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     *,
     raw: pd.DataFrame,
     deduped: pd.DataFrame,
@@ -672,7 +680,7 @@ def _expand_predictions_to_raw(
     raw_key_column = _mission_key_column(cfg, raw_frame)
     deduped_key_column = _mission_key_column(cfg, deduped_frame)
     raw_frame["_prediction_join_key"] = _normalize_mission_key(
-        raw_frame[raw_key_column]
+        raw_frame[raw_key_column],
     )
     deduped_frame["_prediction_join_key"] = _normalize_mission_key(
         deduped_frame[deduped_key_column],
@@ -706,13 +714,13 @@ def _expand_predictions_to_raw(
     return full[["EIN2", *raw_columns, *_PREDICTION_COLUMNS[1:]]].copy()
 
 
-def _mission_key_column(cfg: "BinaryClassifierConfig", frame: pd.DataFrame) -> str:
+def _mission_key_column(cfg: BinaryClassifierConfig, frame: pd.DataFrame) -> str:
     if cfg.field in frame.columns:
         return cfg.field
     if "mission_text" in frame.columns:
         return "mission_text"
     raise ValueError(
-        f"Mission frame missing configured field {cfg.field!r} and mission_text."
+        f"Mission frame missing configured field {cfg.field!r} and mission_text.",
     )
 
 
@@ -725,12 +733,12 @@ def _validate_predictions_full(expected_ein2: pd.Series, full: pd.DataFrame) -> 
     null_labels = int(full["pred_label"].isna().sum())
     if null_labels:
         raise ValueError(
-            f"Expanded predictions contain {null_labels} null pred_label rows."
+            f"Expanded predictions contain {null_labels} null pred_label rows.",
         )
 
 
 def _write_monitor_scores(
-    registry: "PathRegistry",
+    registry: PathRegistry,
     predictions: pd.DataFrame,
     *,
     metadata: Mapping[str, Any],
@@ -741,7 +749,7 @@ def _write_monitor_scores(
     path = registry.monitor_manifest
     if not path.exists():
         raise RuntimeError(
-            f"Monitor manifest not found at {path}. Run stage 01 before stage 08."
+            f"Monitor manifest not found at {path}. Run stage 01 before stage 08.",
         )
     manifest = pd.read_csv(path)
     if "EIN2" not in manifest.columns:
@@ -780,7 +788,7 @@ def _write_monitor_scores(
         "rows": rows,
     }
     registry.monitor_scores.write_text(
-        json.dumps(_jsonable(payload), indent=2, sort_keys=True)
+        json.dumps(_jsonable(payload), indent=2, sort_keys=True),
     )
     logger.info("Wrote monitor scores to %s", registry.monitor_scores)
 
@@ -791,7 +799,7 @@ def _validate_ein2_completeness(expected: pd.Series, observed: pd.Series) -> Non
     if len(observed_ids) != len(expected_ids):
         raise ValueError(
             f"Merged predictions contain {len(observed_ids)} rows for "
-            f"{len(expected_ids)} input EIN2s."
+            f"{len(expected_ids)} input EIN2s.",
         )
     if observed_ids.duplicated().any():
         duplicated = observed_ids.loc[observed_ids.duplicated()].head().tolist()
@@ -801,12 +809,12 @@ def _validate_ein2_completeness(expected: pd.Series, observed: pd.Series) -> Non
         extra = sorted(set(observed_ids) - set(expected_ids))[:5]
         raise ValueError(
             "Merged predictions do not match input EIN2s: "
-            f"missing={missing}, extra={extra}."
+            f"missing={missing}, extra={extra}.",
         )
 
 
 def _prediction_metadata(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     *,
     selected: Mapping[str, Any],
     predictor: Any,
@@ -860,7 +868,7 @@ def _mps_available(torch: Any) -> bool:
     return bool(
         hasattr(torch, "backends")
         and hasattr(torch.backends, "mps")
-        and torch.backends.mps.is_available()
+        and torch.backends.mps.is_available(),
     )
 
 
@@ -879,7 +887,7 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _config_hash(cfg: "BinaryClassifierConfig") -> str:
+def _config_hash(cfg: BinaryClassifierConfig) -> str:
     payload = json.dumps(cfg.model_dump(mode="json"), sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()
 

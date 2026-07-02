@@ -33,7 +33,7 @@ _REQUIRED_COLUMNS = {
 }
 
 
-def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: "Axes") -> None:
+def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: Axes) -> None:
     """Plot per-NTEE prevalence estimates with confidence intervals.
 
     Args:
@@ -84,7 +84,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: "Axes") -> None:
                 [
                     np.maximum(estimates[finite_ci] - lower[finite_ci], 0.0),
                     np.maximum(upper[finite_ci] - estimates[finite_ci], 0.0),
-                ]
+                ],
             )
             ax.errorbar(
                 estimates[finite_ci],
@@ -119,7 +119,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: "Axes") -> None:
     logger.info("Rendered prevalence forest plot with %d groups", len(frame))
 
 
-def prevalence_decomposition(report: Mapping[str, Any], ax: "Axes") -> None:
+def prevalence_decomposition(report: Mapping[str, Any], ax: Axes) -> None:
     """Render component contributions to the composite prevalence estimate."""
     rows = _decomposition_rows(report)
     if not rows:
@@ -153,7 +153,7 @@ def prevalence_decomposition(report: Mapping[str, Any], ax: "Axes") -> None:
                     [
                         [max(contribution - lower, 0.0)],
                         [max(upper - contribution, 0.0)],
-                    ]
+                    ],
                 ),
                 fmt="none",
                 ecolor=OKABE_ITO_BLACK,
@@ -169,7 +169,10 @@ def prevalence_decomposition(report: Mapping[str, Any], ax: "Axes") -> None:
         fontsize=7,
     )
     ax.set_xticks(
-        np.arange(len(frame)), labels=frame["label"].to_list(), rotation=20, ha="right"
+        np.arange(len(frame)),
+        labels=frame["label"].to_list(),
+        rotation=20,
+        ha="right",
     )
     ax.set_ylabel("Contribution to population prevalence")
     ax.set_title("Prevalence decomposition")
@@ -178,7 +181,7 @@ def prevalence_decomposition(report: Mapping[str, Any], ax: "Axes") -> None:
     logger.info("Rendered prevalence decomposition with %d components", len(frame))
 
 
-def rule_validation_intervals(report: Mapping[str, Any], ax: "Axes") -> None:
+def rule_validation_intervals(report: Mapping[str, Any], ax: Axes) -> None:
     """Plot rule-validation sensitivity/specificity Wilson intervals."""
     rows = []
     for name in ("sensitivity", "specificity"):
@@ -205,7 +208,7 @@ def rule_validation_intervals(report: Mapping[str, Any], ax: "Axes") -> None:
     lower = frame["ci_lower"].to_numpy(float)
     upper = frame["ci_upper"].to_numpy(float)
     xerr = np.vstack(
-        [np.maximum(estimates - lower, 0.0), np.maximum(upper - estimates, 0.0)]
+        [np.maximum(estimates - lower, 0.0), np.maximum(upper - estimates, 0.0)],
     )
     ax.errorbar(estimates, y, xerr=xerr, fmt="o", color=OKABE_ITO_BLUE, capsize=3)
     for idx, row in enumerate(frame.to_dict("records")):
@@ -226,7 +229,7 @@ def rule_validation_intervals(report: Mapping[str, Any], ax: "Axes") -> None:
     logger.info("Rendered rule-validation intervals")
 
 
-def quantification_sensitivity(report: Mapping[str, Any], ax: "Axes") -> None:
+def quantification_sensitivity(report: Mapping[str, Any], ax: Axes) -> None:
     """Plot PPI primary estimates against EMQ and weighting sensitivities."""
     rows = _quantification_rows(report)
     if not rows:
@@ -244,7 +247,7 @@ def quantification_sensitivity(report: Mapping[str, Any], ax: "Axes") -> None:
             [
                 np.maximum(estimates[finite_ci] - lower[finite_ci], 0.0),
                 np.maximum(upper[finite_ci] - estimates[finite_ci], 0.0),
-            ]
+            ],
         )
         ax.errorbar(
             estimates[finite_ci],
@@ -282,7 +285,9 @@ def _decomposition_rows(report: Mapping[str, Any]) -> list[dict[str, float | str
         estimate = hm.get(primary)
         if isinstance(estimate, Mapping):
             rows.append(
-                _component_row("HM-PPI", _as_float(shares.get("HIGH_MEDIUM")), estimate)
+                _component_row(
+                    "HM-PPI", _as_float(shares.get("HIGH_MEDIUM")), estimate
+                ),
             )
     low = report.get("low")
     if isinstance(low, Mapping):
@@ -296,7 +301,7 @@ def _decomposition_rows(report: Mapping[str, Any]) -> list[dict[str, float | str
                         "LOW-PPI",
                         low_share * _as_float(classifier.get("share")),
                         classifier.get("estimate"),
-                    )
+                    ),
                 )
             rule = sub_strata.get("rule")
             if isinstance(rule, Mapping):
@@ -305,7 +310,7 @@ def _decomposition_rows(report: Mapping[str, Any]) -> list[dict[str, float | str
                         "LOW-RG",
                         low_share * _as_float(rule.get("share")),
                         rule.get("estimate"),
-                    )
+                    ),
                 )
         elif isinstance(low.get("estimate"), Mapping):
             rows.append(_component_row("LOW-RG", low_share, low.get("estimate")))
@@ -313,7 +318,9 @@ def _decomposition_rows(report: Mapping[str, Any]) -> list[dict[str, float | str
 
 
 def _component_row(
-    label: str, share: float, estimate: object
+    label: str,
+    share: float,
+    estimate: object,
 ) -> dict[str, float | str]:
     if not isinstance(estimate, Mapping):
         raise ValueError(f"Component {label} missing estimate mapping.")
@@ -395,7 +402,7 @@ def _quantification_rows(report: Mapping[str, Any]) -> list[dict[str, float | st
                         "estimate": float(payload["estimate"]),
                         "ci_lower": np.nan,
                         "ci_upper": np.nan,
-                    }
+                    },
                 )
     sensitivity = None
     if isinstance(hm, Mapping):

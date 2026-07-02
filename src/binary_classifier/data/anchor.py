@@ -55,6 +55,7 @@ def build_anchor(
             labels and ``force`` is ``False``.
         ValueError: If the requested sample is impossible for the available
             post-exclusion frame.
+
     """
     logger.info("Loading missions for anchor sample...")
     df = load_missions(cfg).copy()

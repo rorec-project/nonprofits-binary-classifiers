@@ -485,7 +485,7 @@ def validate_label_set_disjointness(
         suffix = "" if len(overlap) <= 20 else f", ... ({len(overlap)} total)"
         raise ValueError(
             "silver EIN2 values must be disjoint from gold/anchor EIN2 values; "
-            f"overlap: {shown}{suffix}"
+            f"overlap: {shown}{suffix}",
         )
 
 
@@ -498,7 +498,7 @@ def validate_label_set_disjointness_from_registry(registry: "PathRegistry") -> i
             if not path.exists()
         ]
         raise FileNotFoundError(
-            "Cannot check label-set disjointness; missing " + ", ".join(missing)
+            "Cannot check label-set disjointness; missing " + ", ".join(missing),
         )
     silver = pd.read_csv(registry.silver_manifest)
     gold = pd.read_csv(registry.gold_manifest)
@@ -655,7 +655,7 @@ def _require_sample_size(df: pd.DataFrame, target_size: int, name: str) -> None:
     raise ValueError(
         f"Cannot build disjoint stage-01 samples: {name} sample requested "
         f"{target_size} rows but only {len(df)} were available after sampling "
-        "constraints. Reduce sample sizes or provide a larger frame."
+        "constraints. Reduce sample sizes or provide a larger frame.",
     )
 
 

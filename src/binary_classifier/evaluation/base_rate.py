@@ -25,6 +25,7 @@ def base_rate_report(
     *,
     operating_threshold: float,
     max_f1_threshold: float,
+    operating_pr_curve_points: list[dict[str, float]] | None = None,
     target: float,
     population_base_rate: float | None,
     seed: int,
@@ -36,7 +37,18 @@ def base_rate_report(
     labels = pd.to_numeric(frame["human_label"], errors="coerce").to_numpy(int)
     weights = design_weights(frame, normalize=True).to_numpy(float)
     pi = _population_base_rate(labels, weights, population_base_rate)
-    threshold_report = pick_threshold(probs, labels, "max_f1", 0.0)
+
+    # Use operating threshold's PR-curve grid when available to ensure the
+    # candidate thresholds are aligned with the operating point selection.
+    # Otherwise fall back to deriving from scratch.
+    if operating_pr_curve_points is not None:
+        candidate_thresholds = [p["threshold"] for p in operating_pr_curve_points]
+    else:
+        threshold_report = pick_threshold(probs, labels, "max_f1", 0.0)
+        candidate_thresholds = [
+            p["threshold"] for p in threshold_report["pr_curve_points"]
+        ]
+
     points = [
         _threshold_point("operating", operating_threshold, probs, labels, pi, None),
         _threshold_point("max_f1", max_f1_threshold, probs, labels, pi, None),
@@ -45,8 +57,7 @@ def base_rate_report(
     ]
 
     candidates = [
-        _base_rate_point(p["threshold"], probs, labels, pi, weights)
-        for p in threshold_report["pr_curve_points"]
+        _base_rate_point(t, probs, labels, pi, weights) for t in candidate_thresholds
     ]
     eligible = [p for p in candidates if p["base_rate_precision"] >= target]
     unattainable = not eligible
@@ -173,7 +184,7 @@ def _bootstrap_ci(
         values.append(
             _base_rate_point(threshold, probs[idx], labels[idx], pi, weights[idx])[
                 "base_rate_precision"
-            ]
+            ],
         )
     if not values:
         return {"lower": None, "upper": None}

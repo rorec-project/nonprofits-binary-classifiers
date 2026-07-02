@@ -32,7 +32,6 @@ the econometric consequences of misclassification in binary choice models.
 
 References
 ----------
-
 * Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T.
   (2023). Prediction-Powered Inference. *Science*.
   https://doi.org/10.1126/science.adi6001
@@ -53,6 +52,7 @@ References
 * Mozer, R. (2026). PPI is the Difference Estimator: Recognizing the Survey
   Sampling Roots of Prediction-Powered Inference. arXiv:2603.19160.
   https://doi.org/10.48550/arXiv.2603.19160
+
 """
 
 import importlib

@@ -20,7 +20,7 @@ _LABEL_COLUMNS = ("silver_label", "label", "hard_label")
 
 def ngram_log_odds(
     silver_df_with_text: pd.DataFrame,
-    ax: "Axes",
+    ax: Axes,
     *,
     top_k: int = 30,
 ) -> None:
@@ -67,7 +67,7 @@ def ngram_log_odds(
     pos_total = float(pos_counts.sum())
     neg_total = float(neg_counts.sum())
     log_odds = np.log((pos_counts + 1.0) / (pos_total + vocabulary_size)) - np.log(
-        (neg_counts + 1.0) / (neg_total + vocabulary_size)
+        (neg_counts + 1.0) / (neg_total + vocabulary_size),
     )
 
     order = np.argsort(np.abs(log_odds))[-top_k:]

@@ -23,7 +23,6 @@ on silently incomplete data.
 
 References
 ----------
-
 * Horvitz, D. G., & Thompson, D. J. (1952). A Generalization of Sampling
   Without Replacement from a Finite Universe. *Journal of the American
   Statistical Association*, 47(260), 663--685.
@@ -31,6 +30,7 @@ References
 * Mozer, R. (2026). PPI is the Difference Estimator: Recognizing the Survey
   Sampling Roots of Prediction-Powered Inference. arXiv:2603.19160.
   https://doi.org/10.48550/arXiv.2603.19160
+
 """
 
 import logging

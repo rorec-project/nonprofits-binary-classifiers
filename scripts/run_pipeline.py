@@ -308,7 +308,12 @@ def main() -> None:
         sys.exit(1)
 
     run_pipeline(
-        cfg, registry, requested, args.annotate_limit, args.infer_limit, args.force
+        cfg,
+        registry,
+        requested,
+        args.annotate_limit,
+        args.infer_limit,
+        args.force,
     )
 
 

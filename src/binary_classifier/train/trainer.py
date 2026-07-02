@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 def run_training(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     baselines_only: bool = False,
     sweep: bool = True,
@@ -142,8 +142,8 @@ def run_training(
 
 
 def _load_training_inputs(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load stage-06 training and validation frames."""
     try:
@@ -161,7 +161,7 @@ def _load_training_inputs(
 
 
 def _synthetic_training_inputs(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build in-memory synthetic stage-06 inputs without human artifacts."""
     from binary_classifier.data.load import load_missions
@@ -186,12 +186,12 @@ def _synthetic_training_inputs(
     if validation.empty:
         validation = train.tail(min(20, len(train)))[["EIN2", "text", "hard_label"]]
     validation = validation.rename(columns={"hard_label": "human_label"}).reset_index(
-        drop=True
+        drop=True,
     )
     return train, validation
 
 
-def _load_recommendation(registry: "PathRegistry") -> dict[str, object] | None:
+def _load_recommendation(registry: PathRegistry) -> dict[str, object] | None:
     """Load the existing selection recommendation for final runs."""
     if not registry.selection_report.exists():
         return None
@@ -202,7 +202,7 @@ def _load_recommendation(registry: "PathRegistry") -> dict[str, object] | None:
     return cast(dict[str, object], recommendation)
 
 
-def _load_selection_report(registry: "PathRegistry") -> dict[str, object]:
+def _load_selection_report(registry: PathRegistry) -> dict[str, object]:
     """Load ``selection_report.json`` as an object."""
     raw = json.loads(registry.selection_report.read_text())
     if not isinstance(raw, dict):
@@ -210,7 +210,7 @@ def _load_selection_report(registry: "PathRegistry") -> dict[str, object]:
     return raw
 
 
-def _needs_oof(cfg: "BinaryClassifierConfig") -> bool:
+def _needs_oof(cfg: BinaryClassifierConfig) -> bool:
     """Return whether stage 06 must produce out-of-fold probabilities.
 
     True when the pruned arm is configured (it consumes true OOF instead of the
@@ -223,8 +223,8 @@ def _needs_oof(cfg: "BinaryClassifierConfig") -> bool:
 
 
 def _ensure_oof_pred_probs(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     train_df: pd.DataFrame,
     finetune_fn: Callable[..., Any] | None,
 ) -> None:

@@ -23,6 +23,7 @@ References:
     - Zhu et al. (2022), "Is BERT Robust to Label Noise? A Study on Learning
       with Noisy Labels in Text Classification", Insights.
       https://doi.org/10.18653/v1/2022.insights-1.8
+
 """
 
 from __future__ import annotations
@@ -105,7 +106,9 @@ def resolve_precision(knob: str, device: str) -> str:
 
 
 def soft_ce(
-    outputs: Any, labels: torch.Tensor, num_items_in_batch: Any
+    outputs: Any,
+    labels: torch.Tensor,
+    num_items_in_batch: Any,
 ) -> torch.Tensor:
     """Compute soft-label cross entropy normalized by batch item count.
 
@@ -217,7 +220,9 @@ def finetune(
 
         n_gpu = max(1, torch.cuda.device_count())
         effective_batch_size = cfg.training.batch_size * n_gpu
-        total_steps = math.ceil(len(train_df) / effective_batch_size) * cfg.training.epochs
+        total_steps = (
+            math.ceil(len(train_df) / effective_batch_size) * cfg.training.epochs
+        )
         warmup_steps = math.ceil(cfg.training.warmup_fraction * total_steps)
         args = TrainingArguments(
             output_dir=str(checkpoints_dir),
@@ -259,7 +264,7 @@ def finetune(
         trainer.train()
 
         dev_scores = _positive_probs(
-            trainer.predict(cast(Any, dev_dataset)).predictions
+            trainer.predict(cast(Any, dev_dataset)).predictions,
         )
         dev_metrics = _score_frame(dev_df, dev_scores, seed)
 
@@ -315,7 +320,9 @@ class _FoldPredictor:
             {"text": frame["text"].fillna("").astype(str).tolist()},
         )
         tokenized = _tokenize_dataset(
-            dataset, self._tokenizer, max_length=self._max_length
+            dataset,
+            self._tokenizer,
+            max_length=self._max_length,
         )
         predictions = self._trainer.predict(cast(Any, tokenized)).predictions
         p1 = _positive_probs(predictions)
@@ -386,7 +393,9 @@ def finetune_predictor(
     )
     runs_base = Path(run_root) if run_root is not None else registry.runs_dir
     output_dir = runs_base / "oof" / f"{_model_slug(encoder.id)}-{arm}-s{seed}"
-    total_steps = math.ceil(len(train_df) / cfg.training.batch_size) * cfg.training.epochs
+    total_steps = (
+        math.ceil(len(train_df) / cfg.training.batch_size) * cfg.training.epochs
+    )
     warmup_steps = math.ceil(cfg.training.warmup_fraction * total_steps)
     args = TrainingArguments(
         output_dir=str(output_dir),
@@ -439,7 +448,9 @@ def compute_metrics(eval_pred: transformers.EvalPrediction) -> dict[str, float]:
     y_true = _binarize(eval_pred.label_ids)
 
     if np.isnan(y_score).any():
-        logger.warning("NaN predictions detected — returning zero metrics for this checkpoint.")
+        logger.warning(
+            "NaN predictions detected — returning zero metrics for this checkpoint.",
+        )
         return {"pr_auc": 0.0, "minority_f1": 0.0, "mcc": 0.0}
 
     y_pred = (y_score >= 0.5).astype(int)
@@ -481,13 +492,19 @@ def _soft_ce_weighted(
     if class_weights is not None:
         w0, w1 = class_weights
         positive = positive * torch.as_tensor(
-            w1, device=logits.device, dtype=logits.dtype
+            w1,
+            device=logits.device,
+            dtype=logits.dtype,
         )
         negative = negative * torch.as_tensor(
-            w0, device=logits.device, dtype=logits.dtype
+            w0,
+            device=logits.device,
+            dtype=logits.dtype,
         )
     divisor = torch.as_tensor(
-        num_items_in_batch, device=logits.device, dtype=logits.dtype
+        num_items_in_batch,
+        device=logits.device,
+        dtype=logits.dtype,
     )
     return -(positive + negative).sum() / divisor
 

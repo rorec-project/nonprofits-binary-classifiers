@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def documentation_curve(
-    results_jsonl_rows: Iterable[Mapping[str, Any]], ax: "Axes"
+    results_jsonl_rows: Iterable[Mapping[str, Any]],
+    ax: Axes,
 ) -> None:
     """Plot validation PR-AUC against training fraction by encoder.
 
@@ -71,7 +72,7 @@ def documentation_curve(
     logger.info("Rendered documentation curve for %d rows", len(rows))
 
 
-def pr_curve(points: object, ax: "Axes") -> None:
+def pr_curve(points: object, ax: Axes) -> None:
     """Plot a precision-recall curve from serialized evaluation points.
 
     Args:
@@ -99,12 +100,13 @@ def pr_curve(points: object, ax: "Axes") -> None:
     logger.info("Rendered PR curve with %d points", len(frame))
 
 
-def frozen_test_curves(payload: Mapping[str, Any], ax: "Axes") -> None:
+def frozen_test_curves(payload: Mapping[str, Any], ax: Axes) -> None:
     """Plot frozen-test PR and ROC curves from persisted test-score artifacts."""
     if not isinstance(payload.get("test_scores"), Mapping):
         raise ValueError("test_evaluation payload missing test_scores block.")
     pr_frame = _points_frame(
-        payload.get("pr_curve_points"), required=("recall", "precision")
+        payload.get("pr_curve_points"),
+        required=("recall", "precision"),
     ).sort_values("recall")
     roc_frame = _points_frame(
         payload.get("roc_curve_points"),
@@ -135,7 +137,7 @@ def frozen_test_curves(payload: Mapping[str, Any], ax: "Axes") -> None:
 def score_distribution_by_tier_label(
     predictions: pd.DataFrame,
     thresholds: Mapping[str, float],
-    ax: "Axes",
+    ax: Axes,
 ) -> None:
     """Plot calibrated-score distributions by quality tier and predicted label."""
     required = {"prob_calibrated", "tier", "pred_label"}
@@ -159,7 +161,11 @@ def score_distribution_by_tier_label(
         group = frame.loc[frame["tier"].astype(str).str.upper() == tier]
         if low_band < high_band:
             tier_ax.axvspan(
-                low_band, high_band, color=LIGHT_GREY, alpha=0.25, linewidth=0
+                low_band,
+                high_band,
+                color=LIGHT_GREY,
+                alpha=0.25,
+                linewidth=0,
             )
         for label_value, label_group in group.groupby("pred_label", sort=True):
             numeric_label = int(float(label_value))
@@ -189,7 +195,7 @@ def score_distribution_by_tier_label(
     logger.info("Rendered score distributions for %d tiers", len(tiers))
 
 
-def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: "Axes") -> None:
+def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: Axes) -> None:
     """Render frozen-test confusion matrices at persisted operating thresholds."""
     matrices = payload.get("confusion_matrices")
     if not isinstance(matrices, Mapping):
@@ -212,13 +218,17 @@ def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: "Axes") -> No
             [
                 [int(counts.get("tn", 0)), int(counts.get("fp", 0))],
                 [int(counts.get("fn", 0)), int(counts.get("tp", 0))],
-            ]
+            ],
         )
         matrix_ax.imshow(values, cmap="Blues", vmin=0)
         for row in range(2):
             for col in range(2):
                 matrix_ax.text(
-                    col, row, str(values[row, col]), ha="center", va="center"
+                    col,
+                    row,
+                    str(values[row, col]),
+                    ha="center",
+                    va="center",
                 )
         threshold = item.get("threshold")
         suffix = "" if threshold is None else f"\nthr={float(threshold):.3f}"
@@ -228,7 +238,7 @@ def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: "Axes") -> No
     logger.info("Rendered %d frozen-test confusion matrices", len(names))
 
 
-def subgroup_performance(subgroups: object, ax: "Axes") -> None:
+def subgroup_performance(subgroups: object, ax: Axes) -> None:
     """Plot subgroup F1/FPR/FNR dot diagnostics from ``test_evaluation``."""
     frame = pd.DataFrame(_extract_points(subgroups, ("subgroups", "points")))
     if frame.empty:
@@ -246,7 +256,8 @@ def subgroup_performance(subgroups: object, ax: "Axes") -> None:
     if frame.empty:
         raise ValueError("No finite subgroup metrics to plot.")
     frame["label"] = frame.apply(
-        lambda row: f"{row['grouping']}={row['value']} (n={int(row['n'])})", axis=1
+        lambda row: f"{row['grouping']}={row['value']} (n={int(row['n'])})",
+        axis=1,
     )
     frame = frame.sort_values(["grouping", "value"]).reset_index(drop=True)
     y = np.arange(len(frame), dtype=float)
@@ -256,7 +267,11 @@ def subgroup_performance(subgroups: object, ax: "Axes") -> None:
         ("fnr", OKABE_ITO_BLUISH_GREEN, "D"),
     ):
         ax.scatter(
-            frame[metric], y, label=metric.replace("_", " "), color=color, marker=marker
+            frame[metric],
+            y,
+            label=metric.replace("_", " "),
+            color=color,
+            marker=marker,
         )
     ax.set_yticks(y, labels=frame["label"].to_list())
     ax.set_xlim(0.0, 1.0)
@@ -268,7 +283,7 @@ def subgroup_performance(subgroups: object, ax: "Axes") -> None:
     logger.info("Rendered subgroup performance for %d rows", len(frame))
 
 
-def reliability_diagram(points: object, ax: "Axes", ece: float | None = None) -> None:
+def reliability_diagram(points: object, ax: Axes, ece: float | None = None) -> None:
     """Plot a reliability diagram from serialized calibration-bin points.
 
     Args:
@@ -327,7 +342,7 @@ def reliability_diagram(points: object, ax: "Axes", ece: float | None = None) ->
 
 
 def _annotate_threshold_points(
-    ax: "Axes",
+    ax: Axes,
     pr_frame: pd.DataFrame,
     payload: Mapping[str, Any],
 ) -> None:
@@ -360,7 +375,8 @@ def _thresholds_from_payload(payload: Mapping[str, Any]) -> dict[str, float]:
     if isinstance(matrices, Mapping):
         for name, item in matrices.items():
             if name in {"operating", "max_f1", "base_rate"} and isinstance(
-                item, Mapping
+                item,
+                Mapping,
             ):
                 threshold = item.get("threshold")
                 if threshold is not None:
@@ -502,7 +518,8 @@ def _points_frame(
 
 
 def _extract_points(
-    points: object, containers: tuple[str, ...]
+    points: object,
+    containers: tuple[str, ...],
 ) -> list[Mapping[str, Any]]:
     if isinstance(points, Mapping):
         points_mapping = cast(Mapping[str, Any], points)

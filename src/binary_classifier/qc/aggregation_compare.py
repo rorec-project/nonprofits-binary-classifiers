@@ -43,8 +43,8 @@ _PRODUCTION_NOTE = (
 
 
 def run_aggregation_compare(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
 ) -> None:
     """Compare diagnostic aggregation arms on the human validation split.
 
@@ -134,7 +134,8 @@ def run_aggregation_compare(
         encoding="utf-8",
     )
     logger.info(
-        "Aggregation comparison report written to %s", registry.aggregation_compare
+        "Aggregation comparison report written to %s",
+        registry.aggregation_compare,
     )
 
 
@@ -323,7 +324,7 @@ def _score_arm(
     missing = required - set(aggregated.columns)
     if missing:
         raise ValueError(
-            f"Aggregation arm {method} missing columns: {sorted(missing)}."
+            f"Aggregation arm {method} missing columns: {sorted(missing)}.",
         )
 
     aggregate_norm = aggregated.copy()

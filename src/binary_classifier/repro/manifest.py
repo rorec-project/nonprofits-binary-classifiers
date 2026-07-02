@@ -19,30 +19,32 @@ if TYPE_CHECKING:
 
 
 def write_run_manifest(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
 ) -> dict[str, Any]:
     """Write a reproducibility manifest from existing local artifacts."""
+    git_sha = _git_sha()
     payload = {
         "schema_version": 1,
         "stage": "run_manifest",
         "generated_at": datetime.now(UTC).isoformat(),
         "config_hash": _config_hash(cfg),
-        "git_sha": _git_sha(),
+        "git_sha": git_sha,
         "thresholds": _thresholds(registry),
         "input_row_counts": _input_row_counts(registry),
         "wave2_completeness": _wave2_completeness(registry),
         "environment_lock": _environment_lock(),
         "post_sprint_reproduce_assertion": None,
+        "git_tag": _create_git_tag(git_sha),
     }
     registry.run_manifest.parent.mkdir(parents=True, exist_ok=True)
     registry.run_manifest.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
     )
     return payload
 
 
-def _config_hash(cfg: "BinaryClassifierConfig") -> str:
+def _config_hash(cfg: BinaryClassifierConfig) -> str:
     payload = json.dumps(cfg.model_dump(mode="json"), sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()
 
@@ -58,7 +60,7 @@ def _git_sha() -> str | None:
         return None
 
 
-def _thresholds(registry: "PathRegistry") -> dict[str, float | None]:
+def _thresholds(registry: PathRegistry) -> dict[str, float | None]:
     calibrator = _read_json_if_exists(registry.calibrator_path)
     base_rate = _read_json_if_exists(registry.base_rate_precision)
     return {
@@ -68,7 +70,7 @@ def _thresholds(registry: "PathRegistry") -> dict[str, float | None]:
     }
 
 
-def _input_row_counts(registry: "PathRegistry") -> dict[str, int | None]:
+def _input_row_counts(registry: PathRegistry) -> dict[str, int | None]:
     return {
         "predictions_parquet": _parquet_rows(registry.predictions_parquet),
         "predictions_full_parquet": _parquet_rows(registry.predictions_full_parquet),
@@ -79,11 +81,12 @@ def _input_row_counts(registry: "PathRegistry") -> dict[str, int | None]:
     }
 
 
-def _wave2_completeness(registry: "PathRegistry") -> dict[str, Any]:
+def _wave2_completeness(registry: PathRegistry) -> dict[str, Any]:
     if not registry.predictions_full_parquet.exists():
         return {"status": "missing", "path": str(registry.predictions_full_parquet)}
     frame = pd.read_parquet(
-        registry.predictions_full_parquet, columns=["EIN2", "pred_label"]
+        registry.predictions_full_parquet,
+        columns=["EIN2", "pred_label"],
     )
     return {
         "status": "ok" if frame["pred_label"].notna().all() else "failed",
@@ -108,7 +111,7 @@ def _environment_lock() -> dict[str, Any]:
                 "nvidia-smi",
                 "--query-gpu=driver_version,cuda_version",
                 "--format=csv,noheader",
-            ]
+            ],
         ),
     }
 
@@ -143,7 +146,9 @@ def _file_sha256(path: Path) -> str:
 def _command_output(command: list[str]) -> str | None:
     try:
         return subprocess.check_output(
-            command, text=True, stderr=subprocess.DEVNULL
+            command,
+            text=True,
+            stderr=subprocess.DEVNULL,
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         return None
@@ -156,3 +161,19 @@ def _float_or_none(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _create_git_tag(git_sha: str | None) -> str | None:
+    """Create an annotated git tag for this run."""
+    if git_sha is None:
+        return None
+    date_part = datetime.now(UTC).strftime("%Y%m%d")
+    tag = f"sprint-hp-{date_part}-{git_sha[:7]}"
+    try:
+        subprocess.check_call(
+            ["git", "tag", "-a", tag, "-m", f"Sprint harmonize-pipeline run {git_sha}"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return tag

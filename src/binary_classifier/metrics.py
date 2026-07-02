@@ -1,44 +1,20 @@
 """Shared metric helpers for binary classifier validation.
 
 This module computes the full binary-classification metric bundle used in
-the quality-check gate (stage 04) and final evaluation (stage 07).  It
+the quality-check gate (stage 04) and final evaluation (stage 07). It
 includes confusion-matrix counts, minority-class precision/recall/F1, MCC,
-balanced accuracy, Cohen's κ, Krippendorff's α, PR-AUC, ROC-AUC, and
+balanced accuracy, Cohen's kappa, Krippendorff's alpha, PR-AUC, ROC-AUC, and
 bootstrap confidence intervals.
 
-Data provenance
-    Metrics are computed from human-coded validation or test labels and the
-corresponding silver-label predictions or model probabilities.
-
-Methodology
-    We report Matthews Correlation Coefficient (MCC) as the primary
-    agreement metric because it is informative even under strong class
-    imbalance (Chicco & Jurman, 2020).  PR-AUC and ROC-AUC are computed
-    when confidence scores are available; PR-AUC is preferred for imbalanced
-    settings because it does not reward trivial negative-class accuracy
-    (Davis & Goadrich, 2006; Saito & Rehmsmeier, 2015).  Bootstrap CIs
-    for accuracy and minority-F1 support the variance-aware freeze gate.
-    Threshold choice and expected-loss metrics follow Hernández-Orallo et
-    al. (2012).
-
-Key citations
-    * Davis & Goadrich (2006) — The relationship between precision-recall
-      and ROC curves.
-    * Saito & Rehmsmeier (2015) — The precision-recall plot is more
-      informative than the ROC plot when evaluating binary classifiers on
-      imbalanced datasets.
-    * Hernández-Orallo et al. (2012) — A unified view of performance
-      metrics: translating threshold choice into expected classification
-      loss.
-    * Chicco & Jurman (2020) — The Matthews correlation coefficient is
-      more informative than Cohen's kappa and Brier score in binary
-      classification assessment.
-
-DOIs
-    * Davis & Goadrich (2006): https://doi.org/10.1145/1143844.1143874
-    * Saito & Rehmsmeier (2015): https://doi.org/10.1371/journal.pone.0118432
-    * Hernández-Orallo et al. (2012): https://www.jmlr.org/papers/v13/hernandez-orallo12a.html
-    * Chicco & Jurman (2020): https://doi.org/10.1109/ACCESS.2021.3084050
+Metrics are computed from human-coded validation or test labels and the
+corresponding silver-label predictions or model probabilities. The MCC
+(Chicco & Jurman, 2020) is reported as the primary agreement metric because
+it is informative even under strong class imbalance. PR-AUC and ROC-AUC are
+computed when confidence scores are available; PR-AUC is preferred for
+imbalanced settings (Davis & Goadrich, 2006; Saito & Rehmsmeier, 2015).
+Bootstrap CIs for accuracy and minority-F1 support the variance-aware freeze
+gate. Threshold choice and expected-loss metrics follow Hernandez-Orallo et
+al. (2012).
 """
 
 import numpy as np
@@ -52,19 +28,6 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
     roc_auc_score,
 )
-
-
-# ---------------------------------------------------------------------------
-# Full metric bundle
-# ---------------------------------------------------------------------------
-# We report Matthews Correlation Coefficient (MCC) as the primary agreement
-# metric because it is informative even under strong class imbalance (Chicco
-# & Jurman, 2020).  PR-AUC and ROC-AUC are computed when confidence scores
-# are available; PR-AUC is preferred for imbalanced settings because it
-# does not reward trivial negative-class accuracy (Davis & Goadrich, 2006;
-# Saito & Rehmsmeier, 2015).  Threshold choice and expected-loss metrics
-# follow Hernández-Orallo et al. (2012).
-# ---------------------------------------------------------------------------
 
 
 def compute_metric_bundle(

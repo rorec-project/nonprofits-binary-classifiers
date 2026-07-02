@@ -71,7 +71,6 @@ the econometric consequences of misclassification in binary choice models.
 
 References
 ----------
-
 * Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T.
   (2023). Prediction-Powered Inference. *Science*.
   https://doi.org/10.1126/science.adi6001
@@ -104,6 +103,7 @@ References
   https://doi.org/10.1162/089976602753284446
 * Moreo, A., Esuli, A., & Sebastiani, F. (2021). QuaPy: A Python-based open
   source framework for quantification. *ACM SIGIR*.
+
 """
 
 from __future__ import annotations
@@ -182,6 +182,7 @@ class _RuleMetric:
         variance: Delta-method or Wald variance.
         ci_lower: Lower bound of the confidence interval.
         ci_upper: Upper bound of the confidence interval.
+
     """
 
     value: float
@@ -209,6 +210,7 @@ class _PrevalenceEstimate:
         variance: Non-negative variance.
         ci_lower: Lower bound of the confidence interval, clipped to [0, 1].
         ci_upper: Upper bound of the confidence interval, clipped to [0, 1].
+
     """
 
     estimate: float
@@ -240,7 +242,7 @@ class _PrevalenceEstimate:
 # ---------------------------------------------------------------------------
 
 
-def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None:
+def run_prevalence(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
     """Run stage 09 prevalence estimation from stage-07/08 artifacts.
 
     Args:
@@ -304,7 +306,7 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
                 shares["HIGH_MEDIUM"],
             ),
             "LOW": (low.estimate.estimate, low.estimate.variance, shares["LOW"]),
-        }
+        },
     )
     composite_bundle = _estimate_from_variance(
         composite_estimate,
@@ -363,8 +365,8 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
 
 
 def _load_inputs(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     predictions_path = (
         registry.predictions_full_parquet
@@ -395,12 +397,15 @@ def _load_inputs(
 
     manifest_ntee = anchor_manifest[["EIN2", "ntee_major_group"]]
     anchor = anchor_oof.merge(
-        manifest_ntee, on="EIN2", how="left", validate="one_to_one"
+        manifest_ntee,
+        on="EIN2",
+        how="left",
+        validate="one_to_one",
     )
     if anchor["ntee_major_group"].isna().any():
         missing = int(anchor["ntee_major_group"].isna().sum())
         raise ValueError(
-            f"anchor_oof_scores has {missing} EIN2 values missing from anchor_manifest"
+            f"anchor_oof_scores has {missing} EIN2 values missing from anchor_manifest",
         )
 
     predictions = _finalize_common_columns(predictions)
@@ -433,12 +438,13 @@ def _estimate_hm(
     z_value: float,
 ) -> dict[str, _PrevalenceEstimate]:
     anchor = anchor_hm.dropna(
-        subset=["human_label", "prob_calibrated_oof", "sample_prob"]
+        subset=["human_label", "prob_calibrated_oof", "sample_prob"],
     ).copy()
     dropped_anchor = len(anchor_hm) - len(anchor)
     if dropped_anchor:
         logger.warning(
-            "Dropped %d HM anchor rows with missing labels/scores", dropped_anchor
+            "Dropped %d HM anchor rows with missing labels/scores",
+            dropped_anchor,
         )
     corpus = hm_predictions.dropna(subset=["prob_calibrated"]).copy()
     dropped_corpus = len(hm_predictions) - len(corpus)
@@ -465,7 +471,7 @@ def _estimate_hm(
         or yhat_unlabeled.isna().any()
     ):
         raise ValueError(
-            "HM prevalence inputs must be numeric after missing rows are dropped"
+            "HM prevalence inputs must be numeric after missing rows are dropped",
         )
 
     unweighted_raw = ppi_prevalence(
@@ -546,6 +552,7 @@ class _LowEstimate:
         sensitivity_band: Min/max RG estimate over sensitivity CI bounds,
             or None if not computed.
         corrected: Whether the Rogan--Gladen correction was applied.
+
     """
 
     estimate: _PrevalenceEstimate
@@ -713,7 +720,7 @@ def _estimate_low_rules(
     else:
         logger.warning(
             "LOW-tier rule layer is unvalidated (missing or degenerate "
-            "sensitivity/specificity); using the uncorrected observed LOW rate."
+            "sensitivity/specificity); using the uncorrected observed LOW rate.",
         )
         estimate = p_obs
         variance = p_obs_var
@@ -772,7 +779,9 @@ def _run_cross_checks(
                 results[name] = {
                     "status": "ok",
                     "estimate": emq_prevalence(
-                        val_posteriors, val_labels, corpus_posteriors
+                        val_posteriors,
+                        val_labels,
+                        corpus_posteriors,
                     ),
                     "scope": "HIGH_MEDIUM",
                 }
@@ -788,7 +797,9 @@ def _run_cross_checks(
                 results[name] = {
                     "status": "ok",
                     "estimate": kdey_prevalence(
-                        val_posteriors, val_labels, corpus_posteriors
+                        val_posteriors,
+                        val_labels,
+                        corpus_posteriors,
                     ),
                     "scope": "HIGH_MEDIUM",
                 }
@@ -815,7 +826,7 @@ def _run_cross_checks(
 
 
 def _prevalence_by_ntee(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     anchor: pd.DataFrame,
     predictions: pd.DataFrame,
     rule_validation: Mapping[str, Any],
@@ -854,7 +865,7 @@ def _prevalence_by_ntee(
                     "ci_lower": math.nan,
                     "ci_upper": math.nan,
                     "suppressed": True,
-                }
+                },
             )
             continue
 
@@ -876,11 +887,13 @@ def _prevalence_by_ntee(
                     "ci_lower": group_estimate.ci_lower,
                     "ci_upper": group_estimate.ci_upper,
                     "suppressed": False,
-                }
+                },
             )
         except Exception as exc:
             logger.warning(
-                "NTEE %s prevalence failed; writing suppressed fallback: %s", ntee, exc
+                "NTEE %s prevalence failed; writing suppressed fallback: %s",
+                ntee,
+                exc,
             )
             rows.append(
                 {
@@ -891,7 +904,7 @@ def _prevalence_by_ntee(
                     "ci_lower": math.nan,
                     "ci_upper": math.nan,
                     "suppressed": True,
-                }
+                },
             )
     return pd.DataFrame(rows, columns=columns)
 
@@ -905,7 +918,7 @@ def _prevalence_by_ntee(
 
 
 def _group_composite_estimate(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     group_anchor: pd.DataFrame,
     group_predictions: pd.DataFrame,
     rule_validation: Mapping[str, Any],
@@ -922,7 +935,10 @@ def _group_composite_estimate(
     low_share = _raw_count(low_predictions) / total
     if hm_share > 0.0:
         hm_estimates = _estimate_hm(
-            _high_medium(group_anchor), hm_predictions, alpha=alpha, z_value=z_value
+            _high_medium(group_anchor),
+            hm_predictions,
+            alpha=alpha,
+            z_value=z_value,
         )
         hm_key = (
             "weighted_ppi" if cfg.prevalence.use_design_weights else "unweighted_ppi"
@@ -942,7 +958,7 @@ def _group_composite_estimate(
         {
             "HIGH_MEDIUM": (hm_estimate.estimate, hm_estimate.variance, hm_share),
             "LOW": (low_estimate.estimate, low_estimate.variance, low_share),
-        }
+        },
     )
     return _estimate_from_variance(point, variance, z_value)
 
@@ -972,7 +988,7 @@ def _ntee_emq_fallback(
     estimates: dict[str, tuple[float, float, float]] = {}
     if hm_share > 0.0:
         anchor_hm = _high_medium(group_anchor).dropna(
-            subset=["human_label", "prob_calibrated_oof"]
+            subset=["human_label", "prob_calibrated_oof"],
         )
         hm_corpus = hm_predictions.dropna(subset=["prob_calibrated"])
         if anchor_hm.empty or hm_corpus.empty:
@@ -1019,8 +1035,8 @@ def _ntee_emq_fallback(
 
 
 def _report(
-    cfg: "BinaryClassifierConfig",
-    registry: "PathRegistry",
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
     *,
     alpha: float,
     predictions: pd.DataFrame,
@@ -1064,7 +1080,8 @@ def _report(
             "anchor_manifest": str(registry.anchor_manifest),
             "predictions_full_parquet": str(registry.predictions_full_parquet),
             "raw_multiplicity_source": predictions.attrs.get(
-                "raw_multiplicity_source", "unknown"
+                "raw_multiplicity_source",
+                "unknown",
             ),
         },
         "n": {
@@ -1128,7 +1145,9 @@ def _report(
 
 
 def _estimate_from_variance(
-    estimate: float, variance: float, z_value: float
+    estimate: float,
+    variance: float,
+    z_value: float,
 ) -> _PrevalenceEstimate:
     point = _clip01(estimate)
     var = max(0.0, float(variance))
@@ -1207,7 +1226,9 @@ def _maybe_rule_metric(
         return None
 
     value_obj = _first_present(
-        metric, ("value", "estimate", "point", "mean"), default=None
+        metric,
+        ("value", "estimate", "point", "mean"),
+        default=None,
     )
     if value_obj is None:
         return None
@@ -1231,7 +1252,9 @@ def _find_rule_metric(rule_validation: Mapping[str, Any], name: str) -> Any:
 
 def _ci_bounds(metric: Mapping[str, Any], value: float) -> tuple[float, float]:
     ci = _first_present(
-        metric, ("ci", "wilson_ci", "confidence_interval"), default=None
+        metric,
+        ("ci", "wilson_ci", "confidence_interval"),
+        default=None,
     )
     if isinstance(ci, Mapping):
         lower = _first_present(ci, ("lower", "lo", "lcl"), default=value)
@@ -1241,10 +1264,14 @@ def _ci_bounds(metric: Mapping[str, Any], value: float) -> tuple[float, float]:
         upper = ci[1]
     else:
         lower = _first_present(
-            metric, ("lower", "ci_lower", "wilson_lower"), default=value
+            metric,
+            ("lower", "ci_lower", "wilson_lower"),
+            default=value,
         )
         upper = _first_present(
-            metric, ("upper", "ci_upper", "wilson_upper"), default=value
+            metric,
+            ("upper", "ci_upper", "wilson_upper"),
+            default=value,
         )
     lower_value = _unit_interval(lower, "ci_lower")
     upper_value = _unit_interval(upper, "ci_upper")
@@ -1274,7 +1301,7 @@ def _low_sensitivity_band(
                 estimates.append(rogan_gladen(p_obs, sens, spec))
     if not estimates:
         raise ValueError(
-            "rule metric Wilson intervals do not contain any valid RG denominator"
+            "rule metric Wilson intervals do not contain any valid RG denominator",
         )
     return {"lower": min(estimates), "upper": max(estimates)}
 
@@ -1342,10 +1369,10 @@ def _expand_series_by_multiplicity(frame: pd.DataFrame, column: str) -> pd.Serie
 
 
 def _attach_raw_multiplicity(
-    cfg: "BinaryClassifierConfig",
+    cfg: BinaryClassifierConfig,
     predictions: pd.DataFrame,
-    registry: "PathRegistry",
-    predictions_path: "Path",
+    registry: PathRegistry,
+    predictions_path: Path,
 ) -> pd.DataFrame:
     frame = predictions.copy()
     if _RAW_MULTIPLICITY_COLUMN in frame.columns:
@@ -1380,7 +1407,10 @@ def _attach_raw_multiplicity(
     keyed_deduped = deduped[["EIN2", deduped_key]].copy()
     keyed_deduped["_mission_key"] = _normalize_mission_key(keyed_deduped[deduped_key])
     multiplicities = keyed_deduped[["EIN2", "_mission_key"]].merge(
-        counts, on="_mission_key", how="left", validate="many_to_one"
+        counts,
+        on="_mission_key",
+        how="left",
+        validate="many_to_one",
     )
     frame = frame.merge(
         multiplicities[["EIN2", _RAW_MULTIPLICITY_COLUMN]],
@@ -1394,7 +1424,7 @@ def _attach_raw_multiplicity(
             logger.warning(
                 "Raw mission frame did not match prediction EIN2 values; using one "
                 "raw EIN2 per prediction row. Provide predictions_full.parquet or "
-                "the matching raw frame for per-organization prevalence."
+                "the matching raw frame for per-organization prevalence.",
             )
             frame[_RAW_MULTIPLICITY_COLUMN] = 1
             frame.attrs["raw_multiplicity_source"] = "unit_fallback_no_raw_match"
@@ -1405,14 +1435,15 @@ def _attach_raw_multiplicity(
 
 
 def _attach_anchor_multiplicity(
-    anchor: pd.DataFrame, predictions: pd.DataFrame
+    anchor: pd.DataFrame,
+    predictions: pd.DataFrame,
 ) -> pd.DataFrame:
     if _RAW_MULTIPLICITY_COLUMN not in predictions.columns:
         anchored = anchor.copy()
         anchored[_RAW_MULTIPLICITY_COLUMN] = 1
         return anchored
     multiplicities = predictions[["EIN2", _RAW_MULTIPLICITY_COLUMN]].drop_duplicates(
-        subset=["EIN2"]
+        subset=["EIN2"],
     )
     anchored = anchor.merge(
         multiplicities,
@@ -1424,7 +1455,7 @@ def _attach_anchor_multiplicity(
     return anchored
 
 
-def _mission_key_column(cfg: "BinaryClassifierConfig", frame: pd.DataFrame) -> str:
+def _mission_key_column(cfg: BinaryClassifierConfig, frame: pd.DataFrame) -> str:
     if cfg.field in frame.columns:
         return cfg.field
     if "mission_text" in frame.columns:
@@ -1441,7 +1472,7 @@ def _normalize_mission_key(series: pd.Series) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-def _require_file(path: "Path", name: str) -> None:
+def _require_file(path: Path, name: str) -> None:
     if not path.exists():
         raise RuntimeError(f"Required {name} artifact not found at {path}")
 
@@ -1513,7 +1544,7 @@ def _low_estimator_name(low: _LowEstimate) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _write_json(path: "Path", payload: Mapping[str, Any]) -> None:
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n")
 
