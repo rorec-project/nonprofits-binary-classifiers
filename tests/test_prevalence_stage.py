@@ -12,7 +12,10 @@ from binary_classifier.prevalence.composite import (
     rogan_gladen_variance,
 )
 from binary_classifier.prevalence.estimate import (
+    _RAW_MULTIPLICITY_COLUMN,
+    _estimate_hm,
     _estimate_low,
+    _estimate_low_rules,
     _z_value,
     run_prevalence,
 )
@@ -83,11 +86,14 @@ def test_run_prevalence_writes_report_and_ntee_suppression(
     assert set(report["estimand_statements"]) == {"HIGH_MEDIUM", "LOW", "composite"}
     assert report["n"] == {
         "total": 100,
+        "total_raw_ein2": 100,
         "anchor": 50,
         "anchor_high_medium": 40,
         "anchor_low": 10,
         "HIGH_MEDIUM": 80,
+        "HIGH_MEDIUM_raw_ein2": 80,
         "LOW": 20,
+        "LOW_raw_ein2": 20,
     }
     assert report["composite"]["ci_lower"] <= true_prevalence <= report["composite"]["ci_upper"]
     assert report["hm"]["weighted_ppi"]["estimate"] == pytest.approx(0.40, abs=0.05)
@@ -107,7 +113,8 @@ def test_run_prevalence_writes_report_and_ntee_suppression(
     suppressed = by_ntee.loc[by_ntee["ntee_major_group"] == "B"].iloc[0]
     unsuppressed = by_ntee.loc[by_ntee["ntee_major_group"] == "A"].iloc[0]
     assert bool(suppressed["suppressed"])
-    assert suppressed["estimator"] == "emq_fallback"
+    assert suppressed["estimator"] == "not estimated"
+    assert math.isnan(float(suppressed["estimate"]))
     assert not bool(unsuppressed["suppressed"])
     assert report["per_ntee"]["n_suppressed"] == 1
 
@@ -160,7 +167,13 @@ def _predictions_frame() -> pd.DataFrame:
                 "pred_label": label,
                 "prob_raw": probability,
                 "prob_calibrated": probability,
-                "decision_source": "rule_strong_positive" if is_low and label else "classifier",
+                "decision_source": (
+                    "rule_strong_positive"
+                    if is_low and label
+                    else "rule_short_negative"
+                    if is_low
+                    else "classifier"
+                ),
                 "tier": tier,
                 "Q": 1.0 if is_low else 3.5,
                 "ntee_major_group": ntee,
@@ -213,7 +226,7 @@ def test_estimate_low_falls_back_to_uncorrected_when_rule_unvalidated() -> None:
         }
     }
 
-    result = _estimate_low(
+    result = _estimate_low_rules(
         low_predictions,
         rule_validation,
         alpha=0.05,
@@ -226,3 +239,122 @@ def test_estimate_low_falls_back_to_uncorrected_when_rule_unvalidated() -> None:
     # Uncorrected estimate equals the observed LOW rule-label rate (3/5).
     assert result.observed_prevalence == pytest.approx(0.6)
     assert result.estimate.estimate == pytest.approx(0.6)
+
+
+def test_hm_unlabeled_probabilities_are_expanded_by_raw_multiplicity() -> None:
+    """PPI corpus mean targets raw EIN2 organizations, not unique text rows."""
+    anchor = pd.DataFrame(
+        {
+            "human_label": [0, 1],
+            "prob_calibrated_oof": [0.0, 1.0],
+            "sample_prob": [0.5, 0.5],
+        }
+    )
+    corpus = pd.DataFrame(
+        {
+            "prob_calibrated": [0.2, 0.8],
+            _RAW_MULTIPLICITY_COLUMN: [3, 1],
+        }
+    )
+
+    estimates = _estimate_hm(anchor, corpus, alpha=0.05, z_value=_z_value(0.05))
+
+    expanded_mean = ([0.2, 0.2, 0.2, 0.8])
+    assert estimates["unweighted_ppi"].estimate == pytest.approx(
+        sum(expanded_mean) / len(expanded_mean)
+    )
+
+
+def test_low_decomposition_routes_classifier_to_ppi_and_rules_to_rg() -> None:
+    """LOW classifier rows use PPI and rule rows use RG before raw-share recombination."""
+    anchor_low = pd.DataFrame(
+        {
+            "human_label": [0, 1, 1],
+            "prob_calibrated_oof": [0.0, 1.0, 0.0],
+            "sample_prob": [0.5, 0.5, 0.5],
+            "decision_source": [
+                "low_via_classifier",
+                "low_via_classifier",
+                "rule_strong_positive",
+            ],
+        }
+    )
+    low_predictions = pd.DataFrame(
+        {
+            "pred_label": [0, 1, 0],
+            "prob_calibrated": [0.2, math.nan, math.nan],
+            "decision_source": [
+                "low_via_classifier",
+                "rule_strong_positive",
+                "rule_short_negative",
+            ],
+            _RAW_MULTIPLICITY_COLUMN: [3, 1, 2],
+        }
+    )
+    rule_validation = {
+        "metrics": {
+            "sensitivity": {"value": 1.0, "ci": {"lower": 1.0, "upper": 1.0}},
+            "specificity": {"value": 1.0, "ci": {"lower": 1.0, "upper": 1.0}},
+        }
+    }
+
+    decomposed = _estimate_low(
+        anchor_low,
+        low_predictions,
+        rule_validation,
+        alpha=0.05,
+        z_value=_z_value(0.05),
+        include_sensitivity=False,
+    )
+    old_all_rg = _estimate_low_rules(
+        low_predictions,
+        rule_validation,
+        alpha=0.05,
+        z_value=_z_value(0.05),
+        include_sensitivity=False,
+    )
+
+    low_sub = decomposed.sub_strata or {}
+    assert low_sub["low_via_classifier"]["estimator"] == "ppi"
+    classifier_anchor_ppi = _estimate_hm(
+        anchor_low.loc[anchor_low["decision_source"].eq("low_via_classifier")],
+        low_predictions.loc[
+            low_predictions["decision_source"].eq("low_via_classifier")
+        ],
+        alpha=0.05,
+        z_value=_z_value(0.05),
+    )["weighted_ppi"]
+    assert low_sub["low_via_classifier"]["estimate"]["estimate"] == pytest.approx(
+        classifier_anchor_ppi.estimate
+    )
+    assert low_sub["rule"]["estimator"] == "rogan_gladen"
+    assert low_sub["low_via_classifier"]["share"] + low_sub["rule"]["share"] == pytest.approx(1.0)
+    expected = (
+        low_sub["low_via_classifier"]["share"]
+        * low_sub["low_via_classifier"]["estimate"]["estimate"]
+        + low_sub["rule"]["share"] * low_sub["rule"]["estimate"]["estimate"]
+    )
+    assert decomposed.estimate.estimate == pytest.approx(expected)
+    assert decomposed.estimate.estimate != pytest.approx(old_all_rg.estimate.estimate)
+
+
+def test_run_prevalence_uses_predictions_full_raw_tier_shares(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """Stage 09 prefers per-organization predictions_full for raw tier shares."""
+    tiny_config.prevalence.per_ntee = False
+    _write_prevalence_inputs(tiny_registry)
+    predictions = pd.read_parquet(tiny_registry.predictions_parquet)
+    duplicate = predictions.iloc[[0]].copy()
+    duplicate["EIN2"] = "RAW_DUPLICATE"
+    predictions_full = pd.concat([predictions, duplicate], ignore_index=True)
+    predictions_full.to_parquet(tiny_registry.predictions_full_parquet, index=False)
+
+    run_prevalence(tiny_config, tiny_registry)
+
+    report = json.loads(tiny_registry.prevalence_report.read_text())
+    assert report["n"]["total_raw_ein2"] == 101
+    assert report["n"]["HIGH_MEDIUM_raw_ein2"] == 81
+    assert report["tier_shares"]["HIGH_MEDIUM"] == pytest.approx(81 / 101)
+    assert sum(report["tier_shares"].values()) == pytest.approx(1.0)

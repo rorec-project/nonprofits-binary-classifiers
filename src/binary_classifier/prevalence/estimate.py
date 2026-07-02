@@ -119,6 +119,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import numpy as np
 import pandas as pd
 
+from binary_classifier.data.load import load_missions
 from binary_classifier.prevalence.composite import (
     composite,
     rogan_gladen,
@@ -148,6 +149,7 @@ _PREDICTION_COLUMNS = {
     "EIN2",
     "pred_label",
     "prob_calibrated",
+    "decision_source",
     "tier",
     "ntee_major_group",
 }
@@ -160,6 +162,7 @@ _ANCHOR_OOF_COLUMNS = {
 }
 _ANCHOR_MANIFEST_COLUMNS = {"EIN2", "tier", "ntee_major_group", "sample_prob"}
 _MISSING = object()
+_RAW_MULTIPLICITY_COLUMN = "_raw_ein2_multiplicity"
 
 
 # ---------------------------------------------------------------------------
@@ -255,15 +258,15 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
     alpha = float(cfg.prevalence.alpha)
     z_value = _z_value(alpha)
 
-    predictions, anchor, rule_validation = _load_inputs(registry)
-    total_n = len(predictions)
+    predictions, anchor, rule_validation = _load_inputs(cfg, registry)
+    total_n = _raw_count(predictions)
     hm_predictions = _high_medium(predictions)
     low_predictions = _low(predictions)
     anchor_hm = _high_medium(anchor)
     anchor_low = _low(anchor)
     shares = {
-        "HIGH_MEDIUM": len(hm_predictions) / total_n,
-        "LOW": len(low_predictions) / total_n,
+        "HIGH_MEDIUM": _raw_count(hm_predictions) / total_n,
+        "LOW": _raw_count(low_predictions) / total_n,
     }
 
     logger.info(
@@ -286,6 +289,7 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
     # specificity are available from stage-07 rule validation; otherwise it
     # falls back to the uncorrected observed rule-label rate.
     low = _estimate_low(
+        anchor_low,
         low_predictions,
         rule_validation,
         alpha=alpha,
@@ -359,14 +363,20 @@ def run_prevalence(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> N
 
 
 def _load_inputs(
+    cfg: "BinaryClassifierConfig",
     registry: "PathRegistry",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    _require_file(registry.predictions_parquet, "predictions_parquet")
+    predictions_path = (
+        registry.predictions_full_parquet
+        if registry.predictions_full_parquet.exists()
+        else registry.predictions_parquet
+    )
+    _require_file(predictions_path, "predictions_parquet")
     _require_file(registry.anchor_oof_scores, "anchor_oof_scores")
     _require_file(registry.rule_validation, "rule_validation")
     _require_file(registry.anchor_manifest, "anchor_manifest")
 
-    predictions = pd.read_parquet(registry.predictions_parquet)
+    predictions = pd.read_parquet(predictions_path)
     anchor_oof = pd.read_parquet(registry.anchor_oof_scores)
     anchor_manifest = pd.read_csv(registry.anchor_manifest)
     rule_validation = json.loads(registry.rule_validation.read_text())
@@ -395,6 +405,8 @@ def _load_inputs(
 
     predictions = _finalize_common_columns(predictions)
     anchor = _finalize_common_columns(anchor)
+    predictions = _attach_raw_multiplicity(cfg, predictions, registry, predictions_path)
+    anchor = _attach_anchor_multiplicity(anchor, predictions)
     _validate_tiers(predictions, "predictions_parquet")
     _validate_tiers(anchor, "anchor_oof_scores")
     if predictions.empty:
@@ -446,7 +458,7 @@ def _estimate_hm(
 
     y_labeled = pd.to_numeric(anchor["human_label"], errors="coerce")
     yhat_labeled = pd.to_numeric(anchor["prob_calibrated_oof"], errors="coerce")
-    yhat_unlabeled = pd.to_numeric(corpus["prob_calibrated"], errors="coerce")
+    yhat_unlabeled = _expand_series_by_multiplicity(corpus, "prob_calibrated")
     if (
         y_labeled.isna().any()
         or yhat_labeled.isna().any()
@@ -473,6 +485,36 @@ def _estimate_hm(
     return {
         "unweighted_ppi": _ppi_to_estimate(unweighted_raw, z_value),
         "weighted_ppi": _ppi_to_estimate(weighted_raw, z_value),
+    }
+
+
+def _anchor_residual_multiplicity_sensitivity(
+    anchor_hm: pd.DataFrame,
+    hm_predictions: pd.DataFrame,
+    baseline: _PrevalenceEstimate,
+    *,
+    alpha: float,
+    z_value: float,
+) -> dict[str, float | str]:
+    anchor = anchor_hm.dropna(subset=["human_label", "prob_calibrated_oof"]).copy()
+    corpus = hm_predictions.dropna(subset=["prob_calibrated"]).copy()
+    if anchor.empty or corpus.empty:
+        return {"status": "skipped", "reason": "no usable HM anchor/corpus rows"}
+    try:
+        weighted_raw = ppi_prevalence(
+            pd.to_numeric(anchor["human_label"], errors="coerce").tolist(),
+            pd.to_numeric(anchor["prob_calibrated_oof"], errors="coerce").tolist(),
+            _expand_series_by_multiplicity(corpus, "prob_calibrated").tolist(),
+            alpha=alpha,
+            w=_multiplicity(anchor).tolist(),
+        )
+    except Exception as exc:
+        return {"status": "failed", "reason": str(exc)}
+    estimate = _ppi_to_estimate(weighted_raw, z_value)
+    return {
+        "status": "ok",
+        "estimate": estimate.estimate,
+        "delta_vs_unweighted_anchor_residual": estimate.estimate - baseline.estimate,
     }
 
 
@@ -514,9 +556,11 @@ class _LowEstimate:
     specificity: _RuleMetric | None
     sensitivity_band: dict[str, float] | None
     corrected: bool = True
+    sub_strata: dict[str, Any] | None = None
 
 
 def _estimate_low(
+    anchor_low: pd.DataFrame,
     low_predictions: pd.DataFrame,
     rule_validation: Mapping[str, Any],
     *,
@@ -534,6 +578,103 @@ def _estimate_low(
             specificity=None,
             sensitivity_band=None,
             corrected=False,
+            sub_strata={},
+        )
+
+    classifier_low = _low_classifier(low_predictions)
+    rule_low = _low_rules(low_predictions)
+    total_raw = _raw_count(low_predictions)
+    components: dict[str, tuple[float, float, float]] = {}
+    sub_strata: dict[str, Any] = {
+        "total_raw_n": total_raw,
+        "classifier_raw_n": _raw_count(classifier_low),
+        "rule_raw_n": _raw_count(rule_low),
+    }
+
+    if not classifier_low.empty:
+        if "decision_source" in anchor_low.columns:
+            anchor_classifier_low = _low_classifier(anchor_low)
+        else:
+            anchor_classifier_low = anchor_low
+        low_ppi = _estimate_hm(
+            anchor_classifier_low,
+            classifier_low,
+            alpha=alpha,
+            z_value=z_value,
+        )["weighted_ppi"]
+        classifier_share = _raw_count(classifier_low) / total_raw
+        components["low_via_classifier"] = (
+            low_ppi.estimate,
+            low_ppi.variance,
+            classifier_share,
+        )
+        sub_strata["low_via_classifier"] = {
+            "estimator": "ppi",
+            "share": classifier_share,
+            "raw_n": _raw_count(classifier_low),
+            "estimate": low_ppi.as_dict(),
+        }
+
+    rule_estimate = _estimate_low_rules(
+        rule_low,
+        rule_validation,
+        alpha=alpha,
+        z_value=z_value,
+        include_sensitivity=include_sensitivity,
+    )
+    if _raw_count(rule_low) > 0:
+        rule_share = _raw_count(rule_low) / total_raw
+        components["low_rule"] = (
+            rule_estimate.estimate.estimate,
+            rule_estimate.estimate.variance,
+            rule_share,
+        )
+        sub_strata["rule"] = {
+            "estimator": "rogan_gladen"
+            if rule_estimate.corrected
+            else "uncorrected_observed",
+            "share": rule_share,
+            "raw_n": _raw_count(rule_low),
+            "estimate": rule_estimate.estimate.as_dict(),
+            "observed_prevalence": rule_estimate.observed_prevalence,
+        }
+
+    if not components:
+        raise ValueError("No usable LOW rows remain after sub-stratification")
+    point, variance = composite(components)
+    estimate = _estimate_from_variance(point, variance, z_value)
+    return _LowEstimate(
+        estimate=estimate,
+        observed_prevalence=rule_estimate.observed_prevalence,
+        observed_variance=rule_estimate.observed_variance,
+        n_rule_labeled=rule_estimate.n_rule_labeled,
+        sensitivity=rule_estimate.sensitivity,
+        specificity=rule_estimate.specificity,
+        sensitivity_band=rule_estimate.sensitivity_band,
+        corrected=rule_estimate.corrected,
+        sub_strata=sub_strata,
+    )
+
+
+def _estimate_low_rules(
+    low_predictions: pd.DataFrame,
+    rule_validation: Mapping[str, Any],
+    *,
+    alpha: float,
+    z_value: float,
+    include_sensitivity: bool,
+) -> _LowEstimate:
+    if low_predictions.empty:
+        return _LowEstimate(
+            estimate=_estimate_from_variance(0.0, 0.0, z_value),
+            observed_prevalence=0.0,
+            observed_variance=0.0,
+            n_rule_labeled=0,
+            sensitivity=_maybe_rule_metric(rule_validation, "sensitivity", alpha=alpha),
+            specificity=_maybe_rule_metric(rule_validation, "specificity", alpha=alpha),
+            sensitivity_band=None,
+            corrected=False,
+            sub_strata={},
         )
 
     low = low_predictions.dropna(subset=["pred_label"]).copy()
@@ -546,8 +687,9 @@ def _estimate_low(
     if labels.isna().any() or not labels.isin([0, 1]).all():
         raise ValueError("LOW pred_label values must be numeric 0/1")
 
-    p_obs = float(labels.mean())
-    n_low = int(len(labels))
+    weights = _multiplicity(low)
+    p_obs = float(np.average(labels.astype(float), weights=weights))
+    n_low = int(weights.sum())
     p_obs_var = p_obs * (1.0 - p_obs) / n_low
     sensitivity = _maybe_rule_metric(rule_validation, "sensitivity", alpha=alpha)
     specificity = _maybe_rule_metric(rule_validation, "specificity", alpha=alpha)
@@ -703,15 +845,12 @@ def _prevalence_by_ntee(
         n_anchor = int(len(group_anchor))
         suppressed = n_anchor < int(cfg.prevalence.ntee_min_n)
         if suppressed:
-            estimate = _ntee_emq_fallback(
-                group_anchor, group_predictions, rule_validation, z_value
-            )
             rows.append(
                 {
                     "ntee_major_group": ntee,
                     "n_anchor": n_anchor,
-                    "estimator": "emq_fallback",
-                    "estimate": estimate,
+                    "estimator": "not estimated",
+                    "estimate": math.nan,
                     "ci_lower": math.nan,
                     "ci_upper": math.nan,
                     "suppressed": True,
@@ -747,10 +886,8 @@ def _prevalence_by_ntee(
                 {
                     "ntee_major_group": ntee,
                     "n_anchor": n_anchor,
-                    "estimator": "emq_fallback",
-                    "estimate": _ntee_emq_fallback(
-                        group_anchor, group_predictions, rule_validation, z_value
-                    ),
+                    "estimator": "not estimated",
+                    "estimate": math.nan,
                     "ci_lower": math.nan,
                     "ci_upper": math.nan,
                     "suppressed": True,
@@ -776,13 +913,13 @@ def _group_composite_estimate(
     alpha: float,
     z_value: float,
 ) -> _PrevalenceEstimate:
-    total = len(group_predictions)
+    total = _raw_count(group_predictions)
     if total == 0:
         return _estimate_from_variance(0.0, 0.0, z_value)
     hm_predictions = _high_medium(group_predictions)
     low_predictions = _low(group_predictions)
-    hm_share = len(hm_predictions) / total
-    low_share = len(low_predictions) / total
+    hm_share = _raw_count(hm_predictions) / total
+    low_share = _raw_count(low_predictions) / total
     if hm_share > 0.0:
         hm_estimates = _estimate_hm(
             _high_medium(group_anchor), hm_predictions, alpha=alpha, z_value=z_value
@@ -794,6 +931,7 @@ def _group_composite_estimate(
     else:
         hm_estimate = _estimate_from_variance(0.0, 0.0, z_value)
     low_estimate = _estimate_low(
+        _low(group_anchor),
         low_predictions,
         rule_validation,
         alpha=alpha,
@@ -824,13 +962,13 @@ def _ntee_emq_fallback(
     rule_validation: Mapping[str, Any],
     z_value: float,
 ) -> float:
-    total = len(group_predictions)
+    total = _raw_count(group_predictions)
     if total == 0:
         return math.nan
     hm_predictions = _high_medium(group_predictions)
     low_predictions = _low(group_predictions)
-    hm_share = len(hm_predictions) / total
-    low_share = len(low_predictions) / total
+    hm_share = _raw_count(hm_predictions) / total
+    low_share = _raw_count(low_predictions) / total
     estimates: dict[str, tuple[float, float, float]] = {}
     if hm_share > 0.0:
         anchor_hm = _high_medium(group_anchor).dropna(
@@ -852,6 +990,7 @@ def _ntee_emq_fallback(
     if low_share > 0.0:
         try:
             low_estimate = _estimate_low(
+                _low(group_anchor),
                 low_predictions,
                 rule_validation,
                 alpha=0.05,
@@ -905,16 +1044,17 @@ def _report(
         "alpha": alpha,
         "estimand_statements": {
             "HIGH_MEDIUM": (
-                "Population prevalence of the positive label among HIGH and MEDIUM "
-                "quality mission records in predictions_parquet."
+                "Per-organization prevalence of the positive label among raw EIN2 "
+                "organizations in HIGH and MEDIUM quality mission records. Duplicate "
+                "mission texts are counted once per raw EIN2 in the unlabeled corpus mean."
             ),
             "LOW": (
-                "Population prevalence of the positive label among LOW quality mission "
-                "records, using rule labels corrected by Rogan-Gladen sensitivity and specificity."
+                "Per-organization prevalence among raw EIN2 LOW-quality records. "
+                "LOW classifier-routed rows use PPI; pure rule rows use Rogan-Gladen."
             ),
             "composite": (
-                "Population prevalence of the positive label over the full prediction corpus, "
-                "recombining HIGH+MEDIUM and LOW strata with fixed corpus tier shares."
+                "Per-organization prevalence over the full raw EIN2 prediction corpus, "
+                "recombining strata with raw-EIN2 tier shares."
             ),
         },
         "inputs": {
@@ -922,14 +1062,21 @@ def _report(
             "anchor_oof_scores": str(registry.anchor_oof_scores),
             "rule_validation": str(registry.rule_validation),
             "anchor_manifest": str(registry.anchor_manifest),
+            "predictions_full_parquet": str(registry.predictions_full_parquet),
+            "raw_multiplicity_source": predictions.attrs.get(
+                "raw_multiplicity_source", "unknown"
+            ),
         },
         "n": {
             "total": int(len(predictions)),
+            "total_raw_ein2": _raw_count(predictions),
             "anchor": int(len(anchor)),
             "anchor_high_medium": int(len(anchor_hm)),
             "anchor_low": int(len(anchor_low)),
             "HIGH_MEDIUM": int(len(hm_predictions)),
+            "HIGH_MEDIUM_raw_ein2": _raw_count(hm_predictions),
             "LOW": int(len(low_predictions)),
+            "LOW_raw_ein2": _raw_count(low_predictions),
         },
         "tier_shares": dict(shares),
         "hm": {
@@ -937,17 +1084,28 @@ def _report(
             "weighted_ppi": hm["weighted_ppi"].as_dict(),
             "unweighted_ppi": hm["unweighted_ppi"].as_dict(),
             "use_design_weights": bool(cfg.prevalence.use_design_weights),
+            "sensitivity_anchor_residual_multiplicity_weighted": (
+                _anchor_residual_multiplicity_sensitivity(
+                    anchor_hm,
+                    hm_predictions,
+                    hm["unweighted_ppi"],
+                    alpha=alpha,
+                    z_value=_z_value(alpha),
+                )
+            ),
         },
         "low": {
             "observed_prevalence": low.observed_prevalence,
             "observed_variance": low.observed_variance,
             "n_rule_labeled": low.n_rule_labeled,
             "correction_applied": low.corrected,
-            "estimator": "rogan_gladen" if low.corrected else "uncorrected_observed",
+            "estimator": _low_estimator_name(low),
+            "estimate": low.estimate.as_dict(),
             "rogan_gladen": low.estimate.as_dict(),
             "sensitivity": _rule_metric_dict(low.sensitivity),
             "specificity": _rule_metric_dict(low.specificity),
             "sensitivity_band": low.sensitivity_band,
+            "sub_strata": low.sub_strata,
         },
         "composite": composite_bundle.as_dict(),
         "cross_checks": cross_checks,
@@ -1151,6 +1309,133 @@ def _low(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.loc[frame["tier"].astype(str).str.upper() == _LOW_TIER].copy()
 
 
+def _low_classifier(frame: pd.DataFrame) -> pd.DataFrame:
+    return frame.loc[
+        frame["decision_source"].astype(str).eq("low_via_classifier")
+    ].copy()
+
+
+def _low_rules(frame: pd.DataFrame) -> pd.DataFrame:
+    source = frame["decision_source"].astype(str)
+    return frame.loc[source.str.startswith("rule_")].copy()
+
+
+def _raw_count(frame: pd.DataFrame) -> int:
+    if frame.empty:
+        return 0
+    return int(_multiplicity(frame).sum())
+
+
+def _multiplicity(frame: pd.DataFrame) -> pd.Series:
+    if _RAW_MULTIPLICITY_COLUMN not in frame.columns:
+        return pd.Series(1.0, index=frame.index)
+    values = pd.to_numeric(frame[_RAW_MULTIPLICITY_COLUMN], errors="coerce")
+    if values.isna().any() or (values <= 0).any():
+        raise ValueError("raw EIN2 multiplicities must be positive numeric values")
+    return values.astype(float)
+
+
+def _expand_series_by_multiplicity(frame: pd.DataFrame, column: str) -> pd.Series:
+    values = pd.to_numeric(frame[column], errors="coerce")
+    repeats = _multiplicity(frame).round().astype(int)
+    return values.loc[values.index.repeat(repeats)].reset_index(drop=True)
+
+
+def _attach_raw_multiplicity(
+    cfg: "BinaryClassifierConfig",
+    predictions: pd.DataFrame,
+    registry: "PathRegistry",
+    predictions_path: "Path",
+) -> pd.DataFrame:
+    frame = predictions.copy()
+    if _RAW_MULTIPLICITY_COLUMN in frame.columns:
+        frame.attrs["raw_multiplicity_source"] = "existing_column"
+        return frame
+    if predictions_path == registry.predictions_full_parquet:
+        frame[_RAW_MULTIPLICITY_COLUMN] = 1
+        frame.attrs["raw_multiplicity_source"] = "predictions_full_parquet"
+        return frame
+    try:
+        raw = load_missions(cfg, deduplicate=False)
+        deduped = load_missions(cfg, deduplicate=True)
+    except FileNotFoundError as exc:
+        logger.warning(
+            "Raw mission frame unavailable for multiplicity weighting; using "
+            "one raw EIN2 per prediction row: %s",
+            exc,
+        )
+        frame[_RAW_MULTIPLICITY_COLUMN] = 1
+        frame.attrs["raw_multiplicity_source"] = "unit_fallback_missing_raw_frame"
+        return frame
+
+    raw_key = _mission_key_column(cfg, raw)
+    deduped_key = _mission_key_column(cfg, deduped)
+    counts = (
+        raw.assign(_mission_key=_normalize_mission_key(raw[raw_key]))
+        .groupby("_mission_key", dropna=False)
+        .size()
+        .to_frame(_RAW_MULTIPLICITY_COLUMN)
+        .reset_index()
+    )
+    keyed_deduped = deduped[["EIN2", deduped_key]].copy()
+    keyed_deduped["_mission_key"] = _normalize_mission_key(keyed_deduped[deduped_key])
+    multiplicities = keyed_deduped[["EIN2", "_mission_key"]].merge(
+        counts, on="_mission_key", how="left", validate="many_to_one"
+    )
+    frame = frame.merge(
+        multiplicities[["EIN2", _RAW_MULTIPLICITY_COLUMN]],
+        on="EIN2",
+        how="left",
+        validate="one_to_one",
+    )
+    if frame[_RAW_MULTIPLICITY_COLUMN].isna().any():
+        missing = int(frame[_RAW_MULTIPLICITY_COLUMN].isna().sum())
+        if missing == len(frame):
+            logger.warning(
+                "Raw mission frame did not match prediction EIN2 values; using one "
+                "raw EIN2 per prediction row. Provide predictions_full.parquet or "
+                "the matching raw frame for per-organization prevalence."
+            )
+            frame[_RAW_MULTIPLICITY_COLUMN] = 1
+            frame.attrs["raw_multiplicity_source"] = "unit_fallback_no_raw_match"
+            return frame
+        raise ValueError(f"Missing raw multiplicity for {missing} prediction rows")
+    frame.attrs["raw_multiplicity_source"] = "raw_frame_text_counts"
+    return frame
+
+
+def _attach_anchor_multiplicity(
+    anchor: pd.DataFrame, predictions: pd.DataFrame
+) -> pd.DataFrame:
+    if _RAW_MULTIPLICITY_COLUMN not in predictions.columns:
+        anchored = anchor.copy()
+        anchored[_RAW_MULTIPLICITY_COLUMN] = 1
+        return anchored
+    multiplicities = predictions[["EIN2", _RAW_MULTIPLICITY_COLUMN]].drop_duplicates(
+        subset=["EIN2"]
+    )
+    anchored = anchor.merge(
+        multiplicities,
+        on="EIN2",
+        how="left",
+        validate="one_to_one",
+    )
+    anchored[_RAW_MULTIPLICITY_COLUMN] = anchored[_RAW_MULTIPLICITY_COLUMN].fillna(1)
+    return anchored
+
+
+def _mission_key_column(cfg: "BinaryClassifierConfig", frame: pd.DataFrame) -> str:
+    if cfg.field in frame.columns:
+        return cfg.field
+    if "mission_text" in frame.columns:
+        return "mission_text"
+    raise ValueError(f"Mission frame missing configured field {cfg.field!r}")
+
+
+def _normalize_mission_key(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("__BINARY_CLASSIFIER_MISSING_MISSION__")
+
+
 # ---------------------------------------------------------------------------
 # Input validation helpers
 # ---------------------------------------------------------------------------
@@ -1210,6 +1495,17 @@ def _rule_metric_dict(metric: _RuleMetric | None) -> dict[str, float] | None:
         "ci_lower": metric.ci_lower,
         "ci_upper": metric.ci_upper,
     }
+
+
+def _low_estimator_name(low: _LowEstimate) -> str:
+    sub_strata = low.sub_strata or {}
+    has_classifier = int(sub_strata.get("classifier_raw_n", 0)) > 0
+    has_rule = int(sub_strata.get("rule_raw_n", 0)) > 0
+    if has_classifier and has_rule:
+        return "ppi_rg_composite"
+    if has_classifier:
+        return "ppi"
+    return "rogan_gladen" if low.corrected else "uncorrected_observed"
 
 
 # ---------------------------------------------------------------------------
