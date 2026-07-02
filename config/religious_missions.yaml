@@ -148,6 +148,8 @@ evaluation:
   ece_bins: 10
   bootstrap_resamples: 2000
   length_bins: [10, 25, 50]
+  base_rate_precision_target: 0.90
+  population_base_rate: null
 
 inference:
   batch_size: 512

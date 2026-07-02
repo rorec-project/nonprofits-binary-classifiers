@@ -189,6 +189,10 @@ class EvaluationConfig(BaseModel):
         ece_bins: Number of bins for expected calibration error.
         bootstrap_resamples: Bootstrap draws for confidence intervals.
         length_bins: Word-count bin edges for length subgroup reporting.
+        base_rate_precision_target: Target deployment precision after adjusting
+            anchor operating characteristics to the population base rate.
+        population_base_rate: Optional externally supplied population base rate;
+            when omitted, stage 07 derives a design-weighted anchor fallback.
 
     """
 
@@ -202,6 +206,8 @@ class EvaluationConfig(BaseModel):
     ece_bins: int = 10
     bootstrap_resamples: int = 2000
     length_bins: list[int] = Field(default_factory=_default_length_bins)
+    base_rate_precision_target: float = 0.90
+    population_base_rate: float | None = None
 
 
 class InferenceConfig(BaseModel):

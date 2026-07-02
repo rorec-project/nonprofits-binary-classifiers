@@ -47,12 +47,65 @@ def _write_anchor_coding(registry, rows, manifest_eins=None) -> None:
         )
 
 
+def _write_silver_manifest(registry, eins) -> None:
+    registry.silver_manifest.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"EIN2": eins}).to_csv(registry.silver_manifest, index=False)
+
+
 # ── G1: labels ───────────────────────────────────────────────────────────────
 
 
 def test_complete_coding_passes_g1(tiny_config, tiny_registry) -> None:
     _full_coding(tiny_registry)
     assert validate_gates(tiny_config, tiny_registry, {"02", "04"}) == []
+
+
+def test_label_set_overlap_flagged_for_g1(tiny_config, tiny_registry) -> None:
+    _full_coding(tiny_registry)
+    _write_silver_manifest(tiny_registry, ["SILVER-1", "00-3", "ANCHOR-1"])
+    _write_anchor_coding(
+        tiny_registry,
+        [("ANCHOR-1", "high", 1)],
+        manifest_eins=["ANCHOR-1"],
+    )
+
+    problems = validate_gates(tiny_config, tiny_registry, {"04"})
+
+    assert len(problems) == 1
+    assert problems[0].startswith("G1")
+    assert "00-3" in problems[0]
+    assert "ANCHOR-1" in problems[0]
+
+
+def test_anchor_stage_checks_silver_anchor_disjointness(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    _write_silver_manifest(tiny_registry, ["SILVER-1", "ANCHOR-1"])
+    _write_coding(tiny_registry, [("GOLD-1", "validation", 1)])
+    _write_anchor_coding(
+        tiny_registry,
+        [("ANCHOR-1", "high", 1)],
+        manifest_eins=["ANCHOR-1"],
+    )
+
+    problems = validate_gates(tiny_config, tiny_registry, {"09"})
+
+    assert len(problems) == 1
+    assert problems[0].startswith("G1")
+    assert "ANCHOR-1" in problems[0]
+
+
+def test_clean_label_sets_pass_g1_disjointness(tiny_config, tiny_registry) -> None:
+    _full_coding(tiny_registry)
+    _write_silver_manifest(tiny_registry, ["SILVER-1", "SILVER-2"])
+    _write_anchor_coding(
+        tiny_registry,
+        [("ANCHOR-1", "high", 1)],
+        manifest_eins=["ANCHOR-1"],
+    )
+
+    assert validate_gates(tiny_config, tiny_registry, {"04"}) == []
 
 
 def test_blank_validation_row_flagged(tiny_config, tiny_registry) -> None:

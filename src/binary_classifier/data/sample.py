@@ -53,6 +53,7 @@ def build_silver_pool(
     target_size: int,
     seed: int,
     thresholds: QThresholdsConfig,
+    exclude_ein2: set[str] | None = None,
     floor_groups: set[str] | None = None,
     cap_groups: set[str] | None = None,
     floor_size: int = _FLOOR_SIZE,
@@ -77,6 +78,9 @@ def build_silver_pool(
         seed: Random seed for reproducibility.
         thresholds: Configured ``Q`` tier thresholds; passed explicitly so the
             sampling frame matches the YAML rather than hidden defaults.
+        exclude_ein2: Optional EIN2 values to exclude before sampling. Stage 01
+            uses this to keep silver disjoint from the human gold frame by
+            construction.
         floor_groups: Strata that receive a floor.
         cap_groups: Strata that receive a cap.
         floor_size: Minimum rows per floor group.
@@ -95,6 +99,8 @@ def build_silver_pool(
         cap_groups = _CAP_GROUPS
 
     df = df.copy()
+    if exclude_ein2:
+        df = df[~df["EIN2"].astype(str).str.strip().isin(exclude_ein2)].copy()
     df["tier"] = df["Q"].apply(lambda q: assign_tier(q, thresholds))
 
     # Restrict to HIGH + MEDIUM (Q ≥ 3.0)
@@ -274,6 +280,10 @@ def build_gold_set(
             _safe_sample_with_cell_rate(neg_df, n_clear_neg, rng),
         ]
         selected = pd.concat(draws, ignore_index=True)
+        if len(selected) > n_target:
+            selected = selected.sample(n=n_target, random_state=rng).reset_index(
+                drop=True,
+            )
 
         # Filler tops the stratum up to exactly ``n_target`` from the
         # not-yet-drawn remainder (disjoint from ``selected``, so still no
@@ -289,6 +299,11 @@ def build_gold_set(
         sampled_rows.append(stratum_sample)
 
     gold = pd.concat(sampled_rows, ignore_index=True)
+    if len(gold) < target_size <= len(pool):
+        n_fill = target_size - len(gold)
+        remainder_df = pool[~pool["EIN2"].isin(gold["EIN2"])]
+        filler = _safe_sample_with_cell_rate(remainder_df, n_fill, rng)
+        gold = pd.concat([gold, filler], ignore_index=True)
     gold = gold.sample(frac=1, random_state=rng).reset_index(drop=True)
     return gold
 
@@ -401,17 +416,6 @@ def build_sample(
     )
 
     logger.info(
-        "Building silver pool (target=%d)...",
-        cfg.sample_sizes.silver,
-    )
-    silver = build_silver_pool(
-        df,
-        target_size=cfg.sample_sizes.silver,
-        seed=cfg.SEED,
-        thresholds=cfg.q_thresholds,
-    )
-
-    logger.info(
         "Building gold set (target=%d)...",
         cfg.sample_sizes.gold,
     )
@@ -421,6 +425,22 @@ def build_sample(
         seed=cfg.SEED,
         thresholds=cfg.q_thresholds,
     )
+    _require_sample_size(gold, cfg.sample_sizes.gold, "gold")
+
+    gold_ein2 = _normalized_ein2_set(gold, "gold")
+    logger.info(
+        "Building silver pool (target=%d; excluding %d gold EIN2s)...",
+        cfg.sample_sizes.silver,
+        len(gold_ein2),
+    )
+    silver = build_silver_pool(
+        df,
+        target_size=cfg.sample_sizes.silver,
+        seed=cfg.SEED,
+        thresholds=cfg.q_thresholds,
+        exclude_ein2=gold_ein2,
+    )
+    _require_sample_size(silver, cfg.sample_sizes.silver, "silver")
 
     logger.info("Splitting gold into human sets...")
     prompt_dev, validation, test, monitor = split_human_sets(
@@ -439,6 +459,7 @@ def build_sample(
     _write_split_manifest(monitor, "monitor", registry)
 
     gold_all = pd.concat([prompt_dev, validation, test, monitor], ignore_index=True)
+    validate_label_set_disjointness(silver, gold_all)
     _write_manifest(gold_all, None, registry.gold_manifest)
 
     # Clobber protection can preserve an already-coded template even after a
@@ -446,6 +467,51 @@ def build_sample(
     # coding or intentionally use --force after changing split geometry.
     _write_gold_coding_template(gold_all, registry, force=force)
     logger.info("Done.")
+
+
+def validate_label_set_disjointness(
+    silver: pd.DataFrame,
+    gold: pd.DataFrame,
+    anchor: pd.DataFrame | None = None,
+) -> None:
+    """Require silver EIN2s to be disjoint from human gold/anchor EIN2s."""
+    silver_eins = _normalized_ein2_set(silver, "silver")
+    human_eins = _normalized_ein2_set(gold, "gold")
+    if anchor is not None:
+        human_eins |= _normalized_ein2_set(anchor, "anchor")
+    overlap = sorted(silver_eins & human_eins)
+    if overlap:
+        shown = ", ".join(overlap[:20])
+        suffix = "" if len(overlap) <= 20 else f", ... ({len(overlap)} total)"
+        raise ValueError(
+            "silver EIN2 values must be disjoint from gold/anchor EIN2 values; "
+            f"overlap: {shown}{suffix}"
+        )
+
+
+def validate_label_set_disjointness_from_registry(registry: "PathRegistry") -> int:
+    """Check persisted manifests and return the number of human EIN2s checked."""
+    if not registry.silver_manifest.exists() or not registry.gold_manifest.exists():
+        missing = [
+            str(path)
+            for path in (registry.silver_manifest, registry.gold_manifest)
+            if not path.exists()
+        ]
+        raise FileNotFoundError(
+            "Cannot check label-set disjointness; missing " + ", ".join(missing)
+        )
+    silver = pd.read_csv(registry.silver_manifest)
+    gold = pd.read_csv(registry.gold_manifest)
+    anchor = (
+        pd.read_csv(registry.anchor_manifest)
+        if registry.anchor_manifest.exists()
+        else None
+    )
+    validate_label_set_disjointness(silver, gold, anchor)
+    human_eins = _normalized_ein2_set(gold, "gold")
+    if anchor is not None:
+        human_eins |= _normalized_ein2_set(anchor, "anchor")
+    return len(human_eins)
 
 
 def _write_gold_coding_template(
@@ -574,6 +640,23 @@ def _sample_stratified_by_group(
     if not parts:
         return df.iloc[0:0].copy()
     return pd.concat(parts, ignore_index=True)
+
+
+def _normalized_ein2_set(frame: pd.DataFrame, name: str) -> set[str]:
+    if "EIN2" not in frame.columns:
+        raise ValueError(f"{name} frame missing EIN2 column")
+    return set(frame["EIN2"].astype(str).str.strip()) - {""}
+
+
+def _require_sample_size(df: pd.DataFrame, target_size: int, name: str) -> None:
+    """Fail clearly when stage 01 cannot realize a requested sample size."""
+    if len(df) == target_size:
+        return
+    raise ValueError(
+        f"Cannot build disjoint stage-01 samples: {name} sample requested "
+        f"{target_size} rows but only {len(df)} were available after sampling "
+        "constraints. Reduce sample sizes or provide a larger frame."
+    )
 
 
 def _allocate_stratum_targets(

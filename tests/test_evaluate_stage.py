@@ -67,11 +67,31 @@ def test_run_evaluation_happy_path_and_ordering(
         "prob_calibrated_oof",
         "human_label",
         "tier",
+        "decision_source",
         "sample_prob",
     ]
+    assert set(scores["decision_source"]) <= {
+        "classifier",
+        "low_via_classifier",
+        "rule_short_negative",
+        "rule_strong_positive",
+    }
     report = json.loads(tiny_registry.test_evaluation.read_text())
     assert report["acceptance"]["passed"] is True
     assert report["metadata"]["checkpoint_sha256"]
+    assert set(report["test_scores"]) == {f"T{i:04d}" for i in range(6)}
+    assert set(report["confusion_matrices"]) == {"operating", "max_f1", "base_rate"}
+    assert report["confusion_matrices"]["operating"]["confusion_matrix"] == report[
+        "metric_bundle"
+    ]["confusion_matrix"]
+    assert report["pr_curve_points"]
+    assert report["roc_curve_points"]
+    assert tiny_registry.base_rate_precision.exists()
+    base_rate = json.loads(tiny_registry.base_rate_precision.read_text())
+    assert report["metadata"]["base_rate_precision"]["threshold"] == base_rate["threshold"]
+    assert "pr_curve_points" in calibrator
+    assert "achieved_precision" in calibrator
+    assert "achieved_recall" in calibrator
 
 
 def test_run_evaluation_one_shot_refusal(
@@ -83,12 +103,29 @@ def test_run_evaluation_one_shot_refusal(
     tiny_config.evaluation.crossfit_folds = 2
     tiny_config.evaluation.calibration_methods = ["platt"]
     tiny_config.evaluation.acceptance.max_ece = 1.0
-    missions = _write_gate_artifacts(tiny_config, tiny_registry)
-    monkeypatch.setattr(evaluate_mod, "load_missions", lambda cfg: missions)
+    _write_gate_artifacts(tiny_config, tiny_registry)
+    monkeypatch.setattr(
+        evaluate_mod,
+        "load_missions",
+        lambda cfg: pytest.fail("load_missions must not run after one-shot refusal"),
+    )
+    tiny_registry.anchor_oof_scores.write_bytes(b"existing anchor oof")
+    tiny_registry.calibrator_path.write_text('{"existing": true}\n')
+    tiny_registry.rule_validation.write_text('{"existing": true}\n')
+    before = {
+        path: path.read_bytes()
+        for path in (
+            tiny_registry.anchor_oof_scores,
+            tiny_registry.calibrator_path,
+            tiny_registry.rule_validation,
+        )
+    }
     tiny_registry.test_evaluation.write_text("{}\n")
 
     with pytest.raises(RuntimeError, match="delete it explicitly to re-run"):
         run_evaluation(tiny_config, tiny_registry, predictor=TextPredictor())
+
+    assert {path: path.read_bytes() for path in before} == before
 
 
 def test_run_evaluation_acceptance_failure_raises(

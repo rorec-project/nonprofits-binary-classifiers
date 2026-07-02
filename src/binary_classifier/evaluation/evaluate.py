@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import precision_recall_curve, roc_curve
 
 from binary_classifier import metrics
 from binary_classifier.data.load import load_missions
@@ -55,8 +56,10 @@ from binary_classifier.evaluation.calibration import (
     calibration_metrics,
     crossfit_calibrate,
 )
+from binary_classifier.evaluation.base_rate import base_rate_report
 from binary_classifier.evaluation.subgroups import subgroup_report
 from binary_classifier.evaluation.thresholds import pick_threshold
+from binary_classifier.inference.router import route
 from binary_classifier.qc.preflight import (
     _validate_anchor_labels,
     _validate_test_unlock,
@@ -74,6 +77,7 @@ _ANCHOR_SCORE_COLUMNS = [
     "prob_calibrated_oof",
     "human_label",
     "tier",
+    "decision_source",
     "sample_prob",
 ]
 
@@ -103,13 +107,24 @@ def run_evaluation(
     # Verify the selected checkpoint via SHA-256 to prevent accidental drift
     # between the human-reviewed stage-06 choice and the model loaded here.
     selected = _load_and_verify_selected_model(registry)
-    scorer = (
-        predictor if predictor is not None else _load_checkpoint_predictor(selected)
-    )
 
     # G4 anchor-labels gate: prevalence estimates on LOW-quality rows cannot be
     # validated without fully coded anchor labels, so we fail early.
     _raise_gate_problems("G4", _validate_anchor_labels(cfg, registry))
+
+    # G3 test-unlock gate: the frozen test must only be scored once per
+    # checkpoint to prevent leakage during model iteration. One-shot refusal
+    # must happen before any calibration artifact is refreshed.
+    _raise_gate_problems("G3", _validate_test_unlock(cfg, registry))
+    if registry.test_evaluation.exists():
+        raise RuntimeError(
+            f"Frozen-test evaluation already exists at {registry.test_evaluation}; "
+            "delete it explicitly to re-run.",
+        )
+
+    scorer = (
+        predictor if predictor is not None else _load_checkpoint_predictor(selected)
+    )
 
     # Load the anchor set, score raw probabilities, and calibrate OOF.
     # Cross-fitted calibration avoids overfitting the calibration mapping to the
@@ -139,6 +154,7 @@ def run_evaluation(
 
     registry.ensure_dirs()
     _write_anchor_oof_scores(
+        cfg,
         registry,
         anchor=anchor,
         raw_probs=raw_anchor,
@@ -153,22 +169,24 @@ def run_evaluation(
     _write_json(registry.calibrator_path, calibrator_payload)
     logger.info("Wrote calibrator to %s", registry.calibrator_path)
 
+    base_rate_payload = base_rate_report(
+        pd.read_parquet(registry.anchor_oof_scores),
+        operating_threshold=float(calibrator_payload["threshold"]),
+        max_f1_threshold=float(calibrator_payload["max_f1_threshold"]),
+        target=float(cfg.evaluation.base_rate_precision_target),
+        population_base_rate=cfg.evaluation.population_base_rate,
+        seed=int(cfg.SEED),
+        n_resamples=int(cfg.evaluation.bootstrap_resamples),
+    )
+    _write_json(registry.base_rate_precision, base_rate_payload)
+    logger.info("Wrote base-rate precision report to %s", registry.base_rate_precision)
+
     # Validate the LOW-tier rule layer on the anchor set. Rules are the only
     # source of labels for LOW-quality rows, so their sensitivity/specificity
     # must be quantified before prevalence estimation can use them.
     rule_report = _rule_validation(anchor)
     _write_json(registry.rule_validation, rule_report)
     logger.info("Wrote rule validation to %s", registry.rule_validation)
-
-    # G3 test-unlock gate: the frozen test must only be scored once per
-    # checkpoint to prevent leakage during model iteration. One-shot refusal
-    # forces explicit deletion before any re-run.
-    _raise_gate_problems("G3", _validate_test_unlock(cfg, registry))
-    if registry.test_evaluation.exists():
-        raise RuntimeError(
-            f"Frozen-test evaluation already exists at {registry.test_evaluation}; "
-            "delete it explicitly to re-run.",
-        )
 
     test = _read_frozen_test_labels(registry, missions)
 
@@ -214,6 +232,7 @@ def run_evaluation(
         y_prob=calibrated_test,
         anchor_calibration=anchor_calibration,
         calibrator_payload=calibrator_payload,
+        base_rate_payload=base_rate_payload,
     )
     _write_json(registry.test_evaluation, report)
     logger.info("Wrote frozen-test evaluation to %s", registry.test_evaluation)
@@ -385,6 +404,7 @@ def _predict_positive_probabilities(predictor: Any, texts: Sequence[str]) -> np.
 
 
 def _write_anchor_oof_scores(
+    cfg: "BinaryClassifierConfig",
     registry: "PathRegistry",
     *,
     anchor: pd.DataFrame,
@@ -398,6 +418,14 @@ def _write_anchor_oof_scores(
             "prob_calibrated_oof": np.asarray(calibrated_probs, dtype=float),
             "human_label": anchor["human_label"].astype(int),
             "tier": anchor["tier"].astype(str),
+            "decision_source": [
+                route(text, tier, cfg)[0]
+                for text, tier in zip(
+                    anchor["mission_text"],
+                    anchor["tier"],
+                    strict=True,
+                )
+            ],
             "sample_prob": anchor["sample_prob"].astype(float),
         },
         columns=_ANCHOR_SCORE_COLUMNS,
@@ -421,7 +449,10 @@ def _calibrator_payload(
         "threshold": threshold_report["threshold"],
         "threshold_policy": threshold_report["policy"],
         "precision_floor": float(cfg.evaluation.precision_floor),
+        "achieved_precision": threshold_report["achieved_precision"],
+        "achieved_recall": threshold_report["achieved_recall"],
         "max_f1_threshold": threshold_report["max_f1_threshold"],
+        "pr_curve_points": threshold_report["pr_curve_points"],
         "fitted_on": "anchor",
         "crossfit_folds": int(calibration_report["crossfit_folds"]),
         "anchor_oof_scores_path": str(registry.anchor_oof_scores),
@@ -545,6 +576,7 @@ def _test_report(
     y_prob: np.ndarray,
     anchor_calibration: Mapping[str, Any],
     calibrator_payload: Mapping[str, Any],
+    base_rate_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Assemble the frozen-test report (metrics, subgroups, acceptance verdict).
 
@@ -556,8 +588,18 @@ def _test_report(
     from the design-weighted anchor sample via PPI, not from this report.
     """
     report_df = test.rename(columns={"mission_text": "text"}).copy()
+    y_true = test["human_label"].astype(int).to_numpy()
+    thresholds = _report_thresholds(calibrator_payload, base_rate_payload)
     return {
         "metric_bundle": dict(metric_bundle),
+        "test_scores": _test_scores(test, y_true, y_prob),
+        "confusion_matrices": _threshold_confusion_matrices(
+            y_true,
+            y_prob,
+            thresholds,
+        ),
+        "pr_curve_points": _sklearn_pr_curve_points(y_true, y_prob),
+        "roc_curve_points": _sklearn_roc_curve_points(y_true, y_prob),
         "subgroups": subgroup_report(
             report_df,
             test["human_label"].astype(int).tolist(),
@@ -575,11 +617,87 @@ def _test_report(
             "checkpoint_sha256": selected.get("checkpoint_sha256"),
             "calibrator_path": str(registry.calibrator_path),
             "calibrator": dict(calibrator_payload),
+            "base_rate_precision_path": str(registry.base_rate_precision),
+            "base_rate_precision": dict(base_rate_payload),
             "config_hash": _config_hash(cfg),
             "git_sha": _git_sha(),
             "date": datetime.now(UTC).isoformat(),
         },
     }
+
+
+def _report_thresholds(
+    calibrator_payload: Mapping[str, Any],
+    base_rate_payload: Mapping[str, Any],
+) -> dict[str, float]:
+    return {
+        "operating": float(calibrator_payload["threshold"]),
+        "max_f1": float(calibrator_payload["max_f1_threshold"]),
+        "base_rate": float(base_rate_payload["threshold"]),
+    }
+
+
+def _test_scores(
+    test: pd.DataFrame,
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+) -> dict[str, dict[str, float | int]]:
+    return {
+        str(ein2): {"y_true": int(label), "prob_calibrated": float(prob)}
+        for ein2, label, prob in zip(test["EIN2"], y_true, y_prob, strict=True)
+    }
+
+
+def _threshold_confusion_matrices(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    thresholds: Mapping[str, float],
+) -> dict[str, dict[str, Any]]:
+    matrices: dict[str, dict[str, Any]] = {}
+    for name, threshold in thresholds.items():
+        y_pred = (y_prob >= threshold).astype(int)
+        matrices[name] = {
+            "threshold": float(threshold),
+            "confusion_matrix": _confusion_matrix_counts(y_true, y_pred),
+        }
+    return matrices
+
+
+def _confusion_matrix_counts(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> dict[str, int]:
+    return {
+        "tn": int(np.sum((y_true == 0) & (y_pred == 0))),
+        "fp": int(np.sum((y_true == 0) & (y_pred == 1))),
+        "fn": int(np.sum((y_true == 1) & (y_pred == 0))),
+        "tp": int(np.sum((y_true == 1) & (y_pred == 1))),
+    }
+
+
+def _sklearn_pr_curve_points(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+) -> list[dict[str, float | None]]:
+    precision, recall, thresholds = precision_recall_curve(y_true, y_prob)
+    points: list[dict[str, float | None]] = []
+    for idx, (p, r) in enumerate(zip(precision, recall, strict=True)):
+        threshold = None if idx >= len(thresholds) else float(thresholds[idx])
+        points.append(
+            {"threshold": threshold, "precision": float(p), "recall": float(r)}
+        )
+    return points
+
+
+def _sklearn_roc_curve_points(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+) -> list[dict[str, float]]:
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    return [
+        {"threshold": float(threshold), "fpr": float(fp), "tpr": float(tp)}
+        for fp, tp, threshold in zip(fpr, tpr, thresholds, strict=True)
+    ]
 
 
 # Acceptance gate is max_ece-only for this pass. Brier and log-loss are

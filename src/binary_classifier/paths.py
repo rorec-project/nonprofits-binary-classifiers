@@ -248,6 +248,11 @@ class PathRegistry:
         return self.evaluation_dir / "rule_validation.json"
 
     @property
+    def base_rate_precision(self) -> Path:
+        """Base-rate-adjusted precision report."""
+        return self.evaluation_dir / "base_rate_precision.json"
+
+    @property
     def predictions_dir(self) -> Path:
         """Directory for inference-at-scale predictions."""
         return self.processed_dir / "predictions"

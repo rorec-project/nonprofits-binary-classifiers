@@ -16,6 +16,7 @@ from binary_classifier.data.sample import (
     build_sample,
     build_silver_pool,
     split_human_sets,
+    validate_label_set_disjointness,
 )
 from binary_classifier.paths import PathRegistry
 
@@ -231,6 +232,22 @@ def test_silver_inclusion_prob_uses_positive_negative_cell_rates() -> None:
     assert set(silver["inclusion_prob"]) != {10 / 20}
 
 
+def test_build_silver_pool_excludes_reserved_ein2s() -> None:
+    """Silver helper can anti-join a preselected human label frame."""
+    silver = build_silver_pool(
+        _one_stratum_enrichment_frame(),
+        target_size=10,
+        seed=42,
+        thresholds=QThresholdsConfig(),
+        exclude_ein2={"POS-000", " NEG-000 "},
+        floor_groups=set(),
+        cap_groups=set(),
+    )
+
+    assert len(silver) == 10
+    assert {"POS-000", "NEG-000"}.isdisjoint(silver["EIN2"])
+
+
 def test_gold_quota_cell_rate_uses_quota_cell_rates() -> None:
     """Gold's ``quota_cell_rate`` reflects per-cell draw rates, not a marginal.
 
@@ -332,8 +349,11 @@ def test_build_gold_set_uses_configured_q_thresholds() -> None:
     assert tiers_by_ein["HIGHISH-ROW"] == "MEDIUM"
 
 
-def test_build_sample_threads_configured_q_thresholds(monkeypatch, tmp_path) -> None:
-    """Stage 01 must pass ``cfg.q_thresholds`` into both sampling builders."""
+def test_build_sample_fails_when_disjoint_samples_are_impossible(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Stage 01 must not silently overlap gold and silver on tiny frames."""
     thresholds = QThresholdsConfig(HIGH=5.5, MEDIUM=4.5)
     frame = _threshold_boundary_frame()
     q_by_text = dict(zip(frame["mission_text"], frame["Q"], strict=True))
@@ -358,17 +378,26 @@ def test_build_sample_threads_configured_q_thresholds(monkeypatch, tmp_path) -> 
         lambda text: q_by_text[text],
     )
 
+    with pytest.raises(ValueError, match="Cannot build disjoint stage-01 samples"):
+        build_sample(cfg, registry)
+
+
+def test_build_sample_writes_disjoint_silver_and_gold(tmp_path) -> None:
+    """Stage 01 constructs persisted silver/gold manifests disjointly."""
+    cfg = BinaryClassifierConfig(
+        data=DataConfig(allow_synthetic=True),
+        sample_sizes=SampleSizesConfig(silver=400, gold=120, prompt_dev=20, monitor=10),
+    )
+    registry = PathRegistry.from_config(cfg, root=tmp_path)
+
     build_sample(cfg, registry)
 
     silver = pd.read_csv(registry.silver_manifest)
     gold = pd.read_csv(registry.gold_manifest)
-    silver_tiers = silver.set_index("EIN2")["tier"].to_dict()
-    gold_tiers = gold.set_index("EIN2")["tier"].to_dict()
 
-    assert set(silver["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
-    assert set(gold["EIN2"]) == {"MID-ROW", "HIGHISH-ROW"}
-    assert silver_tiers["HIGHISH-ROW"] == "MEDIUM"
-    assert gold_tiers["HIGHISH-ROW"] == "MEDIUM"
+    assert len(silver) == 400
+    assert len(gold) == 120
+    assert set(silver["EIN2"]).isdisjoint(gold["EIN2"])
 
 
 def test_build_sample_emits_template_from_synthetic(tmp_path) -> None:
@@ -390,3 +419,25 @@ def test_build_sample_emits_template_from_synthetic(tmp_path) -> None:
     monitor = pd.read_csv(registry.monitor_manifest)
     assert "EIN2" in monitor.columns
     assert set(monitor["split"]) == {"monitor"}
+    silver = pd.read_csv(registry.silver_manifest)
+    gold = pd.read_csv(registry.gold_manifest)
+    assert set(silver["EIN2"]).isdisjoint(gold["EIN2"])
+
+
+def test_label_set_disjointness_rejects_silver_gold_anchor_overlap() -> None:
+    silver = pd.DataFrame({"EIN2": ["S1", "OVERLAP", "ANCHOR"]})
+    gold = pd.DataFrame({"EIN2": ["G1", " OVERLAP "]})
+    anchor = pd.DataFrame({"EIN2": ["ANCHOR"]})
+
+    with pytest.raises(ValueError, match="OVERLAP") as excinfo:
+        validate_label_set_disjointness(silver, gold, anchor)
+
+    assert "ANCHOR" in str(excinfo.value)
+
+
+def test_label_set_disjointness_allows_clean_sets() -> None:
+    validate_label_set_disjointness(
+        pd.DataFrame({"EIN2": ["S1", "S2"]}),
+        pd.DataFrame({"EIN2": ["G1"]}),
+        pd.DataFrame({"EIN2": ["A1"]}),
+    )

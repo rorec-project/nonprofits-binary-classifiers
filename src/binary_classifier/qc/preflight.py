@@ -26,6 +26,7 @@ from collections.abc import Iterable
 import pandas as pd
 
 from binary_classifier.config import load_slate, load_test_unlock
+from binary_classifier.data.sample import validate_label_set_disjointness_from_registry
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -67,6 +68,9 @@ def validate_gates(
     if needed_splits:
         problems.extend(_validate_labels(registry, needed_splits))
 
+    if needed_splits or stages & {"07", "09"}:
+        problems.extend(_validate_label_set_disjointness(registry))
+
     # G2 — confirmed production slate (stage 03 only).
     if "03" in stages:
         problems.extend(_validate_slate(cfg, registry))
@@ -80,6 +84,17 @@ def validate_gates(
         problems.extend(_validate_test_unlock(cfg, registry))
 
     return problems
+
+
+def _validate_label_set_disjointness(registry: "PathRegistry") -> list[str]:
+    """Check that silver excludes gold and anchor EIN2s when manifests exist."""
+    try:
+        validate_label_set_disjointness_from_registry(registry)
+    except FileNotFoundError:
+        return []
+    except ValueError as exc:
+        return [f"G1: {exc}"]
+    return []
 
 
 # ── G1: human labels ─────────────────────────────────────────────────────────
