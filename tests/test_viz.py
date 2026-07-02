@@ -28,6 +28,7 @@ from binary_classifier.viz import (
     documentation_curve,
     frozen_test_confusion_matrices,
     frozen_test_curves,
+    threshold_sweep_plot,
     ngram_log_odds,
     pr_curve,
     prevalence_decomposition,
@@ -180,6 +181,33 @@ def test_score_distribution_by_tier_label_renders_tmp_png(tmp_path):
             ax,
         )
         out = tmp_path / "score_distribution.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+def test_threshold_sweep_plot_renders_tmp_png(tmp_path):
+    predictions = pd.DataFrame(
+        {
+            "prob_calibrated": [0.02, 0.08, 0.15, 0.62, 0.72, 0.91],
+            "tier": ["HIGH", "HIGH", "MEDIUM", "MEDIUM", "LOW", "LOW"],
+            "pred_label": [0, 1, 1, 1, 1, 1],
+            "pred_label_baserate": [0, 0, 1, 1, 1, 1],
+            "pred_label_maxf1": [0, 0, 0, 1, 1, 1],
+        }
+    )
+    anchor_oof = pd.DataFrame(
+        {
+            "prob_calibrated_oof": [0.03, 0.12, 0.25, 0.55, 0.75, 0.88],
+            "human_label": [0, 0, 1, 0, 1, 1],
+        }
+    )
+    thresholds = {"operating": 0.0577, "base_rate": 0.094, "max_f1": 0.608}
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        threshold_sweep_plot(predictions, thresholds, anchor_oof, ax)
+        out = tmp_path / "threshold_sweep.png"
         fig.savefig(out)
         assert out.stat().st_size > 0
     finally:

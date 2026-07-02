@@ -26,6 +26,7 @@ from binary_classifier.viz import (
     documentation_curve,
     frozen_test_confusion_matrices,
     frozen_test_curves,
+    threshold_sweep_plot,
     ngram_log_odds,
     prevalence_decomposition,
     prevalence_forest,
@@ -92,6 +93,7 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
         _maybe_render_frozen_test_confusion_matrices,
         _maybe_render_reliability_diagram,
         _maybe_render_score_distribution,
+        _maybe_render_threshold_sweep,
         _maybe_render_prevalence_forest,
         _maybe_render_prevalence_decomposition,
         _maybe_render_rule_validation_intervals,
@@ -412,6 +414,37 @@ def _maybe_render_score_distribution(
         )
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
         logger.warning("Skipping score distribution from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_threshold_sweep(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render threshold-sweep dual-axis plot from stage-08 predictions."""
+    path = registry.predictions_parquet
+    if not path.exists():
+        logger.warning("Skipping threshold sweep; missing input: %s", path)
+        return False
+    if not registry.anchor_oof_scores.exists():
+        logger.warning(
+            "Skipping threshold sweep; missing anchor OOF scores: %s",
+            registry.anchor_oof_scores,
+        )
+        return False
+    try:
+        predictions = pd.read_parquet(path)
+        thresholds = _score_distribution_thresholds(registry)
+        anchor_oof = pd.read_parquet(registry.anchor_oof_scores)
+        _save_plot(
+            registry,
+            "threshold_sweep",
+            lambda ax: threshold_sweep_plot(predictions, thresholds, anchor_oof, ax),
+            figsize=figure_size(width=PAGE_WIDTH, height=5.0),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping threshold sweep from %s: %s", path, exc)
         return False
     return True
 

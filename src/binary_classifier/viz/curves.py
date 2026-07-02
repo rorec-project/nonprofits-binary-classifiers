@@ -536,3 +536,115 @@ def _extract_points(
             rows.append(cast(Mapping[str, Any], point))
         return rows
     raise ValueError("Serialized points must be a mapping or sequence of mappings.")
+
+
+def threshold_sweep_plot(
+    predictions: pd.DataFrame,
+    thresholds: Mapping[str, float],
+    anchor_oof: pd.DataFrame,
+    ax: Axes,
+) -> None:
+    """Plot threshold-sweep dual-axis curves faceted by quality tier."""
+    required = {"prob_calibrated", "tier", "pred_label", "pred_label_baserate", "pred_label_maxf1"}
+    missing = required - set(predictions.columns)
+    if missing:
+        raise ValueError(f"predictions missing columns: {sorted(missing)}")
+
+    frame = predictions.copy()
+    frame["prob_calibrated"] = pd.to_numeric(frame["prob_calibrated"], errors="coerce")
+    frame = frame.dropna(subset=["prob_calibrated", "tier"])
+    if frame.empty:
+        raise ValueError("No finite prediction scores to plot.")
+
+    frame["tier"] = frame["tier"].astype(str).str.upper()
+    tiers = sorted(frame["tier"].unique())
+
+    oof = anchor_oof.copy()
+    oof["prob_calibrated_oof"] = pd.to_numeric(oof["prob_calibrated_oof"], errors="coerce")
+    oof["human_label"] = pd.to_numeric(oof["human_label"], errors="coerce")
+    oof = oof.dropna(subset=["prob_calibrated_oof", "human_label"])
+
+    sweep = np.linspace(0.0, 1.0, 200)
+    pct_positive: dict[str, np.ndarray] = {}
+    precision: np.ndarray = np.full_like(sweep, np.nan)
+
+    for thresh_idx, thresh in enumerate(sweep):
+        tp = ((oof["prob_calibrated_oof"] >= thresh) & (oof["human_label"] == 1)).sum()
+        fp = ((oof["prob_calibrated_oof"] >= thresh) & (oof["human_label"] == 0)).sum()
+        if tp + fp > 0:
+            precision[thresh_idx] = tp / (tp + fp)
+
+        for tier in tiers:
+            tier_mask = frame["tier"] == tier
+            if tier not in pct_positive:
+                pct_positive[tier] = np.full_like(sweep, np.nan)
+            pct_positive[tier][thresh_idx] = (
+                frame.loc[tier_mask, "prob_calibrated"] >= thresh
+            ).mean()
+
+    low_band, high_band = _threshold_band(thresholds)
+
+    fig = ax.figure
+    ax.remove()
+    axes = fig.subplots(len(tiers), 1, sharex=True, squeeze=False).ravel()
+
+    for tier, tier_ax in zip(tiers, axes, strict=True):
+        if low_band < high_band:
+            tier_ax.axvspan(
+                low_band,
+                high_band,
+                color=LIGHT_GREY,
+                alpha=0.25,
+                linewidth=0,
+            )
+
+        tier_ax.plot(
+            sweep,
+            pct_positive[tier] * 100,
+            color=OKABE_ITO_BLUE,
+            linewidth=1.2,
+            label="Predicted positive (%)",
+        )
+
+        tier_ax_twin = tier_ax.twinx()
+        tier_ax_twin.plot(
+            sweep,
+            precision * 100,
+            color=OKABE_ITO_ORANGE,
+            linewidth=1.2,
+            linestyle="--",
+            label="Precision (%)",
+        )
+
+        for name, threshold in thresholds.items():
+            tier_ax.axvline(
+                threshold,
+                color=_threshold_color(name),
+                linestyle=_threshold_linestyle(name),
+                linewidth=0.9,
+                label=name.replace("_", " ").title(),
+            )
+
+        tier_ax.set_ylabel(f"{tier}\nPredicted positive (%)", color=OKABE_ITO_BLUE)
+        tier_ax_twin.set_ylabel("Precision (%)", color=OKABE_ITO_ORANGE)
+        tier_ax.set_ylim(0, 100)
+        tier_ax_twin.set_ylim(0, 100)
+        tier_ax.grid(alpha=0.20)
+
+        handles1, labels1 = tier_ax.get_legend_handles_labels()
+        handles2, labels2 = tier_ax_twin.get_legend_handles_labels()
+        tier_ax.legend(
+            handles=handles1 + handles2,
+            labels=labels1 + labels2,
+            loc="upper right",
+            fontsize=6.5,
+        )
+
+    axes[0].set_title("Threshold-sweep: predicted positive rate and precision by tier")
+    axes[-1].set_xlabel("Threshold")
+
+    logger.info(
+        "Rendered threshold-sweep plot for %d tiers, %d sweep points",
+        len(tiers),
+        len(sweep),
+    )
