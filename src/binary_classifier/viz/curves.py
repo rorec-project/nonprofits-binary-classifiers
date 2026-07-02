@@ -6,9 +6,18 @@ import logging
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import pandas as pd
 
-from binary_classifier.viz.style import OKABE_ITO_BLACK, OKABE_ITO_BLUE
+from binary_classifier.viz.style import (
+    LIGHT_GREY,
+    MUTED_GREY,
+    OKABE_ITO_BLACK,
+    OKABE_ITO_BLUE,
+    OKABE_ITO_BLUISH_GREEN,
+    OKABE_ITO_ORANGE,
+    OKABE_ITO_VERMILLION,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -90,6 +99,175 @@ def pr_curve(points: object, ax: "Axes") -> None:
     logger.info("Rendered PR curve with %d points", len(frame))
 
 
+def frozen_test_curves(payload: Mapping[str, Any], ax: "Axes") -> None:
+    """Plot frozen-test PR and ROC curves from persisted test-score artifacts."""
+    if not isinstance(payload.get("test_scores"), Mapping):
+        raise ValueError("test_evaluation payload missing test_scores block.")
+    pr_frame = _points_frame(
+        payload.get("pr_curve_points"), required=("recall", "precision")
+    ).sort_values("recall")
+    roc_frame = _points_frame(
+        payload.get("roc_curve_points"),
+        required=("fpr", "tpr"),
+        containers=("roc_curve_points", "points"),
+    ).sort_values("fpr")
+
+    ax.plot(pr_frame["recall"], pr_frame["precision"], color=OKABE_ITO_BLUE, label="PR")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("Frozen-test precision-recall curve")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.05)
+    _annotate_threshold_points(ax, pr_frame, payload)
+
+    inset = ax.inset_axes((0.56, 0.12, 0.40, 0.40))
+    inset.plot([0.0, 1.0], [0.0, 1.0], color=MUTED_GREY, linestyle="--", linewidth=0.8)
+    inset.plot(roc_frame["fpr"], roc_frame["tpr"], color=OKABE_ITO_ORANGE, label="ROC")
+    inset.set_xlabel("FPR", fontsize=7)
+    inset.set_ylabel("TPR", fontsize=7)
+    inset.set_title("ROC", fontsize=8)
+    inset.set_xlim(0.0, 1.0)
+    inset.set_ylim(0.0, 1.0)
+    inset.grid(alpha=0.20)
+    logger.info("Rendered frozen-test curves with %d PR points", len(pr_frame))
+
+
+def score_distribution_by_tier_label(
+    predictions: pd.DataFrame,
+    thresholds: Mapping[str, float],
+    ax: "Axes",
+) -> None:
+    """Plot calibrated-score distributions by quality tier and predicted label."""
+    required = {"prob_calibrated", "tier", "pred_label"}
+    missing = required - set(predictions.columns)
+    if missing:
+        raise ValueError(f"predictions missing columns: {sorted(missing)}")
+    frame = predictions.copy()
+    frame["prob_calibrated"] = pd.to_numeric(frame["prob_calibrated"], errors="coerce")
+    frame = frame.dropna(subset=["prob_calibrated", "tier", "pred_label"])
+    if frame.empty:
+        raise ValueError("No finite prediction scores to plot.")
+
+    tiers = sorted(frame["tier"].astype(str).str.upper().unique())
+    colors = {0: OKABE_ITO_BLUE, 1: OKABE_ITO_ORANGE}
+    bins = np.linspace(0.0, 1.0, 31)
+    low_band, high_band = _threshold_band(thresholds)
+    fig = ax.figure
+    ax.remove()
+    axes = fig.subplots(len(tiers), 1, sharex=True, squeeze=False).ravel()
+    for tier, tier_ax in zip(tiers, axes, strict=True):
+        group = frame.loc[frame["tier"].astype(str).str.upper() == tier]
+        if low_band < high_band:
+            tier_ax.axvspan(
+                low_band, high_band, color=LIGHT_GREY, alpha=0.25, linewidth=0
+            )
+        for label_value, label_group in group.groupby("pred_label", sort=True):
+            numeric_label = int(float(label_value))
+            tier_ax.hist(
+                label_group["prob_calibrated"],
+                bins=bins,
+                histtype="stepfilled",
+                alpha=0.32,
+                density=True,
+                color=colors.get(numeric_label, MUTED_GREY),
+                label=f"pred_label={numeric_label}",
+            )
+        for name, threshold in thresholds.items():
+            tier_ax.axvline(
+                threshold,
+                color=_threshold_color(name),
+                linestyle=_threshold_linestyle(name),
+                linewidth=0.9,
+            )
+        tier_ax.set_ylabel(tier)
+        tier_ax.grid(axis="x", alpha=0.20)
+    axes[0].set_title("Calibrated-score distribution by tier and label")
+    axes[-1].set_xlabel("Calibrated probability")
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        axes[0].legend(handles, labels, loc="upper right")
+    logger.info("Rendered score distributions for %d tiers", len(tiers))
+
+
+def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: "Axes") -> None:
+    """Render frozen-test confusion matrices at persisted operating thresholds."""
+    matrices = payload.get("confusion_matrices")
+    if not isinstance(matrices, Mapping):
+        raise ValueError("test_evaluation payload missing confusion_matrices block.")
+    names = [name for name in ("operating", "max_f1", "base_rate") if name in matrices]
+    if not names:
+        raise ValueError("No operating/max_f1/base_rate confusion matrices found.")
+
+    fig = ax.figure
+    ax.remove()
+    axes = fig.subplots(1, len(names), squeeze=False).ravel()
+    for name, matrix_ax in zip(names, axes, strict=True):
+        item = matrices[name]
+        if not isinstance(item, Mapping):
+            raise ValueError(f"confusion matrix {name!r} must be a mapping.")
+        counts = item.get("confusion_matrix", item)
+        if not isinstance(counts, Mapping):
+            raise ValueError(f"confusion matrix {name!r} missing counts.")
+        values = np.array(
+            [
+                [int(counts.get("tn", 0)), int(counts.get("fp", 0))],
+                [int(counts.get("fn", 0)), int(counts.get("tp", 0))],
+            ]
+        )
+        matrix_ax.imshow(values, cmap="Blues", vmin=0)
+        for row in range(2):
+            for col in range(2):
+                matrix_ax.text(
+                    col, row, str(values[row, col]), ha="center", va="center"
+                )
+        threshold = item.get("threshold")
+        suffix = "" if threshold is None else f"\nthr={float(threshold):.3f}"
+        matrix_ax.set_title(f"{name.replace('_', ' ').title()}{suffix}")
+        matrix_ax.set_xticks([0, 1], labels=["Pred 0", "Pred 1"])
+        matrix_ax.set_yticks([0, 1], labels=["True 0", "True 1"])
+    logger.info("Rendered %d frozen-test confusion matrices", len(names))
+
+
+def subgroup_performance(subgroups: object, ax: "Axes") -> None:
+    """Plot subgroup F1/FPR/FNR dot diagnostics from ``test_evaluation``."""
+    frame = pd.DataFrame(_extract_points(subgroups, ("subgroups", "points")))
+    if frame.empty:
+        raise ValueError("No subgroup rows to plot.")
+    required = {"grouping", "value", "n", "minority_f1", "fpr", "fnr", "suppressed"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"subgroup rows missing columns: {sorted(missing)}")
+    frame = frame.loc[~frame["suppressed"].astype(bool)].copy()
+    if frame.empty:
+        raise ValueError("All subgroup rows are suppressed.")
+    for metric in ("minority_f1", "fpr", "fnr"):
+        frame[metric] = pd.to_numeric(frame[metric], errors="coerce")
+    frame = frame.dropna(subset=["minority_f1", "fpr", "fnr"])
+    if frame.empty:
+        raise ValueError("No finite subgroup metrics to plot.")
+    frame["label"] = frame.apply(
+        lambda row: f"{row['grouping']}={row['value']} (n={int(row['n'])})", axis=1
+    )
+    frame = frame.sort_values(["grouping", "value"]).reset_index(drop=True)
+    y = np.arange(len(frame), dtype=float)
+    for metric, color, marker in (
+        ("minority_f1", OKABE_ITO_BLUE, "o"),
+        ("fpr", OKABE_ITO_ORANGE, "s"),
+        ("fnr", OKABE_ITO_BLUISH_GREEN, "D"),
+    ):
+        ax.scatter(
+            frame[metric], y, label=metric.replace("_", " "), color=color, marker=marker
+        )
+    ax.set_yticks(y, labels=frame["label"].to_list())
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("Metric value")
+    ax.set_ylabel("Subgroup")
+    ax.set_title("Frozen-test subgroup performance")
+    ax.legend(loc="lower right")
+    ax.grid(axis="x", alpha=0.25)
+    logger.info("Rendered subgroup performance for %d rows", len(frame))
+
+
 def reliability_diagram(points: object, ax: "Axes", ece: float | None = None) -> None:
     """Plot a reliability diagram from serialized calibration-bin points.
 
@@ -146,6 +324,95 @@ def reliability_diagram(points: object, ax: "Axes", ece: float | None = None) ->
     ax.set_ylim(0.0, 1.0)
     ax.grid(alpha=0.25)
     logger.info("Rendered reliability diagram with %d bins", len(frame))
+
+
+def _annotate_threshold_points(
+    ax: "Axes",
+    pr_frame: pd.DataFrame,
+    payload: Mapping[str, Any],
+) -> None:
+    thresholds = _thresholds_from_payload(payload)
+    for name, threshold in thresholds.items():
+        point = _nearest_threshold_point(pr_frame, threshold)
+        ax.scatter(
+            [point["recall"]],
+            [point["precision"]],
+            s=28,
+            color=_threshold_color(name),
+            marker="o",
+            zorder=3,
+            label=name.replace("_", " "),
+        )
+        ax.annotate(
+            name.replace("_", " "),
+            (point["recall"], point["precision"]),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=7,
+        )
+    if thresholds:
+        ax.legend(loc="lower left")
+
+
+def _thresholds_from_payload(payload: Mapping[str, Any]) -> dict[str, float]:
+    thresholds: dict[str, float] = {}
+    matrices = payload.get("confusion_matrices")
+    if isinstance(matrices, Mapping):
+        for name, item in matrices.items():
+            if name in {"operating", "max_f1", "base_rate"} and isinstance(
+                item, Mapping
+            ):
+                threshold = item.get("threshold")
+                if threshold is not None:
+                    thresholds[str(name)] = float(threshold)
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        calibrator = metadata.get("calibrator")
+        if isinstance(calibrator, Mapping):
+            if "threshold" in calibrator:
+                thresholds.setdefault("operating", float(calibrator["threshold"]))
+            if "max_f1_threshold" in calibrator:
+                thresholds.setdefault("max_f1", float(calibrator["max_f1_threshold"]))
+        base_rate = metadata.get("base_rate_precision")
+        if isinstance(base_rate, Mapping) and "threshold" in base_rate:
+            thresholds.setdefault("base_rate", float(base_rate["threshold"]))
+    return thresholds
+
+
+def _nearest_threshold_point(frame: pd.DataFrame, threshold: float) -> pd.Series:
+    if "threshold" not in frame.columns:
+        return frame.iloc[(frame["recall"] - 1.0).abs().argmin()]
+    thresholds = pd.to_numeric(frame["threshold"], errors="coerce")
+    if thresholds.notna().any():
+        return frame.loc[(thresholds - threshold).abs().idxmin()]
+    return frame.iloc[(frame["recall"] - 1.0).abs().argmin()]
+
+
+def _threshold_band(thresholds: Mapping[str, float]) -> tuple[float, float]:
+    values = [
+        float(value) for value in thresholds.values() if np.isfinite(float(value))
+    ]
+    if len(values) < 2:
+        return (0.0, 0.0)
+    return (min(values), max(values))
+
+
+def _threshold_color(name: str) -> str:
+    if name == "operating":
+        return OKABE_ITO_VERMILLION
+    if name == "max_f1":
+        return OKABE_ITO_BLACK
+    if name == "base_rate":
+        return OKABE_ITO_BLUISH_GREEN
+    return MUTED_GREY
+
+
+def _threshold_linestyle(name: str) -> str:
+    if name == "operating":
+        return "--"
+    if name == "max_f1":
+        return ":"
+    return "-."
 
 
 def _documentation_row(row: Mapping[str, Any]) -> dict[str, Any] | None:

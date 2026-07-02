@@ -26,11 +26,18 @@ from binary_classifier.viz import (
     bakeoff_summary as exported_bakeoff_summary,
     canary_drift as exported_canary_drift,
     documentation_curve,
+    frozen_test_confusion_matrices,
+    frozen_test_curves,
     ngram_log_odds,
     pr_curve,
+    prevalence_decomposition,
     prevalence_forest,
+    quantification_sensitivity,
     production_annotation_summary as exported_production_annotation_summary,
     reliability_diagram,
+    rule_validation_intervals,
+    score_distribution_by_tier_label,
+    subgroup_performance,
 )
 from binary_classifier.viz.style import (
     OKABE_ITO_ORANGE,
@@ -132,6 +139,59 @@ def test_pr_curve_renders_tmp_png(tmp_path):
     try:
         pr_curve(points, ax)
         out = tmp_path / "pr_curve.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+def test_frozen_test_curves_require_test_scores_and_render(tmp_path):
+    payload = _test_evaluation_payload()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    try:
+        frozen_test_curves(payload, ax)
+        out = tmp_path / "frozen_test_curves.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    try:
+        with pytest.raises(ValueError, match="test_scores"):
+            frozen_test_curves({"pr_curve_points": []}, ax)
+    finally:
+        plt.close(fig)
+
+
+def test_score_distribution_by_tier_label_renders_tmp_png(tmp_path):
+    predictions = pd.DataFrame(
+        {
+            "prob_calibrated": [0.02, 0.08, 0.15, 0.62, 0.72, 0.91],
+            "tier": ["HIGH", "HIGH", "MEDIUM", "MEDIUM", "LOW", "LOW"],
+            "pred_label": [0, 1, 1, 1, 1, 1],
+        }
+    )
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        score_distribution_by_tier_label(
+            predictions,
+            {"operating": 0.05, "max_f1": 0.60, "base_rate": 0.70},
+            ax,
+        )
+        out = tmp_path / "score_distribution.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+def test_frozen_test_confusion_matrices_render_tmp_png(tmp_path):
+    payload = _test_evaluation_payload()
+    fig, ax = plt.subplots(figsize=(7, 3))
+    try:
+        frozen_test_confusion_matrices(payload, ax)
+        out = tmp_path / "confusion_matrices.png"
         fig.savefig(out)
         assert out.stat().st_size > 0
     finally:
@@ -314,6 +374,35 @@ def test_prevalence_forest_renders_tmp_png(tmp_path):
         plt.close(fig)
 
 
+def test_prevalence_wave4_helpers_render_tmp_png(tmp_path):
+    prevalence = _prevalence_report_payload()
+    rule_validation = _rule_validation_payload()
+    for name, plotter, payload in (
+        ("prevalence_decomposition", prevalence_decomposition, prevalence),
+        ("rule_validation_intervals", rule_validation_intervals, rule_validation),
+        ("quantification_sensitivity", quantification_sensitivity, prevalence),
+    ):
+        fig, ax = plt.subplots(figsize=(7, 4))
+        try:
+            plotter(payload, ax)
+            out = tmp_path / f"{name}.png"
+            fig.savefig(out)
+            assert out.stat().st_size > 0
+        finally:
+            plt.close(fig)
+
+
+def test_subgroup_performance_renders_tmp_png(tmp_path):
+    fig, ax = plt.subplots(figsize=(7, 4))
+    try:
+        subgroup_performance(_test_evaluation_payload()["subgroups"], ax)
+        out = tmp_path / "subgroup_performance.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
 def _bakeoff_result(
     model_id,
     prompt_id,
@@ -375,6 +464,18 @@ def test_save_plot_emits_pdf_svg_and_png(tmp_path):
         assert out.stat().st_size > 0
 
 
+def test_production_summary_sizes_by_diagnostic_rows_not_raw_rows():
+    visualize = _load_visualize_module()
+    frame = pd.DataFrame(
+        [
+            {"EIN2": f"E{idx:03d}", "source_id": "m1__v1", "label": idx % 2}
+            for idx in range(100)
+        ]
+    )
+    sizing = visualize._production_summary_sizing_frame(frame)
+    assert len(sizing) == 4
+
+
 def test_bakeoff_helpers_exported_from_viz_package():
     assert exported_bakeoff_summary is bakeoff_summary
     assert exported_production_annotation_summary is production_annotation_summary
@@ -417,3 +518,118 @@ def test_visualize_new_wrappers_render_and_skip(tmp_path, caplog):
         for suffix in (".pdf", ".svg", ".png"):
             assert (figures_dir / f"{name}{suffix}").exists()
     assert "Skipping canary drift; missing input" in caplog.text
+
+
+def test_visualize_wave4_wrappers_render_and_skip(tmp_path, caplog):
+    visualize = _load_visualize_module()
+    figures_dir = tmp_path / "figures"
+    test_evaluation = tmp_path / "test_evaluation.json"
+    predictions = tmp_path / "predictions.parquet"
+    calibrator = tmp_path / "calibrator.json"
+    base_rate = tmp_path / "base_rate_precision.json"
+    prevalence = tmp_path / "prevalence_report.json"
+    rule_validation = tmp_path / "rule_validation.json"
+    registry = SimpleNamespace(
+        figures_dir=figures_dir,
+        test_evaluation=test_evaluation,
+        predictions_parquet=predictions,
+        calibrator_path=calibrator,
+        base_rate_precision=base_rate,
+        prevalence_report=prevalence,
+        rule_validation=rule_validation,
+    )
+    test_evaluation.write_text(json.dumps(_test_evaluation_payload()), encoding="utf-8")
+    pd.DataFrame(
+        {
+            "prob_calibrated": [0.01, 0.07, 0.65, 0.75],
+            "tier": ["HIGH", "HIGH", "LOW", "LOW"],
+            "pred_label": [0, 1, 1, 1],
+        }
+    ).to_parquet(predictions)
+    calibrator.write_text(
+        json.dumps({"threshold": 0.05, "max_f1_threshold": 0.60}), encoding="utf-8"
+    )
+    base_rate.write_text(json.dumps({"threshold": 0.70}), encoding="utf-8")
+    prevalence.write_text(json.dumps(_prevalence_report_payload()), encoding="utf-8")
+    rule_validation.write_text(json.dumps(_rule_validation_payload()), encoding="utf-8")
+
+    assert visualize._maybe_render_pr_curve(None, registry)
+    assert visualize._maybe_render_frozen_test_confusion_matrices(None, registry)
+    assert visualize._maybe_render_score_distribution(None, registry)
+    assert visualize._maybe_render_prevalence_decomposition(None, registry)
+    assert visualize._maybe_render_rule_validation_intervals(None, registry)
+    assert visualize._maybe_render_quantification_sensitivity(None, registry)
+    assert visualize._maybe_render_subgroup_performance(None, registry)
+
+    for name in (
+        "precision_recall_curve",
+        "frozen_test_confusion_matrices",
+        "score_distribution_by_tier_label",
+        "prevalence_decomposition",
+        "rule_validation_intervals",
+        "quantification_sensitivity",
+        "subgroup_performance",
+    ):
+        assert (figures_dir / f"{name}.png").exists()
+
+    test_evaluation.write_text(json.dumps({"metric_bundle": {}}), encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert not visualize._maybe_render_pr_curve(None, registry)
+    assert "lacks frozen-test test_scores" in caplog.text
+
+
+def _test_evaluation_payload():
+    return {
+        "test_scores": {
+            "1": {"y_true": 0, "prob_calibrated": 0.02},
+            "2": {"y_true": 1, "prob_calibrated": 0.80},
+        },
+        "pr_curve_points": [
+            {"threshold": 0.01, "precision": 0.50, "recall": 1.00},
+            {"threshold": 0.05, "precision": 0.67, "recall": 1.00},
+            {"threshold": 0.60, "precision": 1.00, "recall": 0.50},
+        ],
+        "roc_curve_points": [
+            {"threshold": 1.0, "fpr": 0.0, "tpr": 0.0},
+            {"threshold": 0.60, "fpr": 0.0, "tpr": 0.5},
+            {"threshold": 0.05, "fpr": 0.5, "tpr": 1.0},
+        ],
+        "confusion_matrices": {
+            "operating": {"threshold": 0.05, "confusion_matrix": {"tn": 2, "fp": 1, "fn": 0, "tp": 3}},
+            "max_f1": {"threshold": 0.60, "confusion_matrix": {"tn": 3, "fp": 0, "fn": 1, "tp": 2}},
+            "base_rate": {"threshold": 0.70, "confusion_matrix": {"tn": 3, "fp": 0, "fn": 2, "tp": 1}},
+        },
+        "subgroups": [
+            {"grouping": "ntee_major_group", "value": "A", "n": 3, "suppressed": False, "minority_f1": 0.8, "fpr": 0.1, "fnr": 0.2},
+            {"grouping": "data_source", "value": "gold", "n": 3, "suppressed": False, "minority_f1": 0.7, "fpr": 0.2, "fnr": 0.1},
+            {"grouping": "word_count_bin", "value": "0-10", "n": 3, "suppressed": False, "minority_f1": 0.9, "fpr": 0.0, "fnr": 0.1},
+        ],
+    }
+
+
+def _prevalence_report_payload():
+    return {
+        "tier_shares": {"HIGH_MEDIUM": 0.8, "LOW": 0.2},
+        "hm": {
+            "primary": "weighted_ppi",
+            "weighted_ppi": {"estimate": 0.15, "ci_lower": 0.10, "ci_upper": 0.20},
+            "unweighted_ppi": {"estimate": 0.13, "ci_lower": 0.09, "ci_upper": 0.18},
+            "sensitivity_anchor_residual_multiplicity_weighted": {"estimate": 0.16, "ci_lower": 0.11, "ci_upper": 0.21},
+        },
+        "low": {
+            "sub_strata": {
+                "low_via_classifier": {"share": 0.4, "estimate": {"estimate": 0.20, "ci_lower": 0.12, "ci_upper": 0.30}},
+                "rule": {"share": 0.6, "estimate": {"estimate": 0.05, "ci_lower": 0.02, "ci_upper": 0.10}},
+            }
+        },
+        "cross_checks": {"emq": {"status": "ok", "estimate": 0.14}},
+    }
+
+
+def _rule_validation_payload():
+    return {
+        "metrics": {
+            "sensitivity": {"value": 0.90, "ci_lower": 0.75, "ci_upper": 0.98, "n": 30},
+            "specificity": {"value": 0.85, "ci_lower": 0.70, "ci_upper": 0.95, "n": 40},
+        }
+    }

@@ -24,11 +24,17 @@ from binary_classifier.viz import (
     bakeoff_summary,
     canary_drift,
     documentation_curve,
+    frozen_test_confusion_matrices,
+    frozen_test_curves,
     ngram_log_odds,
-    pr_curve,
+    prevalence_decomposition,
     prevalence_forest,
+    quantification_sensitivity,
     production_annotation_summary,
     reliability_diagram,
+    rule_validation_intervals,
+    score_distribution_by_tier_label,
+    subgroup_performance,
 )
 from binary_classifier.viz.style import (
     PAGE_WIDTH,
@@ -83,8 +89,14 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
         _maybe_render_canary_drift,
         _maybe_render_documentation_curve,
         _maybe_render_pr_curve,
+        _maybe_render_frozen_test_confusion_matrices,
         _maybe_render_reliability_diagram,
+        _maybe_render_score_distribution,
         _maybe_render_prevalence_forest,
+        _maybe_render_prevalence_decomposition,
+        _maybe_render_rule_validation_intervals,
+        _maybe_render_quantification_sensitivity,
+        _maybe_render_subgroup_performance,
         _maybe_render_ngram_log_odds,
     ):
         if render_step(cfg, registry):
@@ -156,12 +168,14 @@ def _maybe_render_production_summary(
     for path in existing_paths:
         try:
             frame = _production_summary_frame(path)
+            sizing_frame = _production_summary_sizing_frame(frame)
             _save_plot(
                 registry,
                 "production_annotation_summary",
                 lambda ax, frame=frame: production_annotation_summary(frame, ax),
                 figsize=figure_size(
-                    width=PAGE_WIDTH, height=max(4.0, 0.35 * len(frame) + 1.5)
+                    width=PAGE_WIDTH,
+                    height=max(4.0, 0.35 * len(sizing_frame) + 1.5),
                 ),
             )
         except (OSError, ValueError) as exc:
@@ -245,7 +259,7 @@ def _maybe_render_pr_curve(
     _cfg: BinaryClassifierConfig,
     registry: PathRegistry,
 ) -> bool:
-    """Render a precision-recall curve from available evaluation JSON.
+    """Render frozen-test precision-recall and ROC curves when scores exist.
 
     Args:
         _cfg: Unused task configuration, accepted for a uniform renderer
@@ -256,15 +270,63 @@ def _maybe_render_pr_curve(
         True when a figure is written, otherwise False.
 
     """
-    return _maybe_render_json_points(
-        registry,
-        figure_name="precision_recall_curve",
-        title="precision-recall curve",
-        input_paths=(registry.test_evaluation, registry.calibrator_path),
-        extract_points=lambda payload: _find_nested(payload, _PR_POINT_KEYS),
-        draw=pr_curve,
-        figsize=(5.5, 4.5),
-    )
+    path = registry.test_evaluation
+    if not path.exists():
+        logger.warning("Skipping precision-recall curve; missing input: %s", path)
+        return False
+    try:
+        payload = _load_json(path)
+        if not isinstance(payload, Mapping) or not payload.get("test_scores"):
+            logger.warning(
+                "Skipping precision-recall curve; %s lacks frozen-test test_scores.",
+                path,
+            )
+            return False
+        payload_mapping = cast(Mapping[str, Any], payload)
+        _save_plot(
+            registry,
+            "precision_recall_curve",
+            lambda ax, payload=payload_mapping: frozen_test_curves(payload, ax),
+            figsize=figure_size(width=PAGE_WIDTH, height=4.5),
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping precision-recall curve from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_frozen_test_confusion_matrices(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render frozen-test confusion matrices from persisted stage-07 JSON."""
+    path = registry.test_evaluation
+    if not path.exists():
+        logger.warning(
+            "Skipping frozen-test confusion matrices; missing input: %s", path
+        )
+        return False
+    try:
+        payload = _load_json(path)
+        if not isinstance(payload, Mapping) or not payload.get("test_scores"):
+            logger.warning(
+                "Skipping frozen-test confusion matrices; %s lacks frozen-test test_scores.",
+                path,
+            )
+            return False
+        payload_mapping = cast(Mapping[str, Any], payload)
+        _save_plot(
+            registry,
+            "frozen_test_confusion_matrices",
+            lambda ax, payload=payload_mapping: frozen_test_confusion_matrices(
+                payload, ax
+            ),
+            figsize=figure_size(width=PAGE_WIDTH, height=3.0),
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping frozen-test confusion matrices from %s: %s", path, exc)
+        return False
+    return True
 
 
 def _maybe_render_reliability_diagram(
@@ -322,6 +384,136 @@ def _maybe_render_prevalence_forest(
         )
     except (OSError, ValueError) as exc:
         logger.warning("Skipping prevalence forest from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_score_distribution(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render calibrated-score distributions from stage-08 predictions."""
+    path = registry.predictions_parquet
+    if not path.exists():
+        logger.warning("Skipping score distribution; missing input: %s", path)
+        return False
+    try:
+        predictions = pd.read_parquet(path)
+        thresholds = _score_distribution_thresholds(registry)
+        _save_plot(
+            registry,
+            "score_distribution_by_tier_label",
+            lambda ax: score_distribution_by_tier_label(predictions, thresholds, ax),
+            figsize=figure_size(width=PAGE_WIDTH, height=5.0),
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping score distribution from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_prevalence_decomposition(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render prevalence component contributions from stage-09 report."""
+    return _maybe_render_json_payload(
+        registry,
+        figure_name="prevalence_decomposition",
+        title="prevalence decomposition",
+        input_path=registry.prevalence_report,
+        draw=prevalence_decomposition,
+        figsize=figure_size(width=PAGE_WIDTH, height=4.0),
+    )
+
+
+def _maybe_render_rule_validation_intervals(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render Wilson intervals from rule-validation diagnostics."""
+    return _maybe_render_json_payload(
+        registry,
+        figure_name="rule_validation_intervals",
+        title="rule-validation intervals",
+        input_path=registry.rule_validation,
+        draw=rule_validation_intervals,
+        figsize=figure_size(width=PAGE_WIDTH, height=2.8),
+    )
+
+
+def _maybe_render_quantification_sensitivity(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render PPI/EMQ weighting sensitivity from stage-09 report."""
+    return _maybe_render_json_payload(
+        registry,
+        figure_name="quantification_sensitivity",
+        title="quantification sensitivity",
+        input_path=registry.prevalence_report,
+        draw=quantification_sensitivity,
+        figsize=figure_size(width=PAGE_WIDTH, height=3.8),
+    )
+
+
+def _maybe_render_subgroup_performance(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render frozen-test subgroup diagnostics from persisted test evaluation."""
+    path = registry.test_evaluation
+    if not path.exists():
+        logger.warning("Skipping subgroup performance; missing input: %s", path)
+        return False
+    try:
+        payload = _load_json(path)
+        if not isinstance(payload, Mapping) or not payload.get("test_scores"):
+            logger.warning(
+                "Skipping subgroup performance; %s lacks frozen-test test_scores.",
+                path,
+            )
+            return False
+        payload_mapping = cast(Mapping[str, Any], payload)
+        subgroups = payload_mapping.get("subgroups")
+        _save_plot(
+            registry,
+            "subgroup_performance",
+            lambda ax, subgroups=subgroups: subgroup_performance(subgroups, ax),
+            figsize=figure_size(width=PAGE_WIDTH, height=5.2),
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping subgroup performance from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_json_payload(
+    registry: PathRegistry,
+    *,
+    figure_name: str,
+    title: str,
+    input_path: Path,
+    draw: Callable[[Mapping[str, Any], Axes], None],
+    figsize: tuple[float, float],
+) -> bool:
+    """Render a plot directly from a JSON mapping payload."""
+    if not input_path.exists():
+        logger.warning("Skipping %s; missing input: %s", title, input_path)
+        return False
+    try:
+        payload = _load_json(input_path)
+        if not isinstance(payload, Mapping):
+            raise ValueError("JSON payload must be an object.")
+        payload_mapping = cast(Mapping[str, Any], payload)
+        _save_plot(
+            registry,
+            figure_name,
+            lambda ax, payload=payload_mapping: draw(payload, ax),
+            figsize=figsize,
+        )
+    except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+        logger.warning("Skipping %s from %s: %s", title, input_path, exc)
         return False
     return True
 
@@ -592,6 +784,39 @@ def _production_summary_frame(path: Path) -> pd.DataFrame:
     if "source_id" not in frame.columns and path.name == "silver_labels.csv":
         frame = frame.assign(source_id="silver_label")
     return frame
+
+
+def _production_summary_sizing_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return the diagnostic rows the production-summary plot will display."""
+    if {"EIN2", "source_id", "label"} - set(frame.columns):
+        return frame
+    source_column = "model_id" if "model_id" in frame.columns else "source_id"
+    n_sources = int(frame[source_column].nunique(dropna=True))
+    labels = [f"source_{idx}" for idx in range(n_sources)]
+    labels.extend(["Mean pairwise agreement", "Tie rate", "All-abstain rate"])
+    return pd.DataFrame({"label": labels})
+
+
+def _score_distribution_thresholds(registry: PathRegistry) -> dict[str, float]:
+    """Load the operating, max-F1, and base-rate thresholds for score plots."""
+    thresholds: dict[str, float] = {}
+    if registry.calibrator_path.exists():
+        payload = _load_json(registry.calibrator_path)
+        if isinstance(payload, Mapping):
+            calibrator = cast(Mapping[str, Any], payload)
+            if calibrator.get("threshold") is not None:
+                thresholds["operating"] = float(calibrator["threshold"])
+            if calibrator.get("max_f1_threshold") is not None:
+                thresholds["max_f1"] = float(calibrator["max_f1_threshold"])
+    if registry.base_rate_precision.exists():
+        payload = _load_json(registry.base_rate_precision)
+        if isinstance(payload, Mapping):
+            base_rate = cast(Mapping[str, Any], payload)
+            if base_rate.get("threshold") is not None:
+                thresholds["base_rate"] = float(base_rate["threshold"])
+    if not thresholds:
+        raise ValueError("No threshold artifacts available for score distribution.")
+    return thresholds
 
 
 def _parse_args() -> argparse.Namespace:

@@ -117,6 +117,18 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
 
     assert (tiny_registry.figures_dir / "documentation_curve.png").exists()
     assert (tiny_registry.figures_dir / "prevalence_forest.png").exists()
+    for figure_name in (
+        "precision_recall_curve.png",
+        "frozen_test_confusion_matrices.png",
+        "score_distribution_by_tier_label.png",
+        "prevalence_decomposition.png",
+        "rule_validation_intervals.png",
+        "quantification_sensitivity.png",
+        "subgroup_performance.png",
+    ):
+        path = tiny_registry.figures_dir / figure_name
+        assert path.exists(), figure_name
+        assert path.stat().st_size > 0
 
     run_aggregation_compare(tiny_config, tiny_registry)
 
