@@ -16,6 +16,9 @@ Both are consumed identically:
 ```
 uv run python scripts/run_pipeline.py --config config/religious_missions.yaml
 uv run python scripts/run_pipeline.py --config config/smoke.yaml
+
+# Example full post-selection chain, now including visualization:
+uv run python scripts/run_pipeline.py --config config/religious_missions.yaml --stages 05,06,07,08,09,10
 ```
 
 The `--config` argument defaults to `config/religious_missions.yaml` if omitted.
@@ -138,8 +141,11 @@ Input and output directory roots. All paths are relative to the project root. `P
 | `annotation_store`    | `{interim_dir}/annotation_store.csv`                |
 | `silver_labels`       | `{processed_dir}/silver_labels.csv`                 |
 | `test_evaluation`     | `{processed_dir}/evaluation/test_evaluation.json`   |
+| `base_rate_precision` | `{processed_dir}/evaluation/base_rate_precision.json` |
 | `predictions_parquet` | `{processed_dir}/predictions/predictions.parquet`   |
+| `predictions_full_parquet` | `{processed_dir}/predictions/predictions_full.parquet` |
 | `prevalence_report`   | `{processed_dir}/prevalence/prevalence_report.json` |
+| `run_manifest`        | `{processed_dir}/run_manifest.json`                 |
 
 All config classes live in `src/binary_classifier/config.py`. All artifact path properties live in `src/binary_classifier/paths.py`.
 
@@ -343,6 +349,8 @@ Evaluation, calibration, and frozen-test acceptance configuration for stage 07.
 | `evaluation.crossfit_folds`      | `int`                                   | `5`                        | Number of folds for anchor out-of-fold scoring.                       |
 | `evaluation.threshold_policy`    | `Literal["precision_floor", "max_f1"]`  | `"precision_floor"`        | Rule for selecting the operating threshold on the score distribution. |
 | `evaluation.precision_floor`     | `float`                                 | `0.80`                     | Minimum precision under the `precision_floor` threshold policy.       |
+| `evaluation.base_rate_precision_target` | `float`                         | `0.90`                     | Target deployment precision used to derive the release-time base-rate threshold. |
+| `evaluation.population_base_rate` | `float \| null`                   | `null`                     | Optional external deployment base rate; if null, stage 07 falls back to the weighted anchor estimate. |
 | `evaluation.ece_bins`            | `int`                                   | `10`                       | Number of bins for expected calibration error (ECE) computation.      |
 | `evaluation.bootstrap_resamples` | `int`                                   | `2000`                     | Number of bootstrap draws for confidence interval estimation.         |
 | `evaluation.length_bins`         | `list[int]`                             | `[10, 25, 50]`             | Word-count bin edges for text-length subgroup reporting.              |
@@ -356,6 +364,8 @@ Evaluation, calibration, and frozen-test acceptance configuration for stage 07.
 | `evaluation.acceptance.max_ece`                  | `float` | `0.05`  | Maximum expected calibration error on anchor out-of-fold scores.                                       |
 
 **Relevant stages:** Stage 07.
+
+**Wave-6 note:** stage 07 now writes three closely related artifacts: `calibrator.json` (operating + max-F1 thresholds), `base_rate_precision.json` (deployment/base-rate threshold diagnostics), and `test_evaluation.json` (frozen-test report). The real shared frozen-test artifact remains one-shot; the enriched per-row `test_scores`, PR/ROC curves, and multi-threshold confusion matrices are only finalized when the controlled §7 UCloud rerun produces the canonical report.
 
 **Pydantic class:** `EvaluationConfig` (line 180 of `config.py`), `AcceptanceCriteria` (line 146 of `config.py`).
 
@@ -377,6 +387,8 @@ Batch inference configuration for stage 08.
 
 **Relevant stages:** Stage 08.
 
+**Wave-6 note:** stage 08 preserves the deduplicated scoring artifact `predictions.parquet` and also writes `predictions_full.parquet`, which expands those scores back to raw `EIN2` organizations using the configured text field as the bridge. The guaranteed release columns now include `pred_label`, `pred_label_maxf1`, `pred_label_baserate`, `prob_raw`, `prob_calibrated`, `decision_source`, `tier`, `Q`, `ntee_major_group`, threshold metadata, and provenance fields.
+
 ---
 
 ### `prevalence`
@@ -395,6 +407,8 @@ Population-prevalence estimation configuration for stage 09.
 **Pydantic class:** `PrevalenceConfig` (line 240 of `config.py`).
 
 **Relevant stages:** Stage 09.
+
+**Wave-6 note:** stage 09's estimand is now explicitly per-organization. `pred_label` remains the prevalence label. HIGH/MEDIUM rows use PPI; LOW is decomposed into classifier-routed rows (`low_via_classifier` → PPI) and pure-rule rows (`rule_*` → Rogan-Gladen), then recombined with raw-`EIN2` tier shares. If a local dry-run cannot recover raw multiplicities, the report records that fallback in `inputs.raw_multiplicity_source`; the canonical post-sprint run is expected to regenerate the per-organization artifacts from `predictions_full.parquet`.
 
 ---
 

@@ -4,7 +4,7 @@ High-level map only. The pipeline is under **active development**, so this doc s
 
 ## Shape
 
-Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate/`, `qc/`). `scripts/01…04` are **thin CLI wrappers** that load the config + a `PathRegistry` and call a package function; `run_pipeline.py` chains them. Put logic in the package, not in `scripts/`.
+Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate/`, `qc/`, `train/`, `evaluation/`, `inference/`, `prevalence/`, `viz/`). `scripts/01…10` are **thin CLI wrappers** that load the config + a `PathRegistry` and call a package function; `run_pipeline.py` chains them. Put logic in the package, not in `scripts/`.
 
 ## Stages
 
@@ -14,15 +14,19 @@ Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate
 4. **04 quality_check** — freeze majority-vote silver labels after the LLM-vs-human agreement gate.
 5. **05 build_anchor** — full-frame anchor sample (incl. LOW) with design weights for prevalence.
 6. **06 train** — baselines + DeBERTa/ModernBERT sweep, model selection, final-seed refit.
-7. **07 evaluate** — cross-fit calibration, rule validation, and the frozen-test acceptance gate.
-8. **08 infer** — full-corpus sharded inference with LOW-tier rule routing.
-9. **09 prevalence** — PPI++ (HIGH/MEDIUM) + Rogan–Gladen (LOW) composite population estimate.
+7. **07 evaluate** — cross-fit calibration, base-rate precision diagnostics, rule validation, and the one-shot frozen-test acceptance gate.
+8. **08 infer** — full-corpus sharded inference with LOW-tier rule routing, triple labels, and expand-back from deduplicated text rows to raw-`EIN2` `predictions_full.parquet`.
+9. **09 prevalence** — per-organization prevalence using HIGH/MEDIUM PPI, LOW classifier-routed PPI, LOW rule-only Rogan–Gladen, and raw-`EIN2` tier-share recombination.
+10. **10 visualize** — figure rendering over evaluation, inference, and prevalence artifacts, including the new score-distribution, prevalence-decomposition, rule-validation, and subgroup plots.
+11. **11 aggregation comparison** — script-only sensitivity diagnostics for alternative silver-label aggregation methods.
 
-`uv run python scripts/run_pipeline.py` chains 01→09 (`--stages`, `--config`, `--annotate-limit`, `--infer-limit`, `--force`); each stage also runs standalone via its own script. Stages 10 (visualization) and 11 (aggregation comparison) are intentionally script-only (e.g. `uv run python scripts/10_visualize.py --config ...`) and are not wired into the orchestrator.
+`uv run python scripts/run_pipeline.py` can orchestrate 01→10 (`--stages`, `--config`, `--annotate-limit`, `--infer-limit`, `--force`); each stage also runs standalone via its own script. Orchestrated runs now also emit `data/processed/run_manifest.json`. Stage 11 remains script-only.
 
 ## Status
 
-Stages 01–09 are built and wired into the orchestrator behind four human gates ([G1–G4](human-gates.md)); stages 10–11 are script-only helpers over the artifacts they produce and skip missing inputs. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–10 are built and wired into the orchestrator behind four human gates ([G1–G4](human-gates.md)); stage 11 is a script-only helper over the artifacts the main pipeline produces. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
+
+The real frozen-test artifact is still governed by one-shot semantics: smoke runs can exercise the enriched stage-07 schema locally, but the shared production `test_evaluation.json` is only finalized after the controlled post-sprint UCloud re-evaluation described in [human-gates.md](human-gates.md).
 
 ## Inputs
 

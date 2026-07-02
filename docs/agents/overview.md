@@ -8,7 +8,7 @@ A model × prompt ensemble (a closed-API reference model + open-weight models se
 
 ## Status
 
-Stages 01–09 are built and wired into the orchestrator behind four human gates. Stages 10 (visualize) and 11 (aggregation comparison) are standalone scripts not in the orchestrator. The legacy flat-script + notebook pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–10 are built and wired into the orchestrator behind four human gates. Stage 11 (aggregation comparison) remains a standalone script. The released inference surface now distinguishes between the deduplicated scoring artifact (`predictions.parquet`) and the per-organization expand-back artifact (`predictions_full.parquet`). The legacy flat-script + notebook pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
 
 ## Related
 
@@ -16,4 +16,5 @@ Stages 01–09 are built and wired into the orchestrator behind four human gates
 - [pipeline/configuration.md](pipeline/configuration.md) — config-driven design
 - [pipeline/human-gates.md](pipeline/human-gates.md) — G1–G4 checkpoints
 - [operations/gotchas.md](operations/gotchas.md) — situational notes
+- [../nontechnical-overview.md](../nontechnical-overview.md) — plain-language summary for non-technical readers
 - [README](../../README.md) — full narrative

@@ -16,6 +16,8 @@ Before stage 07 (evaluation), the pipeline requires two sibling artifacts under 
 
 **Purpose:** Prevent accidental test-set leakage during model iteration. The frozen test split is evaluated only once — after a human inspects the selected model's validation performance, confirms the acceptance criteria, and explicitly unlocks the test set.
 
+**Wave-6 refinement:** stage 07 now treats the frozen-test report as a one-shot artifact. If `data/processed/evaluation/test_evaluation.json` already exists, the stage blocks before overwriting evaluation artifacts. That safeguard is what keeps the real test report re-openable only under the controlled post-sprint procedure.
+
 ### Two-file workflow
 
 | File | Role | Created by |
@@ -105,7 +107,18 @@ uv run python scripts/run_pipeline.py --stages 07,08,09
 
 ### Failure mode
 
-If any check fails, the pipeline prints one or more problem messages prefixed with `G3:` and exits with code 2. No model checkpoint is loaded, and the frozen test set is never touched.
+If any check fails, the pipeline prints one or more problem messages prefixed with `G3:` and exits with code 2. If an existing `test_evaluation.json` is present, stage 07 also exits before overwriting stage-07 outputs. The frozen test set is never re-scored accidentally.
+
+### Controlled reopen path (§7)
+
+The only sanctioned way to replace the real frozen-test artifact is the controlled post-sprint UCloud re-evaluation:
+
+1. archive the existing `test_evaluation.json`, `calibrator.json`, `rule_validation.json`, and `anchor_oof_scores.parquet` with the original git SHA;
+2. run stage 07 exactly once on code-frozen UCloud infrastructure;
+3. regenerate stages 08–10 from that one-shot stage-07 output; and
+4. record the reproduce-assertion result in `data/processed/run_manifest.json`.
+
+That procedure is documented for operators in `docs/audits/20260702-local-evaluation-refresh.md`. It is not a local-debugging workflow.
 
 ## G4 — Anchor-labels gate
 

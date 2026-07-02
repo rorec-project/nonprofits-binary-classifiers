@@ -1,5 +1,7 @@
 # Religious Mission Classifier: Evaluation, Inference, Prevalence, and Visualization Audit
 
+> **Superseded for current operator guidance.** Read [20260702-local-evaluation-refresh.md](20260702-local-evaluation-refresh.md) for the Wave-6 documentation refresh. This older report remains as the historical audit of the first UCloud run, but it predates the LOW-tier decomposition fix, base-rate precision label, `predictions_full.parquet`, stage-10 orchestration, and `run_manifest.json`.
+
 Date: 2026-07-02
 
 Scope: This report reviews the completed UCloud run of stages 07-09 and the script-only stage 10 visualization run for the religious mission binary classifier.

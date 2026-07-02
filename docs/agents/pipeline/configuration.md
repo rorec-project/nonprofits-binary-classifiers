@@ -11,7 +11,7 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 ### `paths`
 - `raw_dir` — Upstream parquet inputs. This directory is local/cloud-managed and not committed.
 - `interim_dir` — Intermediate artifacts: manifests, bake-off outputs, annotation stores, and monitor/canary inputs. This is the main cloud-symlink candidate in today's pre-DVC setup.
-- `processed_dir` — Final artifacts. The committed pointer layer is `processed_dir / "gold"`, which holds `gold_to_code.csv` and `production_slate.json`; `silver_labels.csv` lives directly under `processed_dir` and is not committed.
+- `processed_dir` — Final artifacts. The committed pointer layer is `processed_dir / "gold"`, which holds `gold_to_code.csv` and `production_slate.json`; `silver_labels.csv` lives directly under `processed_dir` and is not committed. Stage 07 now also writes `evaluation/base_rate_precision.json`, stage 08 writes both `predictions/predictions.parquet` and per-organization `predictions/predictions_full.parquet`, and orchestrated runs write `run_manifest.json` at the processed root.
 - `models_dir` — Future fine-tuned checkpoints and related model artifacts.
 
 `PathRegistry` derives the higher-level artifact locations from those four roots. In practice, use registry properties such as `gold_coding_template`, `production_slate`, `silver_manifest`, and `annotation_store` instead of rebuilding paths by hand.
@@ -48,6 +48,12 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 - `method` — Production Stage 04 aggregation method. This is intentionally majority-only.
 - `comparison_arms` — Optional Dawid-Skene/CROWDLAB arms for Stage 11 sensitivity diagnostics only; they are not production continuation methods. These require the `diagnostics` optional extra (`crowd-kit`, `cleanlab`).
 
+### Wave-6 contracts to remember
+
+- **Per-organization estimand:** stage 09 is defined over raw `EIN2` organizations, not just the deduplicated inference rows. Canonical runs should therefore prefer `predictions_full.parquet` when it exists.
+- **Triple labels:** stage 08 preserves `pred_label` as the recall-first prevalence label and also writes `pred_label_maxf1` and `pred_label_baserate` for release consumers.
+- **One-shot frozen test:** stage 07 may enrich the frozen-test schema with `test_scores`, PR/ROC points, and multi-threshold confusion matrices, but the shared production artifact is only reopened in the controlled §7 UCloud rerun.
+
 ## Retasking (new classification task)
 
 1. Copy `config/religious_missions.yaml` → `config/<task>.yaml`.
@@ -58,8 +64,8 @@ No source edits, provided the upstream parquet exposes the chosen `field`.
 
 ## Built stages and script-only extensions
 
-Stages 05–09 are built and wired into the orchestrator; stages 10–11 are
-script-only helpers. The decision record is in
+Stages 05–10 are built and wired into the orchestrator; stage 11 is still a
+script-only helper. The decision record is in
 `.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
 **Superseded decisions (June 2026)** memo, which replaced the old broad
 training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
@@ -73,17 +79,22 @@ training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
   is opt-in. Label smoothing, focal/resampling, and confidence-weighted loss are
   intentionally skipped.
 - **Stage 07 — evaluation:** keep minority-class precision/recall/F1, MCC,
-  balanced accuracy, PR-AUC, bootstrap intervals, and calibration reporting.
+  balanced accuracy, PR-AUC, bootstrap intervals, calibration reporting, and
+  base-rate precision diagnostics. The frozen test stays one-shot.
 - **Stage 08 — inference:** run the selected classifier over HIGH/MEDIUM rows,
-  route LOW/bare-label rows through the rule layer, keep `EIN2`, and persist
-  model-version metadata with positive-class probabilities.
-- **Stage 09 — prevalence:** estimate population share over all nonprofits with
-  PPI++ as the primary estimator (Angelopoulos et al. 2023; PPI++
-  arXiv:2311.01453). Cross-checks default to `[emq]` (vendored SLD/EMQ); KDEy
-  via QuaPy is opt-in under the `quant` extra. Per-NTEE-stratum calibration is
-  applied where prior-shift assumptions are fragile.
-- **Stage 10 — visualization:** replace exploratory word clouds with auditable
-  n-gram log-odds bars and metric/calibration plots.
+  route LOW/bare-label rows through the rule layer, keep `EIN2`, persist
+  model-version metadata with positive-class probabilities, and expand the
+  deduplicated predictions back to raw `EIN2` rows in `predictions_full.parquet`.
+- **Stage 09 — prevalence:** estimate per-organization population share over all
+  nonprofits with PPI++ as the primary estimator for HIGH/MEDIUM and LOW
+  classifier-routed rows, plus Rogan-Gladen for LOW rule-only rows. Cross-checks
+  default to `[emq]` (vendored SLD/EMQ); KDEy via QuaPy is opt-in under the
+  `quant` extra. Per-NTEE-stratum calibration is applied where prior-shift
+  assumptions are fragile.
+- **Stage 10 — visualization:** render the current figure suite from the
+  orchestrator or standalone script: auditable n-gram log-odds bars, metric and
+  calibration plots, score distributions, prevalence decomposition, rule
+  validation intervals, quantification sensitivity, and subgroup performance.
 - **Stage 11 — aggregation comparison:** script-only sensitivity diagnostics that compare
    majority vote with configured Dawid-Skene and CROWDLAB arms (requires the
    `diagnostics` extra) on the human validation set. Stage 04 production labels

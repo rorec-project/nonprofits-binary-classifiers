@@ -13,6 +13,7 @@ Act as a **pragmatic ML research engineer**. You care about reproducibility (see
 - **Lint / format / type-check:** `uv run ruff check .`, `uv run ruff format .`, `uv run ty check`.
 - **`OPENAI_API_KEY`** must be set in a `.env` file (needed for stages 02–03).
 - **Logging** — each script writes to both stdout and a timestamped file under `logs/` via `setup_logging(stem="<script_name>")` from `src/binary_classifier/log_utils.py`. The `logs/` directory is gitignored. Check `logs/*.log` when debugging pipeline runs.
+- **Frozen test is one-shot.** Do not reopen or overwrite `data/processed/evaluation/test_evaluation.json` locally. The only sanctioned re-run is the controlled post-sprint UCloud re-evaluation described in `docs/agents/pipeline/human-gates.md` and `docs/audits/20260702-local-evaluation-refresh.md`.
 
 ## Architecture docs
 
@@ -23,6 +24,9 @@ Read the relevant doc before working in that area.
 - **Configuration** — [pipeline/configuration.md](docs/agents/pipeline/configuration.md): config-driven design, retasking
 - **Human gates** — [pipeline/human-gates.md](docs/agents/pipeline/human-gates.md): G1–G4 checkpoints
 - **Gotchas** — [operations/gotchas.md](docs/agents/operations/gotchas.md): data layout, local setup, roadmaps
+- **Current local evaluation refresh** — [20260702-local-evaluation-refresh.md](docs/audits/20260702-local-evaluation-refresh.md): corrected prevalence, base-rate precision, and §7-pending items
+- **Released dataset schema** — [predictions-full-data-dictionary.md](docs/predictions-full-data-dictionary.md): `predictions_full.parquet` contract and label meanings
+- **Plain-language overview** — [nontechnical-overview.md](docs/nontechnical-overview.md): what the classifier claims, what prevalence means, and current caveats
 - **Python conventions** — [conventions/python-standards.md](docs/agents/conventions/python-standards.md)
 - **Comments style** — [conventions/comments.md](docs/agents/conventions/comments.md)
 - **Git workflow** — [workflow/git.md](docs/agents/workflow/git.md)
