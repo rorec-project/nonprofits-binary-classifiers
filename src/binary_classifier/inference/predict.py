@@ -101,17 +101,27 @@ def run_inference(
 
     calibrator = _load_calibrator(registry.calibrator_path)
     selected = _load_selected_model(registry, require_checkpoint=predictor is None)
-    device, precision = resolve_device_precision(cfg)
+    encoder_id = selected.get("encoder_id")
+    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
+
+    max_length = 512
+    if encoder_id:
+        for enc in cfg.training.encoders:
+            if enc.id == encoder_id:
+                max_length = enc.max_length
+                break
+
     scorer = (
         predictor
         if predictor is not None
-        else _load_checkpoint_predictor(selected, device=device)
+        else _load_checkpoint_predictor(selected, device=device, max_length=max_length)
     )
     metadata = _prediction_metadata(
         cfg,
         selected=selected,
         predictor=scorer,
         calibrator=calibrator,
+        max_length=max_length,
     )
 
     shard_paths = _process_shards(
@@ -141,11 +151,20 @@ def run_inference(
     )
 
 
-def resolve_device_precision(cfg: "BinaryClassifierConfig") -> tuple[Device, Precision]:
+def resolve_device_precision(
+    cfg: "BinaryClassifierConfig",
+    *,
+    encoder_id: str | None = None,
+) -> tuple[Device, Precision]:
     """Resolve stage-08 device and precision from runtime capabilities.
 
     The policy is capability-based: ``auto`` chooses CUDA, then MPS, then CPU;
     bf16 is used only when the resolved device is CUDA and bf16 is supported.
+
+    When *encoder_id* matches an encoder with explicit ``precision: fp32`` in the
+    training config, inference precision is overridden to fp32 even when bf16 is
+    available. This prevents silent degradation for models (e.g. DeBERTa-v3-base)
+    that were trained under FP32.
     """
     try:
         import torch
@@ -174,6 +193,18 @@ def resolve_device_precision(cfg: "BinaryClassifierConfig") -> tuple[Device, Pre
     precision: Precision = (
         "bf16" if device == "cuda" and bool(torch.cuda.is_bf16_supported()) else "fp32"
     )
+
+    if encoder_id and precision == "bf16":
+        for enc in cfg.training.encoders:
+            if enc.id == encoder_id and enc.precision == "fp32":
+                precision = "fp32"
+                logger.info(
+                    "Overriding inference precision to fp32 for %s "
+                    "(encoder trained with explicit fp32)",
+                    encoder_id,
+                )
+                break
+
     logger.info("Resolved inference device=%s precision=%s", device, precision)
     return device, precision
 
@@ -276,7 +307,12 @@ def _load_selected_model(
     return selected
 
 
-def _load_checkpoint_predictor(selected: Mapping[str, Any], *, device: Device) -> Any:
+def _load_checkpoint_predictor(
+    selected: Mapping[str, Any],
+    *,
+    device: Device,
+    max_length: int = 512,
+) -> Any:
     """Load a Hugging Face sequence-classification checkpoint lazily."""
     checkpoint_path = Path(str(selected["checkpoint_path"]))
     model_dir = checkpoint_path.parent
@@ -305,6 +341,7 @@ def _load_checkpoint_predictor(selected: Mapping[str, Any], *, device: Device) -
                 list(texts),
                 padding=True,
                 truncation=True,
+                max_length=max_length,
                 return_tensors="pt",
             )
             encoded = {key: value.to(device) for key, value in encoded.items()}
@@ -606,6 +643,7 @@ def _prediction_metadata(
     selected: Mapping[str, Any],
     predictor: Any,
     calibrator: Mapping[str, Any],
+    max_length: int,
 ) -> dict[str, Any]:
     model_id = (
         selected.get("encoder_id")
@@ -627,6 +665,7 @@ def _prediction_metadata(
         "inference_date": datetime.now(UTC).isoformat(),
         "pipeline_version": _pipeline_version(),
         "config_hash": _config_hash(cfg),
+        "max_length": max_length,
     }
 
 

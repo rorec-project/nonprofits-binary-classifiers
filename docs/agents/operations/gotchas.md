@@ -29,6 +29,13 @@
 - **The `.claude/`, `.agents/`, and `.opencode/` directories** are general agent/research scaffolding, not part of the classifier pipeline.
 - **Roadmap facts** live in the README and configuration docs. Future DVC migration, prevalence estimation, encoder choice, and evaluation upgrades are documented there. Keep AGENTS as pointers, not the canonical long-form roadmap.
 
+## Stage 08 inference fixes (Jul 2026)
+
+Two fixes were applied to `src/binary_classifier/inference/predict.py`:
+
+- **max_length alignment:** The tokenizer call in `_load_checkpoint_predictor` now passes the encoder-specific `max_length` from the training config (default 256). Previously it defaulted to the tokenizer's `model_max_length` (512 for DeBERTa), feeding out-of-distribution token positions the model never saw during training.
+- **Precision override for FP32-trained encoders:** `resolve_device_precision` now checks whether the selected encoder has an explicit `precision: fp32` in the training config and overrides inference precision accordingly. This prevents silent degradation under BF16 autocast for models (like DeBERTa-v3-base) that were trained with FP32.
+
 ## Related
 
 - [../pipeline/pipeline.md](../pipeline/pipeline.md) — stage I/O detail

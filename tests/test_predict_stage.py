@@ -10,6 +10,48 @@ from binary_classifier.inference import predict as predict_mod
 from binary_classifier.inference.predict import run_inference
 
 
+def test_resolve_device_precision_encoder_override(tiny_config) -> None:
+    import torch
+
+    from binary_classifier.inference.predict import resolve_device_precision
+
+    original_cuda_available = torch.cuda.is_available
+    original_bf16_supported = torch.cuda.is_bf16_supported
+
+    try:
+        torch.cuda.is_available = lambda: True
+        torch.cuda.is_bf16_supported = lambda: True
+
+        # No override - should be bf16
+        device, precision = resolve_device_precision(tiny_config)
+        assert precision == "bf16"
+
+        # Encoder without explicit precision - no override
+        device, precision = resolve_device_precision(
+            tiny_config, encoder_id="answerdotai/ModernBERT-base"
+        )
+        assert precision == "bf16"
+
+        # Set DeBERTa to have explicit fp32, matching the production config
+        for enc in tiny_config.training.encoders:
+            if enc.id == "microsoft/deberta-v3-base":
+                enc.precision = "fp32"
+
+        device, precision = resolve_device_precision(
+            tiny_config, encoder_id="microsoft/deberta-v3-base"
+        )
+        assert precision == "fp32"
+
+        # Non-existent encoder - no override
+        device, precision = resolve_device_precision(
+            tiny_config, encoder_id="nonexistent/model"
+        )
+        assert precision == "bf16"
+    finally:
+        torch.cuda.is_available = original_cuda_available
+        torch.cuda.is_bf16_supported = original_bf16_supported
+
+
 def test_run_inference_writes_schema_rules_monitor_and_metadata(
     tiny_config,
     tiny_registry,
