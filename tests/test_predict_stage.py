@@ -60,7 +60,7 @@ def test_run_inference_writes_schema_rules_monitor_and_metadata(
     tiny_config.inference.shard_size = 3
     tiny_config.inference.batch_size = 2
     missions = _missions_frame()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_selected_model(tiny_registry)
     _write_monitor(tiny_registry, ["E0002", "E0004"])
@@ -96,6 +96,8 @@ def test_run_inference_writes_schema_rules_monitor_and_metadata(
     assert predictions["calibrator_method"].eq("platt").all()
     assert predictions["calibrator_params_hash"].astype(str).str.len().eq(64).all()
     assert predictions["threshold"].eq(0.5).all()
+    assert predictions["threshold_maxf1"].eq(0.7).all()
+    assert predictions["threshold_baserate"].eq(0.9).all()
     assert predictions["inference_date"].astype(str).str.len().gt(0).all()
     assert predictions["pipeline_version"].astype(str).str.len().gt(0).all()
     assert predictions["config_hash"].astype(str).str.len().eq(64).all()
@@ -104,6 +106,116 @@ def test_run_inference_writes_schema_rules_monitor_and_metadata(
     assert monitor["metadata"]["n_monitor"] == 2
     assert {row["EIN2"] for row in monitor["rows"]} == {"E0002", "E0004"}
     assert monitor["metadata"]["calibrator_method"] == "platt"
+    assert {"pred_label_maxf1", "pred_label_baserate"} <= set(monitor["rows"][0])
+
+
+def test_predict_shard_release_labels_use_thresholds_for_classifier_rows(
+    tiny_config,
+) -> None:
+    shard = pd.DataFrame(
+        [
+            _classifier_row("A001", "alpha"),
+            _classifier_row("A002", "beta"),
+        ]
+    )
+    predictions = predict_mod._predict_shard(
+        tiny_config,
+        shard,
+        predictor=_FixedPredictor([0.65, 0.85]),
+        calibrator=_calibrator_payload(),
+        metadata=_metadata_payload(tiny_config),
+        batch_size=2,
+        device="cpu",
+        precision="fp32",
+    )
+
+    assert predictions["pred_label"].tolist() == [1, 1]
+    assert predictions["pred_label_maxf1"].tolist() == [0, 1]
+    assert predictions["pred_label_baserate"].tolist() == [0, 0]
+
+
+def test_predict_shard_release_labels_equal_pred_label_for_rule_rows(
+    tiny_config,
+) -> None:
+    shard = pd.DataFrame(
+        [
+            _rule_row("R001", "rule_strong_positive", 1),
+            _rule_row("R002", "rule_short_negative", 0),
+            _rule_row("R003", "rule_abstain", None),
+        ]
+    )
+    predictions = predict_mod._predict_shard(
+        tiny_config,
+        shard,
+        predictor=_FixedPredictor([]),
+        calibrator=_calibrator_payload(),
+        metadata=_metadata_payload(tiny_config),
+        batch_size=2,
+        device="cpu",
+        precision="fp32",
+    )
+
+    assert predictions["pred_label"].tolist() == [1, 0, 0]
+    assert predictions["pred_label_maxf1"].tolist() == predictions["pred_label"].tolist()
+    assert predictions["pred_label_baserate"].tolist() == predictions["pred_label"].tolist()
+
+
+def test_existing_shard_rejects_changed_release_threshold(tiny_config, tmp_path) -> None:
+    shard_path = tmp_path / "shard_00000.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, shard_path, ["A000", "A001"])
+    metadata = _metadata_payload(tiny_config)
+    metadata["threshold_baserate"] = 0.95
+
+    assert not predict_mod._existing_shard_matches(
+        shard_path,
+        metadata,
+        ["A000", "A001"],
+    )
+
+
+def test_stale_shards_removed_matching_shards_resumed(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+    _prewrite_matching_metadata_shard(
+        tiny_config,
+        tiny_registry.predictions_dir / "shards" / "shard_00000.parquet",
+        ["A000", "A001"],
+    )
+    stale_path = tiny_registry.predictions_dir / "shards" / "shard_00002.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, stale_path, ["Z000"])
+    predictor = _CountingPredictor()
+
+    run_inference(tiny_config, tiny_registry, predictor=predictor)
+
+    assert not stale_path.exists()
+    assert predictor.n_scored == 2
+
+
+def test_limited_run_does_not_delete_stale_shards(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    tiny_config.inference.batch_size = 2
+    missions = _classifier_only_missions()
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, ["A000", "A001"])
+    stale_path = tiny_registry.predictions_dir / "shards" / "shard_00002.parquet"
+    _prewrite_matching_metadata_shard(tiny_config, stale_path, ["Z000"])
+
+    run_inference(tiny_config, tiny_registry, predictor=_CountingPredictor(), limit=2)
+
+    assert stale_path.exists()
 
 
 def test_run_inference_rewrites_existing_shards_with_stale_metadata(
@@ -114,7 +226,7 @@ def test_run_inference_rewrites_existing_shards_with_stale_metadata(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -142,7 +254,7 @@ def test_run_inference_rewrites_existing_shards_with_wrong_ein2_slice(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -165,7 +277,7 @@ def test_run_inference_rewrites_existing_shards_with_wrong_row_count(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -188,7 +300,7 @@ def test_run_inference_rewrites_existing_shards_with_stale_pipeline_version(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -212,7 +324,7 @@ def test_run_inference_rewrites_existing_shards_with_extra_columns(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -236,7 +348,7 @@ def test_run_inference_rewrites_existing_shards_with_stale_calibrator_params(
     tiny_config.inference.shard_size = 2
     tiny_config.inference.batch_size = 2
     missions = _classifier_only_missions()
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     _write_calibrator(tiny_registry)
     _write_monitor(tiny_registry, missions["EIN2"].tolist())
 
@@ -321,8 +433,36 @@ def _classifier_only_missions() -> pd.DataFrame:
 def _write_calibrator(registry) -> None:
     registry.calibrator_path.parent.mkdir(parents=True, exist_ok=True)
     registry.calibrator_path.write_text(
-        json.dumps({"method": "platt", "params": {"a": 1.0, "b": 0.0}, "threshold": 0.5})
+        json.dumps(_calibrator_payload())
     )
+    registry.base_rate_precision.write_text(json.dumps({"threshold": 0.9}))
+
+
+def _calibrator_payload() -> dict:
+    return {
+        "method": "platt",
+        "params": {"a": 1.0, "b": 0.0},
+        "threshold": 0.5,
+        "max_f1_threshold": 0.7,
+        "threshold_baserate": 0.9,
+    }
+
+
+def _metadata_payload(tiny_config) -> dict:
+    return {
+        "model_id": "unknown",
+        "checkpoint_sha256": "unknown",
+        "calibrator_method": "platt",
+        "calibrator_params_hash": predict_mod._calibrator_params_hash(
+            {"params": {"a": 1.0, "b": 0.0}},
+        ),
+        "threshold": 0.5,
+        "threshold_maxf1": 0.7,
+        "threshold_baserate": 0.9,
+        "inference_date": "2026-01-01T00:00:00+00:00",
+        "pipeline_version": predict_mod._pipeline_version(),
+        "config_hash": predict_mod._config_hash(tiny_config),
+    }
 
 
 def _write_selected_model(registry) -> None:
@@ -375,6 +515,8 @@ def _prediction_row(ein2: str, prob: float, label: int) -> dict:
     return {
         "EIN2": ein2,
         "pred_label": label,
+        "pred_label_maxf1": label,
+        "pred_label_baserate": label,
         "prob_raw": prob,
         "prob_calibrated": prob,
         "decision_source": "classifier",
@@ -386,6 +528,8 @@ def _prediction_row(ein2: str, prob: float, label: int) -> dict:
         "calibrator_method": "platt",
         "calibrator_params_hash": "preexisting-params-sha",
         "threshold": 0.5,
+        "threshold_maxf1": 0.7,
+        "threshold_baserate": 0.9,
         "inference_date": "2026-01-01T00:00:00+00:00",
         "pipeline_version": "test",
         "config_hash": "0" * 64,
@@ -396,6 +540,8 @@ def _prediction_columns() -> list[str]:
     return [
         "EIN2",
         "pred_label",
+        "pred_label_maxf1",
+        "pred_label_baserate",
         "prob_raw",
         "prob_calibrated",
         "decision_source",
@@ -407,6 +553,8 @@ def _prediction_columns() -> list[str]:
         "calibrator_method",
         "calibrator_params_hash",
         "threshold",
+        "threshold_maxf1",
+        "threshold_baserate",
         "inference_date",
         "pipeline_version",
         "config_hash",
@@ -426,3 +574,31 @@ class _CountingPredictor:
     def predict_proba(self, texts):
         self.n_scored += len(texts)
         return [[0.2, 0.8] for _ in texts]
+
+
+class _FixedPredictor:
+    def __init__(self, scores) -> None:
+        self.scores = list(scores)
+
+    def predict_proba(self, texts):
+        assert len(texts) == len(self.scores)
+        return [[1.0 - score, score] for score in self.scores]
+
+
+def _classifier_row(ein2: str, text: str) -> dict:
+    return {
+        "EIN2": ein2,
+        "mission_text": text,
+        "decision_source": "classifier",
+        "rule_label": None,
+        "tier": "HIGH",
+        "Q": 5.0,
+        "ntee_major_group": "P",
+    }
+
+
+def _rule_row(ein2: str, source: str, label: int | None) -> dict:
+    row = _classifier_row(ein2, "rule text")
+    row["decision_source"] = source
+    row["rule_label"] = label
+    return row

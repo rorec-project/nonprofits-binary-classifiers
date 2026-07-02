@@ -35,6 +35,8 @@ Device = Literal["cuda", "mps", "cpu"]
 _PREDICTION_COLUMNS = [
     "EIN2",
     "pred_label",
+    "pred_label_maxf1",
+    "pred_label_baserate",
     "prob_raw",
     "prob_calibrated",
     "decision_source",
@@ -46,6 +48,8 @@ _PREDICTION_COLUMNS = [
     "calibrator_method",
     "calibrator_params_hash",
     "threshold",
+    "threshold_maxf1",
+    "threshold_baserate",
     "inference_date",
     "pipeline_version",
     "config_hash",
@@ -65,9 +69,13 @@ _RESUME_METADATA_COLUMNS = [
     "calibrator_method",
     "calibrator_params_hash",
     "threshold",
+    "threshold_maxf1",
+    "threshold_baserate",
     "pipeline_version",
     "config_hash",
 ]
+
+_MISSING_MISSION_SENTINEL = "__BINARY_CLASSIFIER_MISSING_MISSION__"
 
 
 def run_inference(
@@ -99,7 +107,9 @@ def run_inference(
     missions = _prepare_inference_frame(cfg, load_missions(cfg), limit=limit)
     logger.info("Prepared %d inference rows", len(missions))
 
-    calibrator = _load_calibrator(registry.calibrator_path)
+    calibrator = _load_calibrator(
+        registry.calibrator_path, registry.base_rate_precision
+    )
     selected = _load_selected_model(registry, require_checkpoint=predictor is None)
     encoder_id = selected.get("encoder_id")
     device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
@@ -124,6 +134,10 @@ def run_inference(
         max_length=max_length,
     )
 
+    _delete_stale_shards(
+        registry, n_rows=len(missions), shard_size=shard_size, limit=limit
+    )
+
     shard_paths = _process_shards(
         cfg,
         registry,
@@ -140,6 +154,10 @@ def run_inference(
     _validate_ein2_completeness(missions["EIN2"], merged["EIN2"])
     merged.to_parquet(registry.predictions_parquet, index=False)
     logger.info("Wrote merged predictions to %s", registry.predictions_parquet)
+    if limit is None:
+        _write_predictions_full(cfg, registry, merged)
+    else:
+        logger.info("Skipping predictions_full.parquet for limited inference run")
 
     _write_monitor_scores(
         registry,
@@ -249,7 +267,7 @@ def _prepare_inference_frame(
     return frame
 
 
-def _load_calibrator(path: Path) -> dict[str, Any]:
+def _load_calibrator(path: Path, base_rate_path: Path) -> dict[str, Any]:
     if not path.exists():
         raise RuntimeError(
             f"Calibrator artifact not found at {path}. Run stage 07 before stage 08."
@@ -265,7 +283,41 @@ def _load_calibrator(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} must contain a params object.")
     if "threshold" not in raw:
         raise ValueError(f"{path} missing threshold.")
-    return dict(raw)
+    if "max_f1_threshold" not in raw:
+        raise ValueError(f"{path} missing max_f1_threshold.")
+    if not base_rate_path.exists():
+        raise RuntimeError(
+            f"Base-rate precision artifact not found at {base_rate_path}. "
+            "Run stage 07 before stage 08."
+        )
+    base_rate = json.loads(base_rate_path.read_text())
+    if not isinstance(base_rate, dict) or "threshold" not in base_rate:
+        raise ValueError(f"{base_rate_path} must contain a threshold.")
+    loaded = dict(raw)
+    loaded["threshold_baserate"] = float(base_rate["threshold"])
+    return loaded
+
+
+def _delete_stale_shards(
+    registry: "PathRegistry",
+    *,
+    n_rows: int,
+    shard_size: int,
+    limit: int | None,
+) -> None:
+    """Remove obsolete full-run shards before resuming current shard writes."""
+    if limit is not None:
+        logger.info("Skipping stale shard cleanup for limited inference run")
+        return
+    shards_dir = registry.predictions_dir / "shards"
+    expected = {
+        shards_dir / f"shard_{idx:05d}.parquet"
+        for idx in range(len(range(0, n_rows, shard_size)))
+    }
+    for shard_path in sorted(shards_dir.glob("shard_*.parquet")):
+        if shard_path not in expected:
+            shard_path.unlink()
+            logger.info("Deleted stale inference shard %s", shard_path)
 
 
 def _load_selected_model(
@@ -337,7 +389,7 @@ def _load_checkpoint_predictor(
         checkpoint_sha256 = str(selected.get("checkpoint_sha256") or "unknown")
 
         def predict_proba(self, texts: Sequence[str]) -> np.ndarray:
-            encoded = cast(Any, tokenizer)(
+            encoded = tokenizer(
                 list(texts),
                 padding=True,
                 truncation=True,
@@ -425,7 +477,7 @@ def _existing_shard_matches(
         if len(values) != 1:
             return False
         observed = values[0]
-        if column == "threshold":
+        if column.startswith("threshold"):
             try:
                 if not np.isclose(float(observed), float(expected)):
                     return False
@@ -452,6 +504,8 @@ def _predict_shard(
     output["prob_raw"] = np.nan
     output["prob_calibrated"] = np.nan
     output["pred_label"] = np.nan
+    output["pred_label_maxf1"] = np.nan
+    output["pred_label_baserate"] = np.nan
 
     rule_mask = shard["decision_source"].isin(
         {"rule_strong_positive", "rule_short_negative"}
@@ -483,9 +537,28 @@ def _predict_shard(
         output.loc[classifier_index, "pred_label"] = (calibrated >= threshold).astype(
             int
         )
+        output.loc[classifier_index, "pred_label_maxf1"] = (
+            calibrated >= float(calibrator["max_f1_threshold"])
+        ).astype(int)
+        output.loc[classifier_index, "pred_label_baserate"] = (
+            calibrated >= float(calibrator["threshold_baserate"])
+        ).astype(int)
 
     if output["pred_label"].isna().any():
         raise ValueError("Inference shard contains unrouted rows with no pred_label.")
+    # Release thresholds apply only where the classifier produced a probability;
+    # deterministic rule/abstain rows keep the operating decision as released.
+    non_classifier_mask = ~classifier_mask
+    output.loc[non_classifier_mask, "pred_label_maxf1"] = output.loc[
+        non_classifier_mask,
+        "pred_label",
+    ].astype(int)
+    output.loc[non_classifier_mask, "pred_label_baserate"] = output.loc[
+        non_classifier_mask,
+        "pred_label",
+    ].astype(int)
+    if output[["pred_label_maxf1", "pred_label_baserate"]].isna().any().any():
+        raise ValueError("Inference shard contains rows with no release label.")
     for key, value in metadata.items():
         output[key] = value
     return output[_PREDICTION_COLUMNS].copy()
@@ -563,6 +636,99 @@ def _merge_shards(paths: Sequence[Path]) -> pd.DataFrame:
     return merged[_PREDICTION_COLUMNS].copy()
 
 
+def _write_predictions_full(
+    cfg: "BinaryClassifierConfig",
+    registry: "PathRegistry",
+    predictions: pd.DataFrame,
+) -> None:
+    """Expand deduplicated text predictions back to every raw EIN2 row."""
+    deduped = load_missions(cfg, deduplicate=True)
+    raw = load_missions(cfg, deduplicate=False)
+    full = _expand_predictions_to_raw(
+        cfg, raw=raw, deduped=deduped, predictions=predictions
+    )
+    full.to_parquet(registry.predictions_full_parquet, index=False)
+    logger.info(
+        "Wrote raw-EIN2 predictions to %s (%d rows, %d null pred_label)",
+        registry.predictions_full_parquet,
+        len(full),
+        int(full["pred_label"].isna().sum()),
+    )
+
+
+def _expand_predictions_to_raw(
+    cfg: "BinaryClassifierConfig",
+    *,
+    raw: pd.DataFrame,
+    deduped: pd.DataFrame,
+    predictions: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return per-raw-EIN2 predictions using the configured mission text field."""
+    _validate_ein2_completeness(deduped["EIN2"], predictions["EIN2"])
+    raw_frame = raw.copy()
+    deduped_frame = deduped.copy()
+    pred_frame = predictions.copy()
+
+    raw_key_column = _mission_key_column(cfg, raw_frame)
+    deduped_key_column = _mission_key_column(cfg, deduped_frame)
+    raw_frame["_prediction_join_key"] = _normalize_mission_key(
+        raw_frame[raw_key_column]
+    )
+    deduped_frame["_prediction_join_key"] = _normalize_mission_key(
+        deduped_frame[deduped_key_column],
+    )
+
+    key_predictions = deduped_frame[["EIN2", "_prediction_join_key"]].merge(
+        pred_frame,
+        on="EIN2",
+        how="inner",
+        validate="one_to_one",
+    )
+    key_predictions = key_predictions.drop(columns=["EIN2"])
+    overlapping_raw_columns = [
+        column
+        for column in raw_frame.columns
+        if column in key_predictions.columns and column != "_prediction_join_key"
+    ]
+    key_predictions = key_predictions.drop(columns=overlapping_raw_columns)
+    full = raw_frame.merge(
+        key_predictions,
+        on="_prediction_join_key",
+        how="left",
+        validate="many_to_one",
+    )
+    full = full.drop(columns=["_prediction_join_key"])
+    _validate_predictions_full(raw_frame["EIN2"], full)
+
+    raw_columns = [
+        column for column in raw.columns if column not in _PREDICTION_COLUMNS
+    ]
+    return full[["EIN2", *raw_columns, *_PREDICTION_COLUMNS[1:]]].copy()
+
+
+def _mission_key_column(cfg: "BinaryClassifierConfig", frame: pd.DataFrame) -> str:
+    if cfg.field in frame.columns:
+        return cfg.field
+    if "mission_text" in frame.columns:
+        return "mission_text"
+    raise ValueError(
+        f"Mission frame missing configured field {cfg.field!r} and mission_text."
+    )
+
+
+def _normalize_mission_key(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna(_MISSING_MISSION_SENTINEL)
+
+
+def _validate_predictions_full(expected_ein2: pd.Series, full: pd.DataFrame) -> None:
+    _validate_ein2_completeness(expected_ein2, full["EIN2"])
+    null_labels = int(full["pred_label"].isna().sum())
+    if null_labels:
+        raise ValueError(
+            f"Expanded predictions contain {null_labels} null pred_label rows."
+        )
+
+
 def _write_monitor_scores(
     registry: "PathRegistry",
     predictions: pd.DataFrame,
@@ -592,6 +758,8 @@ def _write_monitor_scores(
         [
             "EIN2",
             "pred_label",
+            "pred_label_maxf1",
+            "pred_label_baserate",
             "prob_raw",
             "prob_calibrated",
             "decision_source",
@@ -662,6 +830,8 @@ def _prediction_metadata(
         "calibrator_method": str(calibrator["method"]),
         "calibrator_params_hash": _calibrator_params_hash(calibrator),
         "threshold": float(calibrator["threshold"]),
+        "threshold_maxf1": float(calibrator["max_f1_threshold"]),
+        "threshold_baserate": float(calibrator["threshold_baserate"]),
         "inference_date": datetime.now(UTC).isoformat(),
         "pipeline_version": _pipeline_version(),
         "config_hash": _config_hash(cfg),

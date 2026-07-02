@@ -54,7 +54,7 @@ def test_e2e_stages_05_to_08_with_finetune_stub(
     monkeypatch.setattr(anchor_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(train_data_mod, "load_missions", lambda cfg: missions)
     monkeypatch.setattr(evaluate_mod, "load_missions", lambda cfg: missions)
-    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg: missions)
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     monkeypatch.setattr(sweep, "finetune", _fake_finetune)
 
     _write_stage04_training_artifacts(tiny_registry)

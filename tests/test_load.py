@@ -1,6 +1,7 @@
 """Tests for T1.2: synthetic data is opt-in, loud, stamped, and cleaned up."""
 
 import pytest
+import pandas as pd
 
 from binary_classifier.data import load as load_module
 from binary_classifier.data.load import load_missions
@@ -43,3 +44,29 @@ def test_synthetic_temp_dir_cleanup(tmp_path) -> None:
     load_module._cleanup_synthetic_dirs()
     assert not created.exists()
     assert load_module._SYNTHETIC_DIRS == []
+
+
+def test_load_missions_can_preserve_raw_duplicate_rows(tmp_path) -> None:
+    cfg = _cfg(tmp_path, allow_synthetic=False)
+    pd.DataFrame(
+        [
+            {"EIN2": "E001", "LONGEST_MISSION": "same"},
+            {"EIN2": "E002", "LONGEST_MISSION": "same"},
+            {"EIN2": "E003", "LONGEST_MISSION": "other"},
+        ]
+    ).to_parquet(tmp_path / "missions_cross_section.parquet", index=False)
+    pd.DataFrame(
+        [
+            {"EIN2": "E001", "NTEE_IRS": "P20"},
+            {"EIN2": "E002", "NTEE_IRS": "P20"},
+            {"EIN2": "E003", "NTEE_IRS": "X20"},
+        ]
+    ).to_parquet(tmp_path / "bmf_unified_processed.parquet", index=False)
+
+    deduped = load_missions(cfg)
+    raw = load_missions(cfg, deduplicate=False)
+
+    assert len(deduped) == 2
+    assert len(raw) == 3
+    assert "LONGEST_MISSION" not in deduped.columns
+    assert raw["LONGEST_MISSION"].tolist() == ["same", "same", "other"]

@@ -43,14 +43,19 @@ atexit.register(_cleanup_synthetic_dirs)
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
-def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
+def load_missions(
+    cfg: BinaryClassifierConfig,
+    *,
+    deduplicate: bool = True,
+) -> pd.DataFrame:
     """Load missions cross-section and join with BMF for NTEE major groups.
 
     The function reads ``missions_cross_section.parquet`` and joins it with
     ``bmf_unified_processed.parquet`` on ``EIN2`` to extract the NTEE major
     group (first character of ``NTEE_IRS``). Exact duplicates on the target
-    text field are dropped (first kept). Rows with non-alphabetic NTEE codes
-    are assigned ``'?'`` but excluded from downstream sampling pools.
+    text field are dropped (first kept) unless ``deduplicate=False``. Rows with
+    non-alphabetic NTEE codes are assigned ``'?'`` but excluded from downstream
+    sampling pools.
 
     If either upstream parquet is missing, a temporary synthetic dataset is
     generated, used, and then its path is returned so the caller can clean it
@@ -58,6 +63,8 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
 
     Args:
         cfg: Validated configuration object.
+        deduplicate: Whether to preserve the historical one-row-per-text frame.
+            Set to ``False`` only when a downstream stage needs every raw EIN2.
 
     Returns:
         DataFrame with columns ``EIN2``, ``mission_text``,
@@ -113,8 +120,9 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
     field = cfg.field
     df["is_truncated"] = df[field].astype(str).apply(_is_truncated)
 
-    # Drop exact duplicates on the text field (keep first)
-    df = df.drop_duplicates(subset=[field], keep="first")
+    if deduplicate:
+        # Drop exact duplicates on the text field (keep first)
+        df = df.drop_duplicates(subset=[field], keep="first")
 
     # Rename field to a canonical name for downstream consistency
     df = df.rename(columns={field: "mission_text"})
@@ -122,16 +130,18 @@ def load_missions(cfg: BinaryClassifierConfig) -> pd.DataFrame:
     # Stamp provenance so a synthetic build can never masquerade as a real one.
     df["data_source"] = "synthetic" if synthetic else "upstream"
 
-    return df[
-        [
-            "EIN2",
-            "mission_text",
-            "ntee_major_group",
-            "is_truncated",
-            "NTEE_IRS",
-            "data_source",
-        ]
+    columns = [
+        "EIN2",
+        "mission_text",
+        "ntee_major_group",
+        "is_truncated",
+        "NTEE_IRS",
+        "data_source",
     ]
+    if not deduplicate and field != "mission_text":
+        columns.append(field)
+        df[field] = df["mission_text"]
+    return df[columns]
 
 
 def _is_truncated(text: str, threshold: int = _TRUNCATION_THRESHOLD) -> bool:

@@ -263,6 +263,11 @@ class PathRegistry:
         return self.predictions_dir / "predictions.parquet"
 
     @property
+    def predictions_full_parquet(self) -> Path:
+        """Per-organization predictions expanded back to raw EIN2 rows."""
+        return self.predictions_dir / "predictions_full.parquet"
+
+    @property
     def monitor_scores(self) -> Path:
         """Monitor-slice prediction scores."""
         return self.predictions_dir / "monitor_scores.json"
