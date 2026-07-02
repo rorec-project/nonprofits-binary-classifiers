@@ -155,14 +155,14 @@ Below is a one-paragraph summary of each stage. For full technical details (I/O 
 
 ## The 4 Human Checkpoints (G1–G4)
 
-| Gate   | Full name          | Before stage(s) | Artifact                                    | Required state                                                                                                                                  |
-| ------ | ------------------ | --------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **G1** | Labels gate        | 02, 04, 06, 07  | `data/processed/gold/gold_to_code.csv`      | Every row in the needed split has a strict `0/1` `human_label` (no blanks, no other values)                                                     |
-| **G2** | Slate gate         | 03              | `data/processed/gold/production_slate.json` | `"confirmed": true` and lists the exact model IDs for production                                                                                |
-| **G4** | Anchor-labels gate | 07, 09          | `data/processed/gold/anchor_to_code.csv`    | Every row has a strict `0/1` `human_label`                                                                                                      |
-| **G3** | Test-unlock gate   | 07              | `data/processed/gold/test_unlock.json`      | `"confirmed": true` + `checkpoint_sha256` matching the selected model + acceptance snapshot; the test split is never seen until this gate opens |
+| Gate   | Full name          | Before stage(s) | Artifact                                                       | Required state                                                                                                                                     |
+| ------ | ------------------ | --------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **G1** | Labels gate        | 02, 04, 06, 07  | `data/processed/gold/gold_to_code.csv`                         | Every row in the needed split has a strict `0/1` `human_label` (no blanks, no other values)                                                        |
+| **G2** | Slate gate         | 03              | `data/processed/gold/production_slate.json`                    | `"confirmed": true` and lists the exact model IDs for production                                                                                   |
+| **G4** | Anchor-labels gate | 07, 09          | `data/processed/gold/anchor_to_code.csv`                       | Every row has a strict `0/1` `human_label`                                                                                                         |
+| **G3** | Test-unlock gate   | 07              | `data/processed/gold/selected_model.json` + `test_unlock.json` | `selected_model.json` copied from stage-06 report; `test_unlock.json` has `"confirmed": true` + matching `checkpoint_sha256` + acceptance snapshot |
 
-> **Why G3 is last:** the frozen test is the _final exam_. The model is selected and trained without ever touching it. Only after a human explicitly unlocks the test by recording the selected checkpoint SHA does evaluation run. This prevents any accidental leakage during model iteration.
+> **Why G3 is last:** the frozen test is the _final exam_. After stage 06, review `selection_report.json` — if the validation metrics are acceptable, copy its `selected_model_skeleton` into `selected_model.json` and write `test_unlock.json` with the matching SHA. Only then does evaluation run. This prevents any accidental leakage during model iteration.
 
 ---
 
@@ -475,7 +475,40 @@ The project follows a **one principled primary method per concern + minimal robu
 
 ---
 
-## Appendix D: Sampling Frame vs. Population
+## Appendix D: Unlocking the Frozen Test Set (G3)
+
+After stage 06, create two files in `data/processed/gold/` before stage 07:
+
+**`selected_model.json`** — copy the skeleton from the stage-06 report:
+
+```bash
+jq '.selected_model_skeleton' data/models/selection_report.json \
+  > data/processed/gold/selected_model.json
+```
+
+**`test_unlock.json`** — human sign-off with the matching SHA:
+
+```bash
+cat > data/processed/gold/test_unlock.json << 'EOF'
+{
+  "confirmed": true,
+  "checkpoint": "checkpoints/microsoft__deberta-v3-base/default/s44/checkpoint-2690/model.safetensors",
+  "checkpoint_sha256": "8fd26faa3abaf5f1a45fb884ff17ca6757a61ba219d9afbd313fb7ff9c06e885",
+  "acceptance": {
+    "min_pr_auc": 0.90,
+    "min_minority_f1_ci_lower": 0.70,
+    "max_ece": 0.05
+  },
+  "rationale": "Validation metrics clear acceptance thresholds."
+}
+EOF
+```
+
+The pipeline checks that both files exist, `checkpoint_sha256` matches, `confirmed` is `true`, and the `acceptance` snapshot matches the current config in the YAML file (evaluation.acceptance). Any failure exits with code 2 before loading the model.
+
+---
+
+## Appendix E: Sampling Frame vs. Population
 
 The current sampling frame is the **HIGH + MEDIUM quality strata only** (`Q >= 3.0`). LOW-quality records (bare labels, fragments) are excluded from stage-01 sampling and are handled later by the rule layer at inference. That means the sampled frame is **not** the full nonprofit population.
 
@@ -485,7 +518,7 @@ This framing is deliberate: the pipeline optimizes annotation and QC on text tha
 
 ---
 
-## Appendix E: UCloud Runtime
+## Appendix F: UCloud Runtime
 
 GPU jobs run on the **UCloud SDU/DeiC Interactive HPC** platform. See [`docs/RUNNING_ON_UCLOUD.md`](docs/RUNNING_ON_UCLOUD.md) for the full runbook, including:
 
@@ -508,7 +541,7 @@ bash utils/run.sh "06,07,08"           # run GPU stages
 
 ---
 
-## Appendix F: Troubleshooting
+## Appendix G: Troubleshooting
 
 **`command not found: uv`** — Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `pip install uv`, `brew install uv`).
 
@@ -526,7 +559,7 @@ bash utils/run.sh "06,07,08"           # run GPU stages
 
 ---
 
-## Appendix G: Legacy Pipeline
+## Appendix H: Legacy Pipeline
 
 The original flat-script pipeline (`generate_training_data.py`, `split_data.py`, and the five Jupyter notebooks) has been moved verbatim to `archive/legacy-pipe/` for reference. It is **not executed** by the new pipeline and is preserved only for historical comparison.
 
