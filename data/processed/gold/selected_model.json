@@ -1,0 +1,17 @@
+{
+  "checkpoint_relpath": "checkpoints/microsoft__deberta-v3-base/default/s44/checkpoint-2690/model.safetensors",
+  "checkpoint_sha256": "8fd26faa3abaf5f1a45fb884ff17ca6757a61ba219d9afbd313fb7ff9c06e885",
+  "encoder_id": "microsoft/deberta-v3-base",
+  "recipe_snapshot": {
+    "arm": "default",
+    "batch_size": 32,
+    "early_stopping_patience": 3,
+    "epochs": 10,
+    "learning_rate": 2e-5,
+    "warmup_fraction": 0.06,
+    "weight_decay": 0.01
+  },
+  "selected_at": "2026-07-01T18:49:28.149192+00:00",
+  "targets": "soft",
+  "tokenizer_id": "microsoft/deberta-v3-base"
+}
