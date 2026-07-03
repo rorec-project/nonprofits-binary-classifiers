@@ -121,9 +121,17 @@ def frozen_test_curves(payload: Mapping[str, Any], ax: Axes) -> None:
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.05)
     _annotate_threshold_points(ax, pr_frame, payload)
+    ax.legend(loc="lower left")
 
     inset = ax.inset_axes((0.56, 0.12, 0.40, 0.40))
-    inset.plot([0.0, 1.0], [0.0, 1.0], color=MUTED_GREY, linestyle="--", linewidth=0.8)
+    inset.plot(
+        [0.0, 1.0],
+        [0.0, 1.0],
+        color=MUTED_GREY,
+        linestyle="--",
+        linewidth=0.8,
+        label="Random",
+    )
     inset.plot(roc_frame["fpr"], roc_frame["tpr"], color=OKABE_ITO_ORANGE, label="ROC")
     inset.set_xlabel("FPR", fontsize=7)
     inset.set_ylabel("TPR", fontsize=7)
@@ -131,6 +139,7 @@ def frozen_test_curves(payload: Mapping[str, Any], ax: Axes) -> None:
     inset.set_xlim(0.0, 1.0)
     inset.set_ylim(0.0, 1.0)
     inset.grid(alpha=0.20)
+    inset.legend(loc="lower right", fontsize=6)
     logger.info("Rendered frozen-test curves with %d PR points", len(pr_frame))
 
 
@@ -195,6 +204,38 @@ def score_distribution_by_tier_label(
     logger.info("Rendered score distributions for %d tiers", len(tiers))
 
 
+def draw_single_confusion_matrix(
+    item: Mapping[str, Any],
+    name: str,
+    ax: Axes,
+) -> None:
+    """Render one confusion matrix on the given axes."""
+    counts = item.get("confusion_matrix", item)
+    if not isinstance(counts, Mapping):
+        raise ValueError(f"confusion matrix {name!r} missing counts.")
+    values = np.array(
+        [
+            [int(counts.get("tn", 0)), int(counts.get("fp", 0))],
+            [int(counts.get("fn", 0)), int(counts.get("tp", 0))],
+        ],
+    )
+    ax.imshow(values, cmap="Blues", vmin=0)
+    for row in range(2):
+        for col in range(2):
+            ax.text(
+                col,
+                row,
+                str(values[row, col]),
+                ha="center",
+                va="center",
+            )
+    threshold = item.get("threshold")
+    suffix = "" if threshold is None else f"\nthr={float(threshold):.3f}"
+    ax.set_title(f"{name.replace('_', ' ').title()}{suffix}")
+    ax.set_xticks([0, 1], labels=["Pred 0", "Pred 1"])
+    ax.set_yticks([0, 1], labels=["True 0", "True 1"])
+
+
 def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: Axes) -> None:
     """Render frozen-test confusion matrices at persisted operating thresholds."""
     matrices = payload.get("confusion_matrices")
@@ -208,33 +249,7 @@ def frozen_test_confusion_matrices(payload: Mapping[str, Any], ax: Axes) -> None
     ax.remove()
     axes = fig.subplots(1, len(names), squeeze=False).ravel()
     for name, matrix_ax in zip(names, axes, strict=True):
-        item = matrices[name]
-        if not isinstance(item, Mapping):
-            raise ValueError(f"confusion matrix {name!r} must be a mapping.")
-        counts = item.get("confusion_matrix", item)
-        if not isinstance(counts, Mapping):
-            raise ValueError(f"confusion matrix {name!r} missing counts.")
-        values = np.array(
-            [
-                [int(counts.get("tn", 0)), int(counts.get("fp", 0))],
-                [int(counts.get("fn", 0)), int(counts.get("tp", 0))],
-            ],
-        )
-        matrix_ax.imshow(values, cmap="Blues", vmin=0)
-        for row in range(2):
-            for col in range(2):
-                matrix_ax.text(
-                    col,
-                    row,
-                    str(values[row, col]),
-                    ha="center",
-                    va="center",
-                )
-        threshold = item.get("threshold")
-        suffix = "" if threshold is None else f"\nthr={float(threshold):.3f}"
-        matrix_ax.set_title(f"{name.replace('_', ' ').title()}{suffix}")
-        matrix_ax.set_xticks([0, 1], labels=["Pred 0", "Pred 1"])
-        matrix_ax.set_yticks([0, 1], labels=["True 0", "True 1"])
+        draw_single_confusion_matrix(matrices[name], name, matrix_ax)
     logger.info("Rendered %d frozen-test confusion matrices", len(names))
 
 
@@ -261,15 +276,15 @@ def subgroup_performance(subgroups: object, ax: Axes) -> None:
     )
     frame = frame.sort_values(["grouping", "value"]).reset_index(drop=True)
     y = np.arange(len(frame), dtype=float)
-    for metric, color, marker in (
-        ("minority_f1", OKABE_ITO_BLUE, "o"),
-        ("fpr", OKABE_ITO_ORANGE, "s"),
-        ("fnr", OKABE_ITO_BLUISH_GREEN, "D"),
+    for metric, color, marker, label in (
+        ("minority_f1", OKABE_ITO_BLUE, "o", "Minority F1"),
+        ("fpr", OKABE_ITO_ORANGE, "s", "FPR"),
+        ("fnr", OKABE_ITO_BLUISH_GREEN, "D", "FNR"),
     ):
         ax.scatter(
             frame[metric],
             y,
-            label=metric.replace("_", " "),
+            label=label,
             color=color,
             marker=marker,
         )
@@ -278,7 +293,7 @@ def subgroup_performance(subgroups: object, ax: Axes) -> None:
     ax.set_xlabel("Metric value")
     ax.set_ylabel("Subgroup")
     ax.set_title("Frozen-test subgroup performance")
-    ax.legend(loc="lower right")
+    ax.legend(loc="upper left")
     ax.grid(axis="x", alpha=0.25)
     logger.info("Rendered subgroup performance for %d rows", len(frame))
 
@@ -321,6 +336,7 @@ def reliability_diagram(points: object, ax: Axes, ece: float | None = None) -> N
         linestyle="--",
         color=OKABE_ITO_BLACK,
         linewidth=0.9,
+        label="Perfect calibration",
     )
     ax.scatter(
         frame["mean_predicted"].to_numpy(dtype=float),
@@ -328,6 +344,7 @@ def reliability_diagram(points: object, ax: Axes, ece: float | None = None) -> N
         s=marker_sizes,
         color=OKABE_ITO_BLUE,
         alpha=0.8,
+        label="Observed bins",
     )
     ax.set_xlabel("Mean predicted probability")
     ax.set_ylabel("Observed positive fraction")
@@ -335,9 +352,10 @@ def reliability_diagram(points: object, ax: Axes, ece: float | None = None) -> N
     if ece is not None:
         title = f"{title} (ECE={ece:.3f})"
     ax.set_title(title)
-    ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(-0.03, 1.03)
+    ax.set_ylim(-0.03, 1.03)
     ax.grid(alpha=0.25)
+    ax.legend(loc="upper left")
     logger.info("Rendered reliability diagram with %d bins", len(frame))
 
 
@@ -545,7 +563,13 @@ def threshold_sweep_plot(
     ax: Axes,
 ) -> None:
     """Plot threshold-sweep dual-axis curves faceted by quality tier."""
-    required = {"prob_calibrated", "tier", "pred_label", "pred_label_baserate", "pred_label_maxf1"}
+    required = {
+        "prob_calibrated",
+        "tier",
+        "pred_label",
+        "pred_label_baserate",
+        "pred_label_maxf1",
+    }
     missing = required - set(predictions.columns)
     if missing:
         raise ValueError(f"predictions missing columns: {sorted(missing)}")
@@ -560,7 +584,9 @@ def threshold_sweep_plot(
     tiers = sorted(frame["tier"].unique())
 
     oof = anchor_oof.copy()
-    oof["prob_calibrated_oof"] = pd.to_numeric(oof["prob_calibrated_oof"], errors="coerce")
+    oof["prob_calibrated_oof"] = pd.to_numeric(
+        oof["prob_calibrated_oof"], errors="coerce"
+    )
     oof["human_label"] = pd.to_numeric(oof["human_label"], errors="coerce")
     oof = oof.dropna(subset=["prob_calibrated_oof", "human_label"])
 

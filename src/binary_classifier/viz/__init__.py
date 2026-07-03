@@ -2,6 +2,7 @@
 
 from binary_classifier.viz.curves import (
     documentation_curve,
+    draw_single_confusion_matrix,
     frozen_test_confusion_matrices,
     frozen_test_curves,
     threshold_sweep_plot,
@@ -27,6 +28,7 @@ __all__ = [
     "bakeoff_summary",
     "canary_drift",
     "documentation_curve",
+    "draw_single_confusion_matrix",
     "frozen_test_confusion_matrices",
     "frozen_test_curves",
     "threshold_sweep_plot",

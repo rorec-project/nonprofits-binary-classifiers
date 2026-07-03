@@ -24,7 +24,7 @@ from binary_classifier.viz import (
     bakeoff_summary,
     canary_drift,
     documentation_curve,
-    frozen_test_confusion_matrices,
+    draw_single_confusion_matrix,
     frozen_test_curves,
     threshold_sweep_plot,
     ngram_log_odds,
@@ -303,7 +303,7 @@ def _maybe_render_frozen_test_confusion_matrices(
     _cfg: BinaryClassifierConfig,
     registry: PathRegistry,
 ) -> bool:
-    """Render frozen-test confusion matrices from persisted stage-07 JSON."""
+    """Render frozen-test confusion matrices at persisted operating thresholds."""
     path = registry.test_evaluation
     if not path.exists():
         logger.warning(
@@ -320,15 +320,27 @@ def _maybe_render_frozen_test_confusion_matrices(
             )
             return False
         payload_mapping = cast(Mapping[str, Any], payload)
-        _save_plot(
-            registry,
-            "frozen_test_confusion_matrices",
-            lambda ax, payload=payload_mapping: frozen_test_confusion_matrices(
-                payload,
-                ax,
-            ),
-            figsize=figure_size(width=PAGE_WIDTH, height=3.0),
-        )
+        matrices = payload_mapping.get("confusion_matrices", {})
+        if not isinstance(matrices, Mapping):
+            logger.warning("Skipping confusion matrices; no matrices block.")
+            return False
+        names = [n for n in ("operating", "max_f1", "base_rate") if n in matrices]
+        if not names:
+            logger.warning("Skipping confusion matrices; no threshold matrices found.")
+            return False
+
+        for name in names:
+            item = matrices[name]
+            _save_plot(
+                registry,
+                f"frozen_test_confusion_matrix_{name}",
+                lambda ax, item=item, name=name: draw_single_confusion_matrix(
+                    item,
+                    name,
+                    ax,
+                ),
+                figsize=figure_size(width=PAGE_WIDTH, height=3.0),
+            )
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
         logger.warning("Skipping frozen-test confusion matrices from %s: %s", path, exc)
         return False
@@ -673,9 +685,9 @@ def _save_plot(
             pdf_path = registry.figures_dir / f"{name}.pdf"
             svg_path = registry.figures_dir / f"{name}.svg"
             png_path = registry.figures_dir / f"{name}.png"
-            fig.savefig(pdf_path, bbox_inches="tight")
-            fig.savefig(svg_path, bbox_inches="tight")
-            fig.savefig(png_path, dpi=300, bbox_inches="tight")
+            fig.savefig(pdf_path, bbox_inches="tight", transparent=True)
+            fig.savefig(svg_path, bbox_inches="tight", transparent=True)
+            fig.savefig(png_path, dpi=300, bbox_inches="tight", transparent=True)
             logger.info(
                 "Rendered %s to %s, %s, and %s",
                 name,

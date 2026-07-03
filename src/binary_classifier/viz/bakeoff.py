@@ -122,7 +122,7 @@ def bakeoff_summary(results: object, ax: Axes) -> None:
     ax.set_ylabel("Model × prompt arm")
     ax.set_title("Bake-off: minority-F1 and chance-corrected agreement")
     ax.grid(axis="x", alpha=0.25)
-    ax.legend(loc="lower right")
+    ax.legend(loc="upper left")
     logger.info("Rendered bake-off summary for %d arms", len(frame))
 
 
@@ -239,6 +239,16 @@ def production_annotation_summary(df: pd.DataFrame, ax: Axes) -> None:
     ax.set_xlabel("Rate")
     ax.set_ylabel("Model/source diagnostic")
     ax.set_title("Production annotation diagnostics")
+    from matplotlib.patches import Patch
+
+    legend_handles = [
+        Patch(facecolor=OKABE_ITO_BLUE, label="Abstain rate"),
+        Patch(facecolor=OKABE_ITO_ORANGE, label="High abstain (≥25%)"),
+        Patch(facecolor=OKABE_ITO_BLUISH_GREEN, label="Mean pairwise agreement"),
+        Patch(facecolor=OKABE_ITO_VERMILLION, label="Tie rate"),
+        Patch(facecolor=MUTED_GREY, label="All-abstain rate"),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=7)
     ax.grid(axis="x", alpha=0.25)
     logger.info(
         "Rendered production annotation summary for %d sources and %d rows",

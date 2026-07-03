@@ -55,13 +55,22 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: Axes) -> None:
         raise ValueError("prevalence_by_ntee_df must contain at least one row.")
 
     frame = prevalence_by_ntee_df.copy().sort_values("ntee_major_group")
+    suppressed = frame["suppressed"].astype(bool).to_numpy()
     estimates = pd.to_numeric(frame["estimate"], errors="coerce").to_numpy(dtype=float)
     lower = pd.to_numeric(frame["ci_lower"], errors="coerce").to_numpy(dtype=float)
     upper = pd.to_numeric(frame["ci_upper"], errors="coerce").to_numpy(dtype=float)
-    if not np.isfinite(estimates).all():
-        raise ValueError("Prevalence estimates must be finite.")
+    if not np.isfinite(estimates[~suppressed]).all():
+        n_bad = int(np.sum(~np.isfinite(estimates[~suppressed])))
+        raise ValueError(
+            f"{n_bad} non-suppressed prevalence estimate(s) are non-finite."
+        )
 
+    keep = ~suppressed
+    frame = frame[keep].reset_index(drop=True)
     suppressed = frame["suppressed"].astype(bool).to_numpy()
+    estimates = estimates[keep]
+    lower = lower[keep]
+    upper = upper[keep]
     y_positions = np.arange(len(frame), dtype=float)
     labels = [
         f"{group} (n={int(n_anchor)})"
@@ -108,7 +117,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: Axes) -> None:
 
     ax.set_yticks(y_positions, labels=labels)
     ax.axvline(0.0, color=OKABE_ITO_BLACK, linewidth=0.8, alpha=0.6)
-    ax.set_xlim(0.0, min(1.0, max(1.0, float(np.nanmax(upper)))))
+    ax.set_xlim(0.0, min(1.05, max(1.05, float(upper.max() * 1.05))))
     ax.set_xlabel("Estimated religious prevalence")
     ax.set_ylabel("NTEE major group")
     ax.set_title("Prevalence by NTEE group")
@@ -178,6 +187,14 @@ def prevalence_decomposition(report: Mapping[str, Any], ax: Axes) -> None:
     ax.set_title("Prevalence decomposition")
     ax.set_ylim(0.0, min(1.0, max(0.05, total * 1.35)))
     ax.grid(axis="y", alpha=0.25)
+    from matplotlib.patches import Patch
+
+    legend_handles = [
+        Patch(facecolor=colors[0], label="HM-PPI"),
+        Patch(facecolor=colors[1], label="LOW-PPI"),
+        Patch(facecolor=colors[2], label="LOW-RG"),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=7)
     logger.info("Rendered prevalence decomposition with %d components", len(frame))
 
 
@@ -222,7 +239,7 @@ def rule_validation_intervals(report: Mapping[str, Any], ax: Axes) -> None:
             fontsize=7,
         )
     ax.set_yticks(y, labels=frame["metric"].to_list())
-    ax.set_xlim(0.0, 1.05)
+    ax.set_xlim(0.0, 1.12)
     ax.set_xlabel("Validation estimate")
     ax.set_title("Rule-validation Wilson intervals")
     ax.grid(axis="x", alpha=0.25)
