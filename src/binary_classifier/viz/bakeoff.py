@@ -17,6 +17,7 @@ from binary_classifier.viz.style import (
     OKABE_ITO_BLUISH_GREEN,
     OKABE_ITO_ORANGE,
     OKABE_ITO_VERMILLION,
+    pad_axes,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +73,7 @@ def bakeoff_summary(results: object, ax: Axes) -> None:
         ecolor=OKABE_ITO_BLUE,
         capsize=3,
         label="Minority F1 (bootstrap CI)",
+        clip_on=False,
     )
     ax.scatter(
         kappa,
@@ -81,6 +83,7 @@ def bakeoff_summary(results: object, ax: Axes) -> None:
         color=OKABE_ITO_BLUISH_GREEN,
         label="Cohen's κ (point only)",
         zorder=3,
+        clip_on=False,
     )
     if high_abstain.any():
         ax.scatter(
@@ -93,6 +96,7 @@ def bakeoff_summary(results: object, ax: Axes) -> None:
             linewidths=1.2,
             label=f"High abstain (≥{_HIGH_ABSTAIN_RATE:.0%})",
             zorder=4,
+            clip_on=False,
         )
 
     for idx, row in enumerate(frame.to_dict("records")):
@@ -118,6 +122,7 @@ def bakeoff_summary(results: object, ax: Axes) -> None:
     ]
     ax.set_yticks(y_positions, labels=labels)
     ax.set_xlim(0.0, 1.05)
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Score")
     ax.set_ylabel("Model × prompt arm")
     ax.set_title("Bake-off: minority-F1 and chance-corrected agreement")
@@ -236,6 +241,7 @@ def production_annotation_summary(df: pd.DataFrame, ax: Axes) -> None:
 
     ax.set_yticks(y_positions, labels=plot_frame["label"].to_list())
     ax.set_xlim(0.0, 1.08)
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Rate")
     ax.set_ylabel("Model/source diagnostic")
     ax.set_title("Production annotation diagnostics")
@@ -323,6 +329,7 @@ def canary_drift(rows: object, ax: Axes) -> None:
     tick_labels = [_short_timestamp(value) for value in frame["timestamp"].astype(str)]
     ax.set_xticks(x_positions, labels=tick_labels, rotation=30, ha="right")
     ax.set_ylim(0.0, 1.05)
+    pad_axes(ax, x=0.0, y=0.02)
     ax.set_ylabel("Agreement with baseline")
     ax.set_xlabel("Canary monitor run")
     ax.set_title("Canary drift audit")

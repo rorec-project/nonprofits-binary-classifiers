@@ -7,11 +7,14 @@ import matplotlib
 matplotlib.use("Agg")
 
 import importlib.util
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 import pandas as pd
 import pytest
@@ -25,11 +28,16 @@ from binary_classifier.viz.bakeoff import (
 from binary_classifier.viz import (
     bakeoff_summary as exported_bakeoff_summary,
     canary_drift as exported_canary_drift,
+    class_wordcloud as exported_class_wordcloud,
+    class_wordclouds as exported_class_wordclouds,
+    compute_keyness_frame as exported_compute_keyness_frame,
     documentation_curve,
     frozen_test_confusion_matrices,
     frozen_test_curves,
+    keyness_volcano_plot as exported_keyness_volcano_plot,
     threshold_sweep_plot,
     ngram_log_odds,
+    ngram_weighted_log_odds as exported_ngram_weighted_log_odds,
     pr_curve,
     prevalence_decomposition,
     prevalence_forest,
@@ -39,11 +47,26 @@ from binary_classifier.viz import (
     rule_validation_intervals,
     score_distribution_by_tier_label,
     subgroup_performance,
+    term_scatter_plot as exported_term_scatter_plot,
+    top_terms_lollipop_plot as exported_top_terms_lollipop_plot,
+)
+from binary_classifier.viz.ngrams import (
+    compute_keyness_frame,
+    compute_ngram_scores,
+    keyness_volcano_plot,
+    ngram_weighted_log_odds,
+    term_scatter_plot,
+    top_terms_lollipop_plot,
 )
 from binary_classifier.viz.style import (
     OKABE_ITO_ORANGE,
     PAPER_RCPARAMS,
     style_context,
+)
+from binary_classifier.viz.wordclouds import (
+    build_class_wordcloud,
+    class_wordcloud,
+    class_wordclouds,
 )
 
 
@@ -83,6 +106,199 @@ def test_ngram_log_odds_renders_tmp_png(tmp_path):
         assert out.stat().st_size > 0
     finally:
         plt.close(fig)
+
+
+def test_compute_ngram_scores_returns_signed_naive_and_weighted_scores():
+    texts = [
+        "church worship church aid",
+        "church parish worship",
+        "clinic science clinic aid",
+        "clinic health science",
+    ]
+    labels = [1, 1, 0, 0]
+
+    naive_terms, naive_scores, pos_counts, neg_counts = compute_ngram_scores(
+        texts,
+        labels,
+        ngram_range=(1, 1),
+        method="naive",
+        min_df=1,
+    )
+    weighted_terms, weighted_scores, _, _ = compute_ngram_scores(
+        texts,
+        labels,
+        ngram_range=(1, 1),
+        method="weighted",
+        min_df=1,
+    )
+
+    naive_by_term = dict(zip(naive_terms.astype(str), naive_scores, strict=True))
+    weighted_by_term = dict(zip(weighted_terms.astype(str), weighted_scores, strict=True))
+    assert naive_by_term["church"] > 0.0
+    assert naive_by_term["clinic"] < 0.0
+    assert weighted_by_term["church"] > 0.0
+    assert weighted_by_term["clinic"] < 0.0
+    assert pos_counts[naive_terms == "church"][0] == 3.0
+    assert neg_counts[naive_terms == "clinic"][0] == 3.0
+
+
+def test_compute_keyness_frame_supports_hard_and_probability_weights():
+    texts = [
+        "church worship church aid",
+        "church parish worship",
+        "clinic science clinic aid",
+        "clinic health science",
+    ]
+    labels = [1, 1, 0, 0]
+    probabilities = [0.95, 0.90, 0.05, 0.10]
+
+    hard = compute_keyness_frame(
+        texts,
+        labels=labels,
+        ngram_range=(1, 1),
+        min_df=1,
+    )
+    weighted = compute_keyness_frame(
+        texts,
+        probabilities=probabilities,
+        ngram_range=(1, 1),
+        min_df=1,
+    )
+
+    hard_by_term = hard.set_index("term")
+    weighted_by_term = weighted.set_index("term")
+    assert hard_by_term.loc["church", "z_score"] > 0.0
+    assert hard_by_term.loc["clinic", "z_score"] < 0.0
+    assert weighted_by_term.loc["church", "z_score"] > 0.0
+    assert weighted_by_term.loc["clinic", "z_score"] < 0.0
+    assert {"log2_rate_ratio", "document_frequency"} <= set(hard.columns)
+
+
+def test_ngram_weighted_log_odds_renders_tmp_png(tmp_path):
+    rows = []
+    for idx in range(8):
+        rows.append(
+            {
+                "EIN2": f"P{idx}",
+                "mission_text": "church worship parish community aid",
+                "silver_label": 1,
+            }
+        )
+        rows.append(
+            {
+                "EIN2": f"N{idx}",
+                "mission_text": "clinic health science community aid",
+                "silver_label": 0,
+            }
+        )
+    fig, ax = plt.subplots(figsize=(7, 4))
+    try:
+        ngram_weighted_log_odds(pd.DataFrame(rows), ax, ngram_range=(1, 2), top_k=8)
+        out = tmp_path / "ngram_weighted_log_odds.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize("weighting", ["frequency", "distinctive"])
+def test_class_wordclouds_render_tmp_png(tmp_path, weighting):
+    rows = []
+    for idx in range(6):
+        rows.append(
+            {
+                "EIN2": f"P{idx}",
+                "mission_text": "church worship parish church community aid",
+                "silver_label": 1,
+            }
+        )
+        rows.append(
+            {
+                "EIN2": f"N{idx}",
+                "mission_text": "clinic health science clinic community aid",
+                "silver_label": 0,
+            }
+        )
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    try:
+        class_wordcloud(
+            pd.DataFrame(rows),
+            ax,
+            ngram_range=(1, 1),
+            weighting=weighting,
+            class_label=1,
+            max_words=20,
+        )
+        out = tmp_path / f"wordcloud_{weighting}.png"
+        fig.savefig(out, transparent=True)
+        assert out.stat().st_size > 0
+        assert len(fig.axes) == 1
+        assert ax.get_title() == ""
+        assert not fig._suptitle
+        image = np.asarray(ax.images[0].get_array())
+        assert image.shape[2] == 4
+        assert np.min(image[:, :, 3]) < 255
+    finally:
+        plt.close(fig)
+
+
+def test_save_wordcloud_outputs_emit_selectable_vector_artifacts(tmp_path):
+    visualize = _load_visualize_module()
+    registry = SimpleNamespace(figures_dir=tmp_path)
+    rows = []
+    for idx in range(6):
+        rows.append(
+            {
+                "EIN2": f"P{idx}",
+                "mission_text": "church worship parish church community aid",
+                "silver_label": 1,
+            }
+        )
+        rows.append(
+            {
+                "EIN2": f"N{idx}",
+                "mission_text": "clinic health science clinic community aid",
+                "silver_label": 0,
+            }
+        )
+    frame = pd.DataFrame(rows)
+    cloud = build_class_wordcloud(
+        frame,
+        ngram_range=(1, 1),
+        weighting="frequency",
+        class_label=1,
+        max_words=20,
+    )
+
+    visualize._save_wordcloud_outputs(
+        registry,
+        "wordcloud_vector_smoke",
+        cloud,
+    )
+
+    png_path = tmp_path / "wordcloud_vector_smoke.png"
+    pdf_path = tmp_path / "wordcloud_vector_smoke.pdf"
+    svg_path = tmp_path / "wordcloud_vector_smoke.svg"
+
+    svg = svg_path.read_text(encoding="utf-8")
+    assert "<path" in svg
+    assert "<text" in svg
+    assert "fill-opacity:0" in svg
+    assert "church" in svg or "worship" in svg
+    assert "<image" not in svg
+    assert png_path.stat().st_size > 0
+    assert pdf_path.stat().st_size > 0
+
+    if shutil.which("pdftotext") is None:
+        pytest.skip("pdftotext is not available")
+    extracted = subprocess.run(
+        ["pdftotext", str(pdf_path), "-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.lower()
+    assert "church" in extracted or "worship" in extracted
 
 
 def test_documentation_curve_renders_tmp_png(tmp_path):
@@ -510,6 +726,16 @@ def test_bakeoff_helpers_exported_from_viz_package():
     assert exported_canary_drift is canary_drift
 
 
+def test_text_diagnostic_helpers_exported_from_viz_package():
+    assert exported_ngram_weighted_log_odds is ngram_weighted_log_odds
+    assert exported_class_wordcloud is class_wordcloud
+    assert exported_class_wordclouds is class_wordclouds
+    assert exported_compute_keyness_frame is compute_keyness_frame
+    assert exported_keyness_volcano_plot is keyness_volcano_plot
+    assert exported_term_scatter_plot is term_scatter_plot
+    assert exported_top_terms_lollipop_plot is top_terms_lollipop_plot
+
+
 def test_visualize_new_wrappers_render_and_skip(tmp_path, caplog):
     visualize = _load_visualize_module()
     bakeoff_results = tmp_path / "bakeoff_results.json"
@@ -591,7 +817,6 @@ def test_visualize_wave4_wrappers_render_and_skip(tmp_path, caplog):
 
     for name in (
         "precision_recall_curve",
-        "frozen_test_confusion_matrices",
         "score_distribution_by_tier_label",
         "prevalence_decomposition",
         "rule_validation_intervals",
@@ -599,11 +824,159 @@ def test_visualize_wave4_wrappers_render_and_skip(tmp_path, caplog):
         "subgroup_performance",
     ):
         assert (figures_dir / f"{name}.png").exists()
+    for name in ("operating", "max_f1", "base_rate"):
+        assert (figures_dir / f"frozen_test_confusion_matrix_{name}.png").exists()
 
     test_evaluation.write_text(json.dumps({"metric_bundle": {}}), encoding="utf-8")
     with caplog.at_level("WARNING"):
         assert not visualize._maybe_render_pr_curve(None, registry)
     assert "lacks frozen-test test_scores" in caplog.text
+
+
+def test_visualize_text_diagnostic_wrappers_render_with_joined_text(
+    tmp_path,
+    monkeypatch,
+):
+    visualize = _load_visualize_module()
+    figures_dir = tmp_path / "figures"
+    silver_labels = tmp_path / "silver_labels.csv"
+    registry = SimpleNamespace(figures_dir=figures_dir, silver_labels=silver_labels)
+    pd.DataFrame({"EIN2": ["P1", "N1"], "silver_label": [1, 0]}).to_csv(
+        silver_labels,
+        index=False,
+    )
+
+    rows = []
+    for idx in range(6):
+        rows.append(
+            {
+                "EIN2": f"P{idx}",
+                "mission_text": "church worship parish community aid",
+                "silver_label": 1,
+            }
+        )
+        rows.append(
+            {
+                "EIN2": f"N{idx}",
+                "mission_text": "clinic health science community aid",
+                "silver_label": 0,
+            }
+        )
+    monkeypatch.setattr(
+        visualize,
+        "_silver_with_text",
+        lambda _cfg, _registry, _silver: pd.DataFrame(rows),
+    )
+
+    assert visualize._maybe_render_ngram_weighted_log_odds_unigram(None, registry)
+    assert visualize._maybe_render_wordcloud_frequency_unigram_religious(
+        None,
+        registry,
+    )
+    assert visualize._maybe_render_wordcloud_distinctive_unigram_religious(
+        None,
+        registry,
+    )
+
+    for name in (
+        "ngram_weighted_log_odds_unigram",
+        "wordcloud_frequency_unigram_class_1",
+        "wordcloud_distinctive_unigram_class_1",
+    ):
+        assert (figures_dir / f"{name}.png").exists()
+
+
+def test_visualize_population_language_wrappers_render_full_predictions(tmp_path):
+    visualize = _load_visualize_module()
+    figures_dir = tmp_path / "figures"
+    predictions_full = tmp_path / "predictions" / "predictions_full.parquet"
+    predictions_full.parent.mkdir(parents=True)
+
+    rows = []
+    for idx in range(8):
+        rows.append(
+            {
+                "EIN2": f"P{idx}",
+                "mission_text": "church worship parish gospel ministry community",
+                "pred_label": 1,
+                "pred_label_maxf1": 1,
+                "pred_label_baserate": 1 if idx < 7 else 0,
+                "prob_calibrated": 0.90,
+            }
+        )
+        rows.append(
+            {
+                "EIN2": f"N{idx}",
+                "mission_text": "clinic health science research community aid",
+                "pred_label": 0,
+                "pred_label_maxf1": 0,
+                "pred_label_baserate": 0,
+                "prob_calibrated": 0.10,
+            }
+        )
+    pd.DataFrame(rows).to_parquet(predictions_full)
+    registry = SimpleNamespace(
+        figures_dir=figures_dir,
+        predictions_full_parquet=predictions_full,
+    )
+
+    assert visualize._maybe_render_population_language_keyness(None, registry)
+    assert visualize._maybe_render_population_probability_weighted_keyness(
+        None,
+        registry,
+    )
+    assert visualize._maybe_render_population_keyness_sensitivity(None, registry)
+    assert visualize._maybe_render_population_wordclouds(None, registry)
+
+    expected = (
+        "population_term_scatter_pred_label_unigram.png",
+        "population_keyness_volcano_pred_label_bigram.png",
+        "population_top_terms_lollipop_pred_label_trigram.png",
+        "population_term_scatter_pred_label_maxf1_unigram.png",
+        "population_keyness_volcano_prob_weighted_unigram.png",
+        "population_top_terms_lollipop_prob_weighted_unigram.png",
+        "population_keyness_sensitivity_heatmap_unigram.png",
+        "population_keyness_terms_pred_label_unigram.csv",
+        "population_keyness_terms_prob_weighted_unigram.csv",
+        "population_wordcloud_frequency_unigram_class_1.png",
+        "population_wordcloud_frequency_unigram_class_1.pdf",
+        "population_wordcloud_frequency_unigram_class_1.svg",
+    )
+    for name in expected:
+        assert (figures_dir / name).stat().st_size > 0
+
+    svg = figures_dir / "population_wordcloud_frequency_unigram_class_1.svg"
+    svg_text = svg.read_text(encoding="utf-8")
+    assert "<path" in svg_text
+    assert "<text" in svg_text
+    assert "church" in svg_text or "worship" in svg_text
+    assert "<image" not in svg_text
+
+
+def test_silver_with_text_falls_back_to_predictions_full_when_raw_missing(
+    tmp_path,
+    monkeypatch,
+):
+    visualize = _load_visualize_module()
+    predictions_path = tmp_path / "predictions" / "predictions_full.parquet"
+    predictions_path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "EIN2": [" P1 ", "N1"],
+            "mission_text": ["church worship", "clinic health"],
+        },
+    ).to_parquet(predictions_path)
+    registry = SimpleNamespace(predictions_full_parquet=predictions_path)
+    silver = pd.DataFrame({"EIN2": ["P1", "N1"], "silver_label": [1, 0]})
+
+    def missing_load_missions(_cfg):
+        raise FileNotFoundError("raw missing")
+
+    monkeypatch.setattr(visualize, "load_missions", missing_load_missions)
+
+    result = visualize._silver_with_text(None, registry, silver)
+
+    assert result["mission_text"].tolist() == ["church worship", "clinic health"]
 
 
 def _test_evaluation_payload():

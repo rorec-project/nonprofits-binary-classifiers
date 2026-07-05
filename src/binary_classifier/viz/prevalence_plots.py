@@ -15,6 +15,7 @@ from binary_classifier.viz.style import (
     OKABE_ITO_BLUE,
     OKABE_ITO_BLUISH_GREEN,
     OKABE_ITO_ORANGE,
+    pad_axes,
 )
 
 if TYPE_CHECKING:
@@ -104,6 +105,7 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: Axes) -> None:
                 ecolor=color,
                 capsize=3,
                 label=label,
+                clip_on=False,
             )
         no_ci = mask & ~finite_ci
         if no_ci.any():
@@ -113,11 +115,13 @@ def prevalence_forest(prevalence_by_ntee_df: pd.DataFrame, ax: Axes) -> None:
                 color=color,
                 marker="o",
                 label=label if not finite_ci.any() else None,
+                clip_on=False,
             )
 
     ax.set_yticks(y_positions, labels=labels)
     ax.axvline(0.0, color=OKABE_ITO_BLACK, linewidth=0.8, alpha=0.6)
     ax.set_xlim(0.0, min(1.05, max(1.05, float(upper.max() * 1.05))))
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Estimated religious prevalence")
     ax.set_ylabel("NTEE major group")
     ax.set_title("Prevalence by NTEE group")
@@ -186,6 +190,7 @@ def prevalence_decomposition(report: Mapping[str, Any], ax: Axes) -> None:
     ax.set_ylabel("Contribution to population prevalence")
     ax.set_title("Prevalence decomposition")
     ax.set_ylim(0.0, min(1.0, max(0.05, total * 1.35)))
+    pad_axes(ax, x=0.0, y=0.02)
     ax.grid(axis="y", alpha=0.25)
     from matplotlib.patches import Patch
 
@@ -227,7 +232,15 @@ def rule_validation_intervals(report: Mapping[str, Any], ax: Axes) -> None:
     xerr = np.vstack(
         [np.maximum(estimates - lower, 0.0), np.maximum(upper - estimates, 0.0)],
     )
-    ax.errorbar(estimates, y, xerr=xerr, fmt="o", color=OKABE_ITO_BLUE, capsize=3)
+    ax.errorbar(
+        estimates,
+        y,
+        xerr=xerr,
+        fmt="o",
+        color=OKABE_ITO_BLUE,
+        capsize=3,
+        clip_on=False,
+    )
     for idx, row in enumerate(frame.to_dict("records")):
         n_text = "" if pd.isna(row.get("n")) else f" (n={int(row['n'])})"
         value = float(row["value"])
@@ -240,6 +253,7 @@ def rule_validation_intervals(report: Mapping[str, Any], ax: Axes) -> None:
         )
     ax.set_yticks(y, labels=frame["metric"].to_list())
     ax.set_xlim(0.0, 1.12)
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Validation estimate")
     ax.set_title("Rule-validation Wilson intervals")
     ax.grid(axis="x", alpha=0.25)
@@ -274,6 +288,7 @@ def quantification_sensitivity(report: Mapping[str, Any], ax: Axes) -> None:
             color=OKABE_ITO_BLUE,
             capsize=3,
             label="CI/range",
+            clip_on=False,
         )
     if (~finite_ci).any():
         ax.scatter(
@@ -281,9 +296,11 @@ def quantification_sensitivity(report: Mapping[str, Any], ax: Axes) -> None:
             y[~finite_ci],
             color=OKABE_ITO_ORANGE,
             label="Point only",
+            clip_on=False,
         )
     ax.set_yticks(y, labels=frame["label"].to_list())
     ax.set_xlim(0.0, min(1.0, max(0.1, float(np.nanmax(estimates)) * 1.4)))
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Estimated prevalence")
     ax.set_title("Quantification sensitivity")
     ax.grid(axis="x", alpha=0.25)

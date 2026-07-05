@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib as mpl
 from cycler import cycler
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 COLUMN_WIDTH = 3.5
 PAGE_WIDTH = 7.0
@@ -89,6 +92,18 @@ def standardize_figsize(figsize: tuple[float, float]) -> tuple[float, float]:
     midpoint = (COLUMN_WIDTH + PAGE_WIDTH) / 2.0
     standard_width = COLUMN_WIDTH if width <= midpoint else PAGE_WIDTH
     return figure_size(width=standard_width, height=height)
+
+
+def pad_axes(ax: Axes, *, x: float = 0.02, y: float = 0.02) -> None:
+    """Expand current axis limits by a fractional margin of their span."""
+    if x:
+        left, right = ax.get_xlim()
+        x_pad = abs(right - left) * x
+        ax.set_xlim(left - x_pad, right + x_pad)
+    if y:
+        bottom, top = ax.get_ylim()
+        y_pad = abs(top - bottom) * y
+        ax.set_ylim(bottom - y_pad, top + y_pad)
 
 
 @contextmanager

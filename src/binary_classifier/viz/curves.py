@@ -6,6 +6,7 @@ import logging
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -17,6 +18,7 @@ from binary_classifier.viz.style import (
     OKABE_ITO_BLUISH_GREEN,
     OKABE_ITO_ORANGE,
     OKABE_ITO_VERMILLION,
+    pad_axes,
 )
 
 if TYPE_CHECKING:
@@ -68,6 +70,7 @@ def documentation_curve(
     ax.set_ylabel("Validation PR-AUC")
     ax.set_title("Documentation curve")
     ax.set_ylim(0.0, 1.0)
+    pad_axes(ax, x=0.0, y=0.02)
     ax.legend(title="Encoder")
     logger.info("Rendered documentation curve for %d rows", len(rows))
 
@@ -96,6 +99,7 @@ def pr_curve(points: object, ax: Axes) -> None:
     ax.set_title("Precision-recall curve")
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.05)
+    pad_axes(ax, x=0.02, y=0.0)
     ax.grid(alpha=0.25)
     logger.info("Rendered PR curve with %d points", len(frame))
 
@@ -120,6 +124,7 @@ def frozen_test_curves(payload: Mapping[str, Any], ax: Axes) -> None:
     ax.set_title("Frozen-test precision-recall curve")
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.05)
+    pad_axes(ax, x=0.02, y=0.0)
     _annotate_threshold_points(ax, pr_frame, payload)
     ax.legend(loc="lower left")
 
@@ -138,6 +143,7 @@ def frozen_test_curves(payload: Mapping[str, Any], ax: Axes) -> None:
     inset.set_title("ROC", fontsize=8)
     inset.set_xlim(0.0, 1.0)
     inset.set_ylim(0.0, 1.0)
+    pad_axes(inset, x=0.02, y=0.02)
     inset.grid(alpha=0.20)
     inset.legend(loc="lower right", fontsize=6)
     logger.info("Rendered frozen-test curves with %d PR points", len(pr_frame))
@@ -194,6 +200,8 @@ def score_distribution_by_tier_label(
                 linestyle=_threshold_linestyle(name),
                 linewidth=0.9,
             )
+        tier_ax.set_xlim(0.0, 1.0)
+        pad_axes(tier_ax, x=0.02, y=0.0)
         tier_ax.set_ylabel(tier)
         tier_ax.grid(axis="x", alpha=0.20)
     axes[0].set_title("Calibrated-score distribution by tier and label")
@@ -219,9 +227,14 @@ def draw_single_confusion_matrix(
             [int(counts.get("fn", 0)), int(counts.get("tp", 0))],
         ],
     )
-    ax.imshow(values, cmap="Blues", vmin=0)
+    blues = plt.colormaps["Blues"]
+    vmin, vmax = 0, int(values.max())
     for row in range(2):
         for col in range(2):
+            color = blues((values[row, col] - vmin) / (vmax - vmin) if vmax > vmin else 0.5)
+            ax.add_patch(
+                plt.Rectangle((col - 0.5, row - 0.5), 1, 1, facecolor=color, edgecolor="white", linewidth=1),
+            )
             ax.text(
                 col,
                 row,
@@ -229,6 +242,9 @@ def draw_single_confusion_matrix(
                 ha="center",
                 va="center",
             )
+    ax.set_xlim(-0.5, 1.5)
+    ax.set_ylim(-0.5, 1.5)
+    ax.invert_yaxis()
     threshold = item.get("threshold")
     suffix = "" if threshold is None else f"\nthr={float(threshold):.3f}"
     ax.set_title(f"{name.replace('_', ' ').title()}{suffix}")
@@ -287,13 +303,15 @@ def subgroup_performance(subgroups: object, ax: Axes) -> None:
             label=label,
             color=color,
             marker=marker,
+            clip_on=False,
         )
     ax.set_yticks(y, labels=frame["label"].to_list())
     ax.set_xlim(0.0, 1.0)
+    pad_axes(ax, x=0.02, y=0.0)
     ax.set_xlabel("Metric value")
     ax.set_ylabel("Subgroup")
     ax.set_title("Frozen-test subgroup performance")
-    ax.legend(loc="upper left")
+    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), borderaxespad=0.0)
     ax.grid(axis="x", alpha=0.25)
     logger.info("Rendered subgroup performance for %d rows", len(frame))
 
@@ -374,6 +392,7 @@ def _annotate_threshold_points(
             color=_threshold_color(name),
             marker="o",
             zorder=3,
+            clip_on=False,
             label=name.replace("_", " "),
         )
         ax.annotate(
@@ -653,8 +672,11 @@ def threshold_sweep_plot(
 
         tier_ax.set_ylabel(f"{tier}\nPredicted positive (%)", color=OKABE_ITO_BLUE)
         tier_ax_twin.set_ylabel("Precision (%)", color=OKABE_ITO_ORANGE)
+        tier_ax.set_xlim(0.0, 1.0)
         tier_ax.set_ylim(0, 100)
         tier_ax_twin.set_ylim(0, 100)
+        pad_axes(tier_ax, x=0.02, y=0.02)
+        pad_axes(tier_ax_twin, x=0.0, y=0.02)
         tier_ax.grid(alpha=0.20)
 
         handles1, labels1 = tier_ax.get_legend_handles_labels()

@@ -207,6 +207,8 @@ If any threshold is missed, the pipeline exits non-zero and prints guidance. The
 - `data/processed/predictions/predictions_full.parquet` — per-organization release artifact, expanded from deduplicated predictions to every raw `EIN2`.
 - `data/processed/prevalence/prevalence_report.json` — population prevalence estimate with PPI++ primary, LOW decomposition, 95% bootstrap CI, and per-NTEE stratum estimates where available.
 - `data/processed/viz/` — PNG/SVG figures for all evaluation and prevalence diagnostics.
+  Stage 10 saves figures with transparent backgrounds; white backgrounds in PDF/HTML outputs
+  usually come from the viewer or Pandoc compositing transparent figures onto a white page.
 - `data/processed/run_manifest.json` — reproducibility manifest: git SHA, config hash, environment lock, input row counts.
 
 ### Reading the prevalence report
