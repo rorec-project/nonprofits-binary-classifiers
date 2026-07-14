@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Plan-parity verification: glimmering-knuth (ORIGINAL vs CURRENT)
 
 Read-only check. ORIGINAL = `~/.claude/plans/...-glimmering-knuth.md`;

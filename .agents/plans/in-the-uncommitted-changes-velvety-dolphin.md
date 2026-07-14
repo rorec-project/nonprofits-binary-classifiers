@@ -1,3 +1,7 @@
+---
+created: 2026-07-05
+---
+
 # Sprint: Publication-grade vector wordclouds — renderer-perfect **and** selectable
 
 ## Context

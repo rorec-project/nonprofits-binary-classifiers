@@ -1,3 +1,7 @@
+---
+created: 2026-07-02
+---
+
 # Sprint Plan — Harmonize & Strengthen the Religious-Mission Pipeline
 
 > **For the orchestrator agent.** This file is the shared brief. Sub-agents start with **no prior context** except the codebase, the docs, and this file. Read §0–§2 (Context, Invariants, Reference Map) first; then execute your assigned **Wave** or **Task Card** (§3) exactly. Each card lists its files/functions, ordered operations, reuse, acceptance criteria, and a **Report-back contract**. Commit once per wave (§4). Waves are dependency-ordered — do not start a wave until its predecessor is committed and verified. Task cards **within** a wave may be parallelized unless a card says "depends on" a sibling.

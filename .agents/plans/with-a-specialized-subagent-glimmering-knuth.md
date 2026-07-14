@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Sprint: harmonize the weak-supervision pipeline + DVC-ready data flow
 
 This document is BOTH the full plan (reference sections) AND an executable sprint (ordered task
@@ -46,7 +50,7 @@ per task card**. Tasks are serialized because several touch the same files.
   `*-agent-a7984f9188a75eba4.md` (skeptical review), `*-agent-a2383f9b609ae4b96.md` and
   `*-agent-ab65966ce63b3fc30.md` (sampling/prevalence), `*-agent-a9fe574aeb844e218.md` (weak-supervision
   currency), `*-agent-a599b7180c7125ada.md` (modeling currency), `*-agent-a96ed53168b7a4933.md` (drift check);
-  and the design notes `.agents/docs/20260605-replication-*.md`.
+  and the design notes `docs/research/20260605-replication-*.md`.
 
 ## Cross-cutting convention: generous commenting + method citations (applies to EVERY task)
 
@@ -111,7 +115,7 @@ graceful exit). **G2** — a human-confirmed `production_slate.json` (`"confirme
 minority-F1 CI floor; raw ≥0.85 today) or stage 04 blocks and freezes nothing.
 
 **Prevalence/calibration intent (cross-cutting).** A stated downstream goal
-(`.agents/docs/20260605-replication-calibration-prevalence.md`) is estimating the **population share** of the
+(`docs/research/20260605-replication-calibration-prevalence.md`) is estimating the **population share** of the
 positive class over **all nonprofits** (locked estimand) — which is why the frame (Q≥3.0, excludes LOW) and
 the design weight must be correct now (T4), and why a representative anchor covering LOW is on the roadmap.
 2026 estimator stack: **PPI++** (primary, CI-valid) with **SLD/EMQ + KDEy/DyS via QuaPy** cross-check and
@@ -388,7 +392,7 @@ empty). Run `git check-ignore -v data/processed/gold/gold_to_code.csv` (expect *
 
 **Depends on:** run **last** (docs describe the final state of all prior tasks).
 **Files:** `README.md`, `AGENTS.md`, `docs/agents/configuration.md`,
-`docs/agents/conventions/python-standards.md`. (Leave dated `.agents/docs/*` and `.agents/plans/*` as
+`docs/agents/conventions/python-standards.md`. (Leave dated `docs/research/*` and `.agents/plans/*` as
 historical records.)
 **Operations:**
 

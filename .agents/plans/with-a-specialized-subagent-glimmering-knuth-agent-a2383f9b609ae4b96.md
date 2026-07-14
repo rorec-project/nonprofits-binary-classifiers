@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Sampling design review — religious-vs-not nonprofit classifier
 
 Read-only analysis. Deliverable is the agent's final message; this file is durable scratch.
@@ -38,8 +42,8 @@ Read-only analysis. Deliverable is the agent's final message; this file is durab
 - Downstream: `inclusion_prob` is written to manifests (`sample.py:459`) and only checked for PRESENCE (`scripts/01_build_sample.py:101`). NO code reads it back for Horvitz–Thompson, prior correction, or calibration. grep confirms: zero consumers. QC (`qc/agreement.py`) computes agreement/PR-AUC/MCC/kappa but no prevalence estimate and no design weighting.
 
 ### Design-notes connection
-- `.agents/docs/20260605-replication-calibration-prevalence.md`: project ALREADY plans prevalence/quantification (QuaPy CC/ACC/PACC, Saerens EM/SLD, King-Hopkins ReadMe, PPI/ppi_py, freq-e, Dal-Pozzolo-style undersampling correction is implied). So population-share estimation IS an intended purpose → retained, CORRECT design weights matter.
-- `.agents/docs/20260605-replication-weak-supervision-noisy-labels.md`: Snorkel/WRENCH weak-supervision + validation-first (Pangakis). The 35% enriched pool is the weak-supervision training pool; prevalence must come from a separate representative estimate, not from pool composition.
+- `docs/research/20260605-replication-calibration-prevalence.md`: project ALREADY plans prevalence/quantification (QuaPy CC/ACC/PACC, Saerens EM/SLD, King-Hopkins ReadMe, PPI/ppi_py, freq-e, Dal-Pozzolo-style undersampling correction is implied). So population-share estimation IS an intended purpose → retained, CORRECT design weights matter.
+- `docs/research/20260605-replication-weak-supervision-noisy-labels.md`: Snorkel/WRENCH weak-supervision + validation-first (Pangakis). The 35% enriched pool is the weak-supervision training pool; prevalence must come from a separate representative estimate, not from pool composition.
 
 ## PART B — Authoritative best practice (sources)
 1. Neyman vs proportional allocation — Wikipedia/Caltech lecture/ScienceDirect. Neyman puts effort where stratum SD is large; collapses to proportional when SDs equal; needs prior SD estimates.

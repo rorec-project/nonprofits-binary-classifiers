@@ -1,3 +1,7 @@
+---
+created: 2026-06-09
+---
+
 # Plan: Close the validation loop + harden the pipeline (sprint, orchestrator + subagents)
 
 ## Context

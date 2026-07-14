@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Skeptical review of the harmonize-pipeline refinement plan
 
 Verified against the actual code on branch `refactor/harmonize-pipeline`. Baseline: `pytest -q` = 69 passed.

@@ -19,9 +19,6 @@ mise.*.toml
 .opencode/plans
 .agents/*
 .claude/*
-!.agents/architecture
-!.agents/docs
-!.agents/notebooks
 !.agents/plans
 !.agents/stubs
 CLAUDE.md

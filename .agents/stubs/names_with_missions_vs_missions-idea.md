@@ -1,3 +1,7 @@
+---
+created: 2026-06-21
+---
+
 # Evaluating names vs. missions vs. names+missions as classifier input
 
 ## Context
@@ -30,11 +34,11 @@ All figures measured directly from `../NonProfitData` (read-only), not from the 
 ### 2. Are the names too short? — No, not prohibitively.
 `BEST_NAME` length: median **5 words / 36 chars** (p10=3, p90=8; only 0.5% are a single word;
 76% are ≥4 words). Missions are longer (median 22 words). The short-text literature
-(`.agents/docs/20260605-literature-short-text-classification.md`) warns of sparsity/ambiguity, but a
+(`docs/research/20260605-literature-short-text-classification.md`) warns of sparsity/ambiguity, but a
 4–5-word nonprofit name is information-dense for *this* task: a crude keyword test already flags
 **64% of NTEE-X (Religion) names** as religious vs 1–5% in other groups ("Trinity Baptist Church",
 "First Assembly of God"). Length is not the risk — the **failure modes** named in
-`.agents/docs/20260605-literature-religious-nonprofit-classification.md` (points 4–5) are:
+`docs/research/20260605-literature-religious-nonprofit-classification.md` (points 4–5) are:
 secularized faith-founded names, faith-named secular orgs ("St. Mary's Hospital"), and
 non-Christian / non-English under-coding.
 
@@ -111,7 +115,7 @@ honest production framing is **"name + mission-when-available."**
   (reuse the stage-01 sampling + `gold_to_code.csv` template pattern). Stratify/oversample
   religion-likely name tokens, non-Christian traditions, and identity-vs-purpose conflicts
   ("St. Mary's Hospital", "Trinity Health", "YMCA"), per the audit guidance in
-  `.agents/docs/20260605-literature-religious-nonprofit-classification.md`. Code labels under the
+  `docs/research/20260605-literature-religious-nonprofit-classification.md`. Code labels under the
   chosen estimand, then score name-only on this set.
 - Produce one comparison table (arm × input × metric) — no auto-comparison exists today, so add a
   small read-only aggregation over each arm's `test_evaluation.json` / bakeoff results.

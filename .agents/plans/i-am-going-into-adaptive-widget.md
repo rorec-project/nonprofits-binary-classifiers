@@ -1,3 +1,7 @@
+---
+created: 2026-06-17
+---
+
 # Executable Work-Order Pack — Pipeline Simplification + Pedagogical Documentation
 
 > **Audience: an orchestrator agent.** This is a self-contained plan. You (the
@@ -93,7 +97,7 @@ estimate* — preserve everything that supports it.
 ### 1.3 Confirmed design decisions (the "what" + "why")
 Simplification principle: **one principled primary method per concern + minimal
 robustness; push tertiary/diagnostic/dead-path machinery to optional extras.**
-Research basis lives in `.agents/docs/2026060*` (cited per module in §1.5).
+Research basis lives in `docs/research/2026060*` (cited per module in §1.5).
 
 **DO (this pack implements):**
 1. `crowd-kit`, `cleanlab`, `quapy` → optional extras (dead-in-default-path or
@@ -126,7 +130,7 @@ reading call sites:
 - **Section comments above code** explaining the *why* and any non-obvious
   statistics/transform — per §1.2.
 - **Embed citations at the point of use** (in the relevant docstring/section
-  comment). Pull exact DOIs from the `.agents/docs/2026060*` reports.
+  comment). Pull exact DOIs from the `docs/research/2026060*` reports.
 
 ### 1.5 Citation map (module → references to embed)
 - `evaluation/evaluate.py`, `metrics.py` — Davis & Goadrich (2006); Saito &

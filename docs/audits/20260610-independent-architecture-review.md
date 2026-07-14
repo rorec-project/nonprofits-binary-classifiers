@@ -6,7 +6,7 @@
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
 against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 (d) the prior best-practices review (`docs/audits/20260609-pipeline-review-best-practices.md`).
 **Type:** Read-only review. The only artifact produced is this document; no
 source or data was modified. (`skills-lock.json` was already dirty in the working
@@ -33,7 +33,7 @@ But stages 01–04 only produce `silver_labels.csv` — a frozen weak-supervisio
 training set. **Nothing consumes it.** Training (05), evaluation (06),
 inference-at-scale (07), and visualization (08) are unbuilt, and so is the entire
 prevalence/calibration stack that the roadmap and
-`.agents/docs/20260605-replication-calibration-prevalence.md` name as the
+`docs/research/20260605-replication-calibration-prevalence.md` name as the
 _locked estimand_ — the population share of religious nonprofits over **all**
 nonprofits. The two roadmap hooks that exist for that goal —
 `apply_rule_label` (LOW-tier rule layer) and the per-cell `inclusion_prob`
@@ -258,7 +258,7 @@ classifier and a calibrated population-prevalence estimate over all US nonprofit
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
 against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 (d) the prior best-practices review (`docs/audits/20260609-pipeline-review-best-practices.md`).
 </invoke>
 
@@ -270,7 +270,7 @@ in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
 against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 </invoke>
 
 # Independent Architecture Review
@@ -281,5 +281,5 @@ in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
 against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `.agents/docs/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 </invoke>

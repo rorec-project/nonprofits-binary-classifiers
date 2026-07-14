@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Literature-Currency Audit — Weak Supervision / LLM Annotation Methods
 
 - **Date:** 2026-06-10

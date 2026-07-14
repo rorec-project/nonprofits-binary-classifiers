@@ -1,3 +1,7 @@
+---
+created: 2026-07-02
+---
+
 # Independent Review — Harmonize Pipeline plan + current code
 
 ## Verdict

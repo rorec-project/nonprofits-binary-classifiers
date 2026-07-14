@@ -4,7 +4,7 @@
 **Branch:** `refactor/harmonize-pipeline` (`1dd6e7f`)
 **Scope:** The *built* pipeline — stages 01–04 (`src/binary_classifier/`, `scripts/`,
 `config/religious_missions.yaml`) — reviewed against (a) the project's own research
-synthesis in `.agents/docs/` and (b) external authoritative sources (OpenAI API docs via
+synthesis in `docs/research/` and (b) external authoritative sources (OpenAI API docs via
 Context7; the primary literature cited by the synthesis: Pangakis & Wolken, Gilardi et al.,
 Snorkel/WRENCH, scikit-learn `model_evaluation`, QuaPy).
 **Type:** Read-only review. The only artifact produced is this document; no source or data
@@ -39,7 +39,7 @@ it freezes an unvalidated silver-label file:
 Compounding this: per `AGENTS.md`, the gold/validation manifests are "EIN2 lists +
 sampling metadata, **not** text/labels." So the human-label artifact that stages 02 and 04
 depend on is **neither produced by the pipeline nor given a defined path/schema** anywhere.
-The validation-first workflow that the entire `.agents/docs/` synthesis is built on
+The validation-first workflow that the entire `docs/research/` synthesis is built on
 (Pangakis & Wolken 2024/2025: "Automated Annotation with Generative AI Requires
 Validation") is designed in but not wired up.
 
@@ -246,7 +246,7 @@ abstain/tie/conflict rows to a review file.
 
 ## 5. Forward-looking guidance for roadmap stages
 
-Not defects — guidance for when points 3–6 are built, drawn from `.agents/docs/`:
+Not defects — guidance for when points 3–6 are built, drawn from `docs/research/`:
 
 - **Evaluation:** report the full imbalanced bundle with bootstrap CIs on the frozen test;
   treat ROC-AUC as secondary. (`pr_auc` default already correct.)

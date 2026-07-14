@@ -1,3 +1,7 @@
+---
+created: 2026-06-08
+---
+
 ## Annex A — Full research: Mission Quality Characterization (sub-agent `aa42836beb4803b01`)
 
 _Verbatim, complete output of the read-only quality-characterization data pass. This is the empirical basis for the §2.1 sample-construction design._

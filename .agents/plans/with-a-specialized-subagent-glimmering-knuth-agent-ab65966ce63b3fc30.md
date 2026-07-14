@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Literature-Currency Audit — Sampling / Design-Weights / Prevalence-Estimation
 
 **Type:** Read-only literature-currency audit (no code changes proposed; findings only).
@@ -25,7 +29,7 @@
 
 **Gold set + human splits** — `build_gold_set` (`sample.py:169-255`, ~400, boundary-case retention), `split_human_sets` → prompt_dev/validation/test (`sample.py:258-306`). Sizes: silver 20,000 / gold 400 / prompt_dev 50 (`config.py:166-168`); SEED=42 (`config.py:260`).
 
-### Planned design (per current plan + project tech-doc `.agents/docs/20260606-tech-calibration-quantification-prevalence.md`)
+### Planned design (per current plan + project tech-doc `docs/research/20260606-tech-calibration-quantification-prevalence.md`)
 1. Fix `inclusion_prob` to the **per-cell (stratum × pos/neg) sampling rate** → a usable HT design weight.
 2. Keep training **enriched**.
 3. Add a **separate representative test/prevalence sample at the true prior**.
@@ -85,4 +89,4 @@ The plan stacks four things: **(1) HT design weights, (2) keep training enriched
 ### Method notes / confidence
 - Foundational families (#1–3): light confirmation by design (low volatility — Cochran/Lohr/King lineage); single dated 2024–2025 source each; high confidence ALIGNED.
 - Fast-movers (#4–5): deep search. PPI++-is-the-default and KDEy-vs-DM/EMQ were verified against **primary sources** (`ppi_py` API page; KDEy Springer/arXiv; JMLR 2025) rather than the repo's own docs, per the audit's independent-verification requirement. **Caveat (honest gap):** the official **LeQua 2024 T1** ranking was *not* independently verified — the `lequa2024.github.io` fetch returned no results table, and the "EMQ-BCTS best MAE, tied with KDEy-HD/DM" figure traces to the **KDEy 2024 paper's experiments on LeQua 2022 T1A data**, which predate the June-2024 competition. Treat "EMQ is a top binary contender" as supported by the KDEy study on LeQua benchmarks, not by a verified 2024 competition result. To close this, fetch `http://nmis.isti.cnr.it/sebastiani/Publications/LQ2024Proc.pdf`. This caveat does **not** change the DRIFTED+GAP verdict or any recommendation.
-- The repo's own `.agents/docs/20260606-tech-calibration-quantification-prevalence.md` is current and high-quality and **already** anticipates most of this (per-stratum calibration, PPI, SLD sensitivity, DMKD-2024 covariate-shift warning). The net-new findings are: **PPI→PPI++ as the concrete default**, **KDEy/DyS as the missing modern quantifier layer**, the **built code selects no quantifier (docs-only)**, and the **frame/estimand mismatch (UNRESOLVED #1)**.
+- The repo's own `docs/research/20260606-tech-calibration-quantification-prevalence.md` is current and high-quality and **already** anticipates most of this (per-stratum calibration, PPI, SLD sensitivity, DMKD-2024 covariate-shift warning). The net-new findings are: **PPI→PPI++ as the concrete default**, **KDEy/DyS as the missing modern quantifier layer**, the **built code selects no quantifier (docs-only)**, and the **frame/estimand mismatch (UNRESOLVED #1)**.

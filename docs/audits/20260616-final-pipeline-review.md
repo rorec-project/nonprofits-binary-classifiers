@@ -6,7 +6,7 @@
 exists — stages 01–09 wired into `scripts/run_pipeline.py`, plus the two
 script-only extensions (10 visualize, 11 aggregation-compare) — read against
 (a) the prior audits (`docs/audits/20260609-…`, `docs/audits/20260610-…`),
-(b) the research synthesis in `.agents/docs/`, (c) the roadmap and decision log
+(b) the research synthesis in `docs/research/`, (c) the roadmap and decision log
 (`.agents/plans/we-work-on-the-floofy-wreath.md`, `.agents/ralph/state/DEVIATIONS.md`),
 and (d) the actual producer→consumer artifact contracts between stages.
 **Type:** Read-only review. The only artifact produced is this document; no

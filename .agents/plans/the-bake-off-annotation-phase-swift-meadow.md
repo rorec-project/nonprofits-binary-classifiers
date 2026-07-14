@@ -1,3 +1,7 @@
+---
+created: 2026-06-22
+---
+
 # Bake-off annotation phase — remediation sprint
 
 > **Audience:** an orchestrator agent with **fresh context** that will dispatch subagents.

@@ -1,3 +1,7 @@
+---
+created: 2026-06-07
+---
+
 ## New Pipeline Project
 
 We want to enhance the current pipeline that creates the implementation of a fine-tuned classifier using weak supervision.
@@ -6,7 +10,7 @@ The existing pipeline in the Jupyter notebooks should be rewritten from scratch 
 
 ## Research Material
 
-In `.agents/docs`, several specialized subagents for research saved excellent research handoffs to inform the design of the project. We should always look there for inform the design and use tools like `websearch`, `webfetch`, `context7` and `grep_app_searchGithub` when in need to search for additional examples, technical documentation and actual implementations of the tools in question.
+In `docs/research`, several specialized subagents for research saved excellent research handoffs to inform the design of the project. We should always look there for inform the design and use tools like `websearch`, `webfetch`, `context7` and `grep_app_searchGithub` when in need to search for additional examples, technical documentation and actual implementations of the tools in question.
 
 If while consulting documentation and resources it is useful to download locally material, we can download that in a ordered manner in `.agents/archives`.
 
@@ -40,7 +44,7 @@ In both cases, we want to let the previous research speak for itself and identif
 
 ### 2. LLM Annotation
 
-**Prompts design**. We need to work on the prompts based on the research done in `.agents/docs` to have a clean identification that delivers a clean train/test sample to use to fine-tune models. We want to consider different version of prompts as prescribed by the research, test them on 30-50 hand-selected examples spanning the distribution before committing to a full labeling run.
+**Prompts design**. We need to work on the prompts based on the research done in `docs/research` to have a clean identification that delivers a clean train/test sample to use to fine-tune models. We want to consider different version of prompts as prescribed by the research, test them on 30-50 hand-selected examples spanning the distribution before committing to a full labeling run.
 
 **Missions and activities examples**. For the selection of the examples, we should carefully evaluate the input data to understand great missions/activities to use that are clearly religious and non-religious based on the prompts that we engineered.
 

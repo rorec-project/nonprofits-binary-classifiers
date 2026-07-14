@@ -1,3 +1,7 @@
+---
+created: 2026-06-12
+---
+
 # Execution Plan: Pipeline Roadmap Completion (Stages 05–11)
 
 > **Audience**: per-PR orchestrating agents and their specialized subagents, all
@@ -1217,7 +1221,7 @@ No downloads, no accelerator assumptions, no API keys.
 
 ## 10. Reference index
 
-In-repo: `.agents/docs/20260606-tech-short-text-model-alternatives.md` (grids,
+In-repo: `docs/research/20260606-tech-short-text-model-alternatives.md` (grids,
 baselines) · `…-imbalanced-text-evaluation.md` (metric bundle) ·
 `…-calibration-quantification-prevalence.md` (calibration/quantification) ·
 `…-llm-weak-supervision-noisy-labels.md` (noisy-label gating) ·

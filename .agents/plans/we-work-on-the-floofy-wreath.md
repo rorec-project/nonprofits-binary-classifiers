@@ -1,10 +1,14 @@
+---
+created: 2026-06-08
+---
+
 # Plan — Re-engineer the Nonprofit Mission Classifier (Points 1–2)
 
 ## Context
 
 The current pipeline is a pair of flat scripts (`generate_training_data.py`, `split_data.py`) plus notebooks, with documented defects in `docs/audits/old_repo_auditing.md`: no training seed (non-reproducible), class-weight doc/code mismatch, `EIN2` join key dropped from inference output, broken producer/consumer between inference and inspection, `DATA_OF_CHOICE` duplicated across two files, and `bert-base-uncased` (a dominated model) hard-wired. We are rebuilding it from scratch into a reproducible, config-driven `src/` package that generalizes beyond religious classification (pregnancy centers, education, international, …) and runs on UCloud B200 GPUs.
 
-This plan details **point 1 (upstream cleanup + decisions)** and **point 2 (LLM annotation)** of `.agents/stubs/pipeline-roadmap.md`, and stubs points 3–6 so they slot in. Every decision is grounded in the research handoffs in `.agents/docs/` and in a direct profile of the real input corpus (`missions_cross_section.parquet`, 560,351 rows).
+This plan details **point 1 (upstream cleanup + decisions)** and **point 2 (LLM annotation)** of `.agents/stubs/pipeline-roadmap.md`, and stubs points 3–6 so they slot in. Every decision is grounded in the research handoffs in `docs/research/` and in a direct profile of the real input corpus (`missions_cross_section.parquet`, 560,351 rows).
 
 The deliverable of points 1–2 is a **versioned, frozen, LLM-labelled train/validation/test dataset of high-quality missions** (keyed by `EIN2`), ready for the fine-tuning phase.
 

@@ -1,3 +1,7 @@
+---
+created: 2026-07-05
+---
+
 # Sprint: Stage-10 visualization enrichment & hardening
 
 ## Context

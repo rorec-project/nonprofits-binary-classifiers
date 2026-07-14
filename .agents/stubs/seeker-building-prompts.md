@@ -1,3 +1,7 @@
+---
+created: 2026-06-07
+---
+
 Your role is to orchestrate the research academic literature in the domain of computational social science and applied economics with applications to natural language processing focusing on:
 
 - LLM-as-annotator / weak supervision for NLP classification

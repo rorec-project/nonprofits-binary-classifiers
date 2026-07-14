@@ -1,3 +1,7 @@
+---
+created: 2026-06-08
+---
+
 # Audit — Plan `we-work-on-the-floofy-wreath.md` (points 1–2)
 
 Read-only review. Findings prioritized CRITICAL / IMPORTANT / MINOR. Line numbers refer to the plan unless noted.
@@ -31,7 +35,7 @@ Read-only review. Findings prioritized CRITICAL / IMPORTANT / MINOR. Line number
 11. **base-rate metrics mixing (B, minor).** Plan cites religious base rate ≈13% (line 34), lexicon hit rate 11.2% (annex 106), X group 7.27%. Different metrics; not contradictory but should be labelled to avoid confusion.
 
 ## Resolves cleanly (no action)
-- `.agents/docs/` filenames, annex path, upstream parquet paths, `#references` anchor all resolve.
+- `docs/research/` filenames, annex path, upstream parquet paths, `#references` anchor all resolve.
 - No leftover "Appendix A" — fully migrated to "annex."
 - Silver ~20k / gold ~400 / thin strata V257/Y200/U581 / bare-label ~6.8k≈6,827 consistent plan↔annex.
 - Script names consistent across architecture / sprint / verification.

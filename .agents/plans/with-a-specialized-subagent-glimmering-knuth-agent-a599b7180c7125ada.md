@@ -1,3 +1,7 @@
+---
+created: 2026-06-10
+---
+
 # Literature-Currency Audit — Modeling / Fine-Tuning / Calibration / Evaluation
 
 **Date:** 2026-06-10 · **Mode:** read-only · **Scope:** future stages 05–08 (training, eval, calibration, inference)
@@ -5,7 +9,7 @@
 
 This audit independently checks the planned modeling/fine-tuning/calibration/evaluation methods
 against 2024–2026 external literature (web sources cited inline), not just the internal dated
-`.agents/docs/*` handoffs. **Bottom line: the plan is overwhelmingly ALIGNED with 2026 practice.**
+`docs/research/*` handoffs. **Bottom line: the plan is overwhelmingly ALIGNED with 2026 practice.**
 There is one concrete config DRIFT (fp16→bf16 on Blackwell), two GAP-minor optional additions
 (soft/confidence-weighted labels; decision-curve analysis), and two genuinely UNRESOLVED
 choices to put to the human (default encoder; selective-prediction vs rule-cascade framing).
