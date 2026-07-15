@@ -1,0 +1,11 @@
+{
+  "confirmed": true,
+  "checkpoint": "checkpoints/microsoft__deberta-v3-base/default/s44/checkpoint-2690/model.safetensors",
+  "checkpoint_sha256": "8fd26faa3abaf5f1a45fb884ff17ca6757a61ba219d9afbd313fb7ff9c06e885",
+  "acceptance": {
+    "min_pr_auc": 0.9,
+    "min_minority_f1_ci_lower": 0.7,
+    "max_ece": 0.05
+  },
+  "rationale": "We have reviewed the candidates (DeBERTa fp32 and ModernBERT bf16 on different seeds and setups). We picked the DeBERTa default arm with soft targets; it clears min_pr_auc 0.90 and min_minority_f1_ci_lower 0.70 on validation — proceed to frozen test."
+}

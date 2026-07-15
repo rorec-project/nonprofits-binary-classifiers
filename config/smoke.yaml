@@ -1,0 +1,27 @@
+SEED: 42
+entity: missions
+field: LONGEST_MISSION
+label_name: religious
+data: { allow_synthetic: true }
+anchor: { n: 60 }
+sample_sizes: { silver: 400, gold: 120, prompt_dev: 20, monitor: 10 }
+annotation: { openai_batch: false }
+training:
+  epochs: 1
+  batch_size: 16
+  precision: fp32
+  device: auto
+  sweep_seeds: [42]
+  final_seeds: [42]
+  curve_fractions: [1.0]
+  arms: []
+  crossfit_folds: 2
+  encoders: [{ id: hf-internal-testing/tiny-random-bert, arm: primary, max_length: 128 }]
+evaluation:
+  acceptance: { min_pr_auc: 0.50, min_minority_f1_ci_lower: 0.0, max_ece: 0.30 }
+  bootstrap_resamples: 200
+  crossfit_folds: 2
+  base_rate_precision_target: 0.90
+  population_base_rate: null
+inference: { batch_size: 64, shard_size: 200 }
+prevalence: { alpha: 0.05 }

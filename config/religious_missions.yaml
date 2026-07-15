@@ -1,0 +1,169 @@
+# Binary classifier configuration for the "religious vs. non-religious missions"
+# task. This is the first concrete task in the classification pipeline.
+#
+# Entity being classified: missions
+# Text field: LONGEST_MISSION
+# Label: religious (positive class = 1)
+
+SEED: 42
+
+entity: missions
+field: LONGEST_MISSION
+label_name: religious
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  models_dir: data/models
+
+# Config-driven slate: each candidate is tagged with its serving provider so
+# the annotator factory can route construction. OpenAI ids are floating
+# aliases (placeholders) — pin to dated snapshots before a production run.
+# vLLM arms need an OpenAI-compatible vLLM server up during the bake-off;
+# comment them out for a pure-OpenAI bake-off. For multi-GPU UCloud runs, serve
+# each open-weight model on its own port/GPU group, run stage 02 with
+# `--only-model <id>` and matching `VLLM_BASE_URL`, then rebuild with
+# `--rebuild-from-store`. DeepSeek-V4-Flash needs vLLM's DeepSeek-specific
+# tokenizer/parser flags and a cutlass-dsl workaround; see
+# docs/RUNNING_ON_UCLOUD.md's "DeepSeek-V4-Flash setup" before serving it.
+# Stage 03 only runs the human-confirmed slate (production_slate.json), so
+# `production` below is just the default seed.
+model_slate:
+  bakeoff_candidates:
+    - id: gpt-4o-mini-2024-07-18
+      provider: openai
+    - id: gpt-5-mini-2025-08-07
+      provider: openai
+      reasoning_effort: minimal
+    - id: gpt-5-nano-2025-08-07
+      provider: openai
+      reasoning_effort: minimal
+    - id: google/gemma-3-27b-it
+      provider: vllm
+    - id: deepseek-ai/DeepSeek-V4-Flash
+      provider: vllm
+  production: deepseek-ai/DeepSeek-V4-Flash
+
+# Quality Score Q thresholds for the sample selection.
+q_thresholds:
+  HIGH: 5.0
+  MEDIUM: 3.0
+  LOW: 0.0
+
+sample_sizes:
+  silver: 20000
+  # Gold includes the incremental monitor slice so validation/test keep their
+  # pre-monitor sizes for the QC confidence-interval gate.
+  gold: 450
+  prompt_dev: 50
+  monitor: 50
+
+anchor:
+  n: 500
+  oversample_low_factor: 1.5
+  min_stratum_frame: 200
+
+annotation:
+  temperature: 0.0
+  max_retries: 5
+  checkpoint_every: 100
+  guided_json: true
+  # Provider-level caps across concurrent model×prompt arms. Keep OpenAI low to
+  # avoid rate-limit retry storms; UCloud vLLM runs on 2-8 B200 GPUs, so 8 live
+  # requests is the default starting point for the local endpoint.
+  openai_max_concurrency: 2
+  vllm_max_concurrency: 8
+  # Stage 03 OpenAI production groups use the OpenAI Batch API by default.
+  # OpenAI currently supports only a 24h batch completion window; use live
+  # concurrency (openai_batch: false) when a shorter wall-clock run is required.
+  openai_batch: true
+  openai_batch_poll_seconds: 30
+  openai_batch_completion_window: 24h
+
+# Hard-fail on a missing upstream parquet unless explicitly opted in.
+# This is only for smoke tests, activating synthetic data.
+data:
+  allow_synthetic: false
+
+# Raw LLM-vs-human validation agreement is logged for continuity, but the
+# freeze gate now uses chance-corrected κ plus the minority-F1 CI floor.
+# κ≈0.70 reproduces the old 0.85 raw-agreement operating point on the roughly
+# balanced validation split; the CI floor is the deliberate new variance gate.
+qc:
+  agreement_threshold: 0.85
+  kappa_threshold: 0.70
+  f1_ci_floor: 0.70
+
+aggregation:
+  # Stage 04 production aggregation is intentionally majority-only. Non-majority
+  # arms belong in comparison_arms for stage-11 sensitivity diagnostics.
+  method: majority
+  comparison_arms: []
+
+training:
+  dev_fraction: 0.1
+  targets: soft
+  # pruned dropped: soft targets already down-weight disagreement (arXiv:2605.20642);
+  # opt-in via override
+  arms: [hard, class_weighted]
+  # learning curve dropped; single full-data run
+  curve_fractions: [1.0]
+  sweep_seeds: [42, 43, 44]
+  final_seeds: [42, 43, 44, 45, 46]
+  crossfit_folds: 5
+  encoders:
+    - id: microsoft/deberta-v3-base
+      arm: primary
+      max_length: 256
+      precision: fp32
+    - id: answerdotai/ModernBERT-base
+      arm: comparison
+      max_length: 256
+  baselines: [tfidf_logreg, minilm_logreg]
+  minilm_id: sentence-transformers/all-MiniLM-L6-v2
+  learning_rate: 2.0e-5
+  batch_size: 32
+  epochs: 10
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_fraction: 0.06
+  early_stopping_patience: 3
+  metric_for_best_model: pr_auc
+  greater_is_better: true
+  save_total_limit: 2
+  precision: auto
+  device: auto
+  report_to: []
+
+evaluation:
+  acceptance:
+    min_pr_auc: 0.90
+    min_minority_f1_ci_lower: 0.70
+    max_ece: 0.05
+  calibration_methods: [platt, temperature]
+  crossfit_folds: 5
+  threshold_policy: precision_floor
+  precision_floor: 0.80
+  ece_bins: 10
+  bootstrap_resamples: 2000
+  length_bins: [10, 25, 50]
+  base_rate_precision_target: 0.90
+  population_base_rate: null
+
+inference:
+  batch_size: 512
+  shard_size: 50000
+  device: auto
+  route_low_to_rules: true
+  rule_ambiguous_to_classifier: true
+
+prevalence:
+  alpha: 0.05
+  # EMQ (vendored SLD, Saerens 2002) as the single quantification sensitivity check;
+  # KDEy opt-in under `quant` extra
+  cross_checks: [emq]
+  use_design_weights: true
+  per_ntee: true
+  ntee_min_n: 10
+  low_tier_sensitivity: true

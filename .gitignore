@@ -2,16 +2,46 @@
 venv
 .venv
 *.parquet
-results
 my_model
-my_model_prompt2my_model_prompt2/model.safetensors
+my_model_prompt2/
 model_on_missions
 model_on_activities
+config/secrets.yaml
+__pycache__
+mise.toml
+mise.local.toml
+mise.*.toml
+.DS_Store
 
 # Agents
-.opencode/*
+.opencode/agents/*
+.opencode/commands/*
+.opencode/plans
 .agents/*
 .claude/*
-!.agents/architecture/*
-!.agents/docs/*
-!.agents/plans/*
+!.agents/plans
+!.agents/stubs
+CLAUDE.md
+
+# Generated on UCloud at the project drive root (repo root).
+/env.sh
+/devenv.sh
+/outputs/
+/devtools/
+Trash/
+vllm_*.log
+
+# Data: heavy/cloud artifacts ignored; symlinks stand in for DVC until we adopt it.
+/data/*
+!/data/processed/
+/data/processed/*
+!/data/processed/gold/
+# Frozen evaluation artifacts: small, text-free, one-shot — tracked for reproducibility.
+!/data/processed/evaluation/
+/data/processed/evaluation/*
+!/data/processed/evaluation/*.json
+!/data/processed/evaluation/anchor_oof_scores.parquet
+!/data/processed/run_manifest.json
+
+# Logs
+/logs/

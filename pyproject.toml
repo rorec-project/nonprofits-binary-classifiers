@@ -1,24 +1,112 @@
 [project]
-name = "binary-classifier-missions"
+name = "nonprofits-binary-classifiers"
 version = "0.1.0"
-description = "Add your description here"
+description = "Nonprofit Corpus Binary Classifiers"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "accelerate>=0.26.0",
-    "datasets>=4.8.5",
-    "dotenv>=0.9.9",
-    "evaluate>=0.4.6",
-    "matplotlib>=3.10.9",
-    "numpy>=2.4.6",
-    "openai>=0.27.0",
-    "pandas>=3.0.3",
-    "scikit-learn>=1.9.0",
-    "torch>=2.12.0",
-    "transformers>=5.9.0",
+  "accelerate>=0.26.0",
+  "datasets>=4.8.5",
+  "evaluate>=0.4.6",
+  "matplotlib>=3.10.9",
+  "numpy>=1.26.0",
+  "openai>=1.0.0",
+  "pandas>=3.0.3",
+  "ppi-python>=0.2.3",
+  "pydantic>=2.0.0",
+  "pydantic-settings>=2.0.0",
+  "pyarrow>=15.0.0",
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0",
+  "scikit-learn>=1.9.0",
+  "sentencepiece>=0.2.0",
+  "torch>=2.7.0",
+  "transformers>=5.8.0,<6.0.0",
+  "protobuf>=6.33.6",
+  "wordcloud>=1.9.4",
 ]
+
+[project.optional-dependencies]
+serve = ["vllm>=0.22.0"]
+# Portable nvcc for FlashInfer's Blackwell (sm_100) JIT on hosts WITHOUT a system
+# CUDA toolkit. On UCloud this is unnecessary — utils/init.sh loads the EasyBuild
+# CUDA/12.8 module (full toolkit + headers). Off-platform: uv sync --extra serve
+# --extra nvcc, then set CUDA_HOME to the wheel and add the runtime/cccl headers.
+nvcc = ["nvidia-cuda-nvcc-cu12>=12.8,<13"]
+tracking = ["trackio"]
+diagnostics = ["crowd-kit>=1.4.2", "cleanlab>=2.9.0"]
+quant = ["quapy>=0.2.0,<0.3"]
 
 [dependency-groups]
 dev = [
-    "ipykernel>=7.2.0",
+  "ipykernel>=7.2.0",
+  "pytest>=9.0.3",
+  "requests>=2.34.2",
+  "ruff>=0.10.0",
+  "ty>=0.0.1a1",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/binary_classifier"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow and not network'"
+markers = [
+  "slow: real training loops / long E2E; excluded by default",
+  "network: requires HF Hub downloads; excluded by default",
+]
+
+[tool.ruff]
+line-length = 88
+extend-exclude = [".agents", "archive", "tests"]
+force-exclude = true
+
+[tool.ruff.lint]
+extend-select = [
+  "B905",  # zip() without explicit strict= — catches bugs
+  "PD011", # .values -> .to_numpy() — pandas 3.x compat
+  "UP017", # datetime.UTC alias — modern stdlib
+  "UP035", # collections.abc import — modern stdlib
+  "UP042", # enum.StrEnum — modern stdlib
+]
+ignore = [
+  "F821", # undefined name -> covered by ty's `unresolved-reference`
+]
+
+[tool.ty.environment]
+python-version = "3.13"
+python = "./.venv"
+
+[tool.ty.rules]
+# Recommended for ML projects with gradual typing
+unresolved-import = "warn"
+possibly-unresolved-reference = "warn"
+unresolved-reference = "error"
+invalid-assignment = "error"
+
+# Disable rules that produce noise in ML codebases
+division-by-zero = "ignore"
+index-out-of-bounds = "ignore"
+
+# Ignore unused type-checking imports (common in stubs)
+unused-ignore-comment = "warn"
+
+[tool.ty.src]
+# Respect .gitignore for file exclusion
+respect-ignore-files = true
+
+# Include/exclude patterns
+include = ["src/**/*.py", "scripts/**/*.py", "*.py"]
+exclude = ["archive/**", ".agents/**", "tests/**", "*.ipynb"]
+
+[tool.deptry.package_module_name_map]
+crowd-kit = ["crowdkit"]
+ppi-python = ["ppi_py"]
+pyyaml = ["yaml"]
+python-dotenv = ["dotenv"]
+scikit-learn = ["sklearn"]
