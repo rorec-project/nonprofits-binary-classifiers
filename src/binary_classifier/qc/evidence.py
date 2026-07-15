@@ -60,14 +60,16 @@ def verify_evidence_spans(registry: PathRegistry, store_df: pd.DataFrame) -> dic
         source_id = row["source_id"]
         raw_spans = row.get("evidence_spans")
 
-        if pd.isna(raw_spans):
-            continue
-
         spans: list[str] | None = None
         if isinstance(raw_spans, str):
             spans = json.loads(raw_spans)
         elif isinstance(raw_spans, list):
             spans = raw_spans
+        # Scalar NA-likes (None/NaN) are the only remaining case; guard
+        # ``pd.isna`` against list input, where it returns an array and the
+        # truth-value check would raise.
+        elif pd.isna(raw_spans):
+            continue
 
         if not spans:
             continue
@@ -113,12 +115,12 @@ def abstain_fabricated_positives(
     df = store_df.copy()
     fabricated_set = {(e, s) for e, s, _ in fabricated_records}
 
-    mask = df.apply(
-        lambda row: (
-            (row["EIN2"], row["source_id"]) in fabricated_set
-            and row.get("binary_label") == BinaryLabel.RELIGIOUS.value
-        ),
-        axis=1,
+    # Vectorized membership: build the (EIN2, source_id) key index once and
+    # test it against the fabricated set, avoiding a row-wise Python callback
+    # over the (potentially very large) annotation store.
+    keys = pd.MultiIndex.from_arrays([df["EIN2"], df["source_id"]])
+    mask = keys.isin(fabricated_set) & (
+        df["binary_label"] == BinaryLabel.RELIGIOUS.value
     )
 
     if mask.any():

@@ -69,7 +69,6 @@ def main() -> None:
 
     args = _parse_args()
     cfg = load_config(args.config)
-    registry = PathRegistry(args.config)
 
     if args.epochs is not None:
         cfg.training.epochs = int(args.epochs)
@@ -77,6 +76,11 @@ def main() -> None:
         seeds = [int(part.strip()) for part in args.seeds.split(",") if part.strip()]
         cfg.training.sweep_seeds = seeds
         cfg.training.final_seeds = seeds
+
+    # Bind the registry to the in-memory (override-applied) config so the
+    # registry and cfg cannot silently diverge if downstream code consults
+    # ``registry.cfg``.
+    registry = PathRegistry.from_config(cfg)
 
     sweep = not args.final if args.sweep is None else bool(args.sweep)
     run_training(

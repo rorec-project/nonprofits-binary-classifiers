@@ -46,7 +46,11 @@ def test_stage_06_cli_sweep_final_flags(
 
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(module, "load_config", lambda path: cfg)
-    monkeypatch.setattr(module, "PathRegistry", lambda path: registry)
+    monkeypatch.setattr(
+        module,
+        "PathRegistry",
+        SimpleNamespace(from_config=lambda cfg_arg: registry),
+    )
     monkeypatch.setattr(
         module,
         "run_training",

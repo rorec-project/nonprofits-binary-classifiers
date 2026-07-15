@@ -30,7 +30,7 @@
   },
   "wave2_completeness": {
     "null_pred_label": 0,
-    "path": "/home/dubidub/Documents/Projects/nonprofits-binary-classifiers/data/processed/predictions/predictions_full.parquet",
+    "path": "data/processed/predictions/predictions_full.parquet",
     "rows": 560354,
     "status": "ok",
     "unique_ein2": 560354
