@@ -36,6 +36,12 @@ vllm_*.log
 !/data/processed/
 /data/processed/*
 !/data/processed/gold/
+# Frozen evaluation artifacts: small, text-free, one-shot — tracked for reproducibility.
+!/data/processed/evaluation/
+/data/processed/evaluation/*
+!/data/processed/evaluation/*.json
+!/data/processed/evaluation/anchor_oof_scores.parquet
+!/data/processed/run_manifest.json
 
 # Logs
 /logs/

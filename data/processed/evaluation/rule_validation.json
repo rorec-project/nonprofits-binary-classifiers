@@ -1,0 +1,50 @@
+{
+  "counts": {
+    "fn": 2,
+    "fp": 0,
+    "n_abstain": 82,
+    "n_low": 149,
+    "n_rule_applied": 67,
+    "tn": 54,
+    "tp": 11
+  },
+  "metrics": {
+    "precision": {
+      "ci": {
+        "lower": 0.7411670330319683,
+        "upper": 1.0
+      },
+      "denominator": 11,
+      "numerator": 11,
+      "value": 1.0
+    },
+    "recall": {
+      "ci": {
+        "lower": 0.5776536898051745,
+        "upper": 0.9567418216419186
+      },
+      "denominator": 13,
+      "numerator": 11,
+      "value": 0.8461538461538461
+    },
+    "sensitivity": {
+      "ci": {
+        "lower": 0.5776536898051745,
+        "upper": 0.9567418216419186
+      },
+      "denominator": 13,
+      "numerator": 11,
+      "value": 0.8461538461538461
+    },
+    "specificity": {
+      "ci": {
+        "lower": 0.9335864119091036,
+        "upper": 1.0
+      },
+      "denominator": 54,
+      "numerator": 54,
+      "value": 1.0
+    }
+  },
+  "scope": "anchor_low_cells"
+}
