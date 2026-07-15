@@ -6,7 +6,7 @@ import pandas as pd
 from binary_classifier.train import baselines
 
 
-def test_tfidf_logreg_scores_synthetic_rows() -> None:
+def test_tfidf_logreg_scores_synthetic_rows(tiny_config) -> None:
     """TF-IDF baseline learns obvious lexical signal on synthetic data."""
     frame = _synthetic_text_frame(60)
     train_df = frame.iloc[:42].reset_index(drop=True)
@@ -16,6 +16,7 @@ def test_tfidf_logreg_scores_synthetic_rows() -> None:
     )
 
     row = baselines.tfidf_logreg(
+        tiny_config,
         train_df,
         {"dev": dev_df, "validation": validation_df},
         seed=123,
@@ -31,7 +32,9 @@ def test_tfidf_logreg_scores_synthetic_rows() -> None:
     assert row["validation"]["pr_auc"] > validation_df["human_label"].mean()
 
 
-def test_minilm_logreg_uses_seeded_embedding_cache(monkeypatch, tiny_registry) -> None:
+def test_minilm_logreg_uses_seeded_embedding_cache(
+    monkeypatch, tiny_config, tiny_registry
+) -> None:
     """MiniLM baseline avoids downloads in tests and reuses aligned cache hits."""
     frame = _synthetic_text_frame(24)
     train_df = frame.iloc[:18].reset_index(drop=True)
@@ -57,6 +60,7 @@ def test_minilm_logreg_uses_seeded_embedding_cache(monkeypatch, tiny_registry) -
     monkeypatch.setattr(baselines, "compute_minilm_embeddings", fake_embeddings)
 
     row = baselines.minilm_logreg(
+        tiny_config,
         train_df,
         {"dev": eval_df, "validation": eval_df},
         seed=99,
@@ -64,6 +68,7 @@ def test_minilm_logreg_uses_seeded_embedding_cache(monkeypatch, tiny_registry) -
         model_name="fake/minilm",
     )
     cached_row = baselines.minilm_logreg(
+        tiny_config,
         train_df,
         {"dev": eval_df, "validation": eval_df},
         seed=99,

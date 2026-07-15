@@ -1,5 +1,6 @@
 """Tests for encoder fine-tuning argument and loss plumbing."""
 
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -136,12 +137,14 @@ def test_finetune_builds_training_args_and_run_layout(
     monkeypatch.setattr(
         encoder_mod.AutoModelForSequenceClassification,
         "from_pretrained",
-        lambda model_id, num_labels: FakeModel(),
+        lambda model_id, num_labels, **kwargs: FakeModel(),
     )
     monkeypatch.setattr(encoder_mod, "DataCollatorWithPadding", lambda tokenizer: tokenizer)
     monkeypatch.setattr(encoder_mod, "TrainingArguments", FakeTrainingArguments)
     monkeypatch.setattr(encoder_mod, "EarlyStoppingCallback", FakeEarlyStoppingCallback)
     monkeypatch.setattr(encoder_mod, "Trainer", FakeTrainer)
+    # Pin single-device so warmup_steps is deterministic regardless of host GPUs.
+    monkeypatch.setattr(encoder_mod.torch.cuda, "device_count", lambda: 0)
     monkeypatch.setattr(
         encoder_mod,
         "load_human_split",
@@ -167,7 +170,13 @@ def test_finetune_builds_training_args_and_run_layout(
     assert args["output_dir"] == str(tiny_registry.checkpoints_dir / "fake__encoder" / "default" / "s123")
     assert args["eval_strategy"] == "epoch"
     assert args["save_strategy"] == "epoch"
-    assert args["warmup_ratio"] == tiny_config.training.warmup_fraction
+    total_steps = (
+        math.ceil(len(train_df) / tiny_config.training.batch_size)
+        * tiny_config.training.epochs
+    )
+    assert args["warmup_steps"] == math.ceil(
+        tiny_config.training.warmup_fraction * total_steps
+    )
     assert args["metric_for_best_model"] == "pr_auc"
     assert args["greater_is_better"] is True
     assert args["bf16"] is False
@@ -233,7 +242,7 @@ def test_finetune_predictor_uses_configured_warmup(
     monkeypatch.setattr(
         encoder_mod.AutoModelForSequenceClassification,
         "from_pretrained",
-        lambda model_id, num_labels: FakeModel(),
+        lambda model_id, num_labels, **kwargs: FakeModel(),
     )
     monkeypatch.setattr(encoder_mod, "DataCollatorWithPadding", lambda tokenizer: tokenizer)
     monkeypatch.setattr(encoder_mod, "TrainingArguments", FakeTrainingArguments)
@@ -241,12 +250,15 @@ def test_finetune_predictor_uses_configured_warmup(
     tiny_config.training.device = "cpu"
     tiny_config.training.precision = "fp32"
     tiny_config.training.warmup_fraction = 0.17
+    # Pin single-device so warmup_steps is deterministic regardless of host GPUs.
+    monkeypatch.setattr(encoder_mod.torch.cuda, "device_count", lambda: 0)
 
+    train_df = _frame(6)
     predictor = encoder_mod.finetune_predictor(
         tiny_config,
         tiny_registry,
         tiny_config.training.encoders[0].model_copy(update={"id": "fake/encoder"}),
-        _frame(6),
+        train_df,
         _frame(2, start=10),
         targets="soft",
         arm="default",
@@ -259,7 +271,13 @@ def test_finetune_predictor_uses_configured_warmup(
     assert args["output_dir"] == str(
         tmp_path / "runs" / "oof" / "fake__encoder-default-s123"
     )
-    assert args["warmup_ratio"] == tiny_config.training.warmup_fraction
+    total_steps = (
+        math.ceil(len(train_df) / tiny_config.training.batch_size)
+        * tiny_config.training.epochs
+    )
+    assert args["warmup_steps"] == math.ceil(
+        tiny_config.training.warmup_fraction * total_steps
+    )
     assert args["save_strategy"] == "no"
     assert args["eval_strategy"] == "no"
     assert args["bf16"] is False
