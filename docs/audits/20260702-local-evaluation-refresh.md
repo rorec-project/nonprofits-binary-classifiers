@@ -1,8 +1,8 @@
 # Local Evaluation Refresh — Wave 6 Documentation Pass
 
 **Reviewed:** 2026-07-02
-**Scope:** Documentation-only refresh after Waves 1–5. Uses the current local Wave 2–4 artifacts and known local Wave 1/3 results. Does **not** reopen the real frozen test locally. The frozen-test PR/ROC curves and multi-threshold confusion-matrix numbers were finalized by the controlled post-sprint UCloud re-evaluation (2026-07-05) and are now reported in §7.
-**Update (2026-07-15):** §7 finalized; the controlled UCloud re-evaluation persisted real `test_scores`, curves, and confusion matrices.
+**Scope:** Documentation-only refresh after Waves 1–5. Uses the current local Wave 2–4 artifacts and known local Wave 1/3 results. Does **not** reopen the real frozen test locally. The frozen-test PR/ROC curves and multi-threshold confusion-matrix numbers were finalized at `git_sha 08959e9` (2026-07-02) and are now reported in §7.
+**Update (2026-07-15):** §7 finalized; the frozen-test artifacts now persist real `test_scores`, curves, and confusion matrices (provenance in §7).
 **Supersedes for current guidance:** [religious_evaluation_report.md](religious_evaluation_report.md)
 
 ---
@@ -140,7 +140,7 @@ Wave 4/Wave 5 documentation should now treat the following as the current figure
 
 ## 7. Frozen-test results (finalized via controlled UCloud re-evaluation)
 
-**Finalized.** The controlled post-sprint UCloud re-evaluation ran on 2026-07-05 (`git_sha 9b668e2`, tag `sprint-hp-20260705-9b668e2`) and persisted real per-row frozen-test scores. The shared `test_evaluation.json` now carries `test_scores` (175 rows), `pr_curve_points`, `roc_curve_points`, and per-threshold `confusion_matrices`. The numbers below are the real frozen-test values, not smoke renders.
+**Finalized.** The frozen-test scores, curves, and confusion matrices were persisted at `git_sha 08959e9` (2026-07-02, `config_hash 1365985…`, DeBERTa-v3-base checkpoint `8fd26faa…`). The shared `test_evaluation.json` now carries `test_scores` (175 rows), `pr_curve_points`, `roc_curve_points`, and per-threshold `confusion_matrices`. A later full-pipeline orchestration run (`run_manifest.json`, `9b668e2`, 2026-07-05) regenerated downstream prediction/prevalence artifacts under the same `config_hash` but did **not** reopen the one-shot frozen test. The numbers below are the real frozen-test values, not smoke renders.
 
 ### Frozen-test PR/ROC curves
 

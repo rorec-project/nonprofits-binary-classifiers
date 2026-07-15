@@ -35,22 +35,30 @@ A **config-driven binary text classifier** that labels short US-nonprofit record
 
 ## 3. Reproducibility envelope
 
-The headline results below come from the controlled post-sprint UCloud re-evaluation. Its provenance (`data/processed/run_manifest.json`, now tracked in-repo):
+Two provenance records matter, and they are distinct:
+
+**A. The frozen-test artifacts** (`data/processed/evaluation/*`) — the source of the §5 headline numbers. Provenance is embedded in `test_evaluation.json`'s own `metadata`:
+
+| Field | Value |
+|---|---|
+| `git_sha` | `08959e9b295e6d4396debb107052b383c3f6bf47` |
+| Metadata `date` | 2026-07-02 |
+| `config_hash` | `1365985bae96960cb845645217c066891e13409c187624a686cf94f3312a02d6` |
+| `model_id` | `microsoft/deberta-v3-base` |
+| `checkpoint_sha256` | `8fd26faa3abaf5f1a45fb884ff17ca6757a61ba219d9afbd313fb7ff9c06e885` (matches `gold/selected_model.json`) |
+
+**B. The later full-pipeline orchestration run** (`data/processed/run_manifest.json`) — regenerated the downstream prediction/prevalence artifacts, but did **not** reopen the one-shot frozen test:
 
 | Field | Value |
 |---|---|
 | `generated_at` | 2026-07-05T18:23:10Z |
-| `git_sha` | `9b668e245ebeec6660ae23ad275a4426018d3a53` |
-| `git_tag` | `sprint-hp-20260705-9b668e2` |
-| `config_hash` | `1365985bae96960cb845645217c066891e13409c187624a686cf94f3312a02d6` |
-| Python | 3.13.12 |
-| `uv.lock` sha256 | `eef1d6eb59c178458a9cb72984c997330d191b0c4b62634dec19b18aad20c0eb` |
+| `git_sha` | `9b668e245ebeec6660ae23ad275a4426018d3a53` (tag `sprint-hp-20260705-9b668e2`) |
+| `config_hash` | `1365985…` — **same as (A)**, so both runs share configuration |
+| Python | 3.13.12 · `uv.lock` sha256 `eef1d6eb…` |
 
-**Input row counts:** silver manifest 20,000 · gold manifest 450 · anchor manifest 500 · `predictions.parquet` 531,660 · `predictions_full.parquet` 560,354.
+**Input row counts** (run B): silver manifest 20,000 · gold manifest 450 · anchor manifest 500 · `predictions.parquet` 531,660 · `predictions_full.parquet` 560,354. **Release thresholds:** operating `0.05769`, max-F1 `0.60828`, base-rate `0.09369`.
 
-**Release thresholds:** operating `0.05769`, max-F1 `0.60828`, base-rate `0.09369`.
-
-Only `viz/prevalence_plots.py` (a plotting file) changed after `9b668e2`; **no evaluation logic changed after the frozen results were written**, so the numbers in §5 are consistent with the code that ships on master.
+Between the frozen-run commit `08959e9` and HEAD, the only evaluation-adjacent `.py` changed is `viz/prevalence_plots.py` (a plotting file). **No evaluation, training, or inference logic changed after the frozen results were written**, so the §5 numbers are consistent with the code that ships on master. The matching `config_hash` and `checkpoint_sha256` across (A), (B), and `selected_model.json` confirm the model/config chain is coherent.
 
 ---
 
@@ -115,7 +123,7 @@ The repository is intended to become public. The contract:
 
 ## 7. Human gates
 
-Landing does not bypass the [G1–G4 gates](../agents/pipeline/human-gates.md). In particular, the frozen test remains **one-shot**: the shared `test_evaluation.json` is finalized only via the controlled post-sprint UCloud re-evaluation (done 2026-07-05), never reopened locally.
+Landing does not bypass the [G1–G4 gates](../agents/pipeline/human-gates.md). In particular, the frozen test remains **one-shot**: the shared `test_evaluation.json` was finalized once (at `git_sha 08959e9`, 2026-07-02) and is never reopened locally.
 
 ---
 
