@@ -99,7 +99,7 @@ Frozen-test acceptance **passed** all gates (`max_ece ≤ 0.05`, `min_minority_f
 | ECE | 0.0071 |
 | Minority-F1 bootstrap 95% CI | [0.8398, 0.9381] |
 
-Per-threshold operating points and confusion matrices are reported in [20260702-local-evaluation-refresh.md §7](20260702-local-evaluation-refresh.md#7-frozen-test-results-finalized-via-controlled-ucloud-re-evaluation). Corrected composite **prevalence** is **14.24%** (per-organization estimand; LOW tier decomposed into classifier-routed PPI + rule-only Rogan–Gladen).
+Per-threshold operating points and confusion matrices are reported in [20260702-local-evaluation-refresh.md §7](20260702-local-evaluation-refresh.md#7-frozen-test-results-finalized-via-controlled-ucloud-re-evaluation). Composite **prevalence** is **14.4%** (95% CI 12.7–16.1%; `0.1439` from stage-09 `prevalence_report.json`, per-organization estimand; LOW tier decomposed into classifier-routed PPI + rule-only Rogan–Gladen) — matching the paper's headline and Figure B6.
 
 ---
 

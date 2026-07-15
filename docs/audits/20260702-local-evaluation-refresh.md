@@ -10,7 +10,7 @@
 ## 1. Executive summary
 
 - **Frozen-test acceptance is still the same archived one-shot result.** The current shared `test_evaluation.json` still supports the same headline metrics: F1 `0.8941176470588236`, recall `0.987012987012987`, precision `0.8172043010752689`, PR-AUC `0.9013902009153695`, ROC-AUC `0.9491121123774185`, and ECE `0.007083317363206847`.
-- **The prevalence headline changed.** The current local corrected composite prevalence is `0.14239498698911504` (**14.24%**), down about **0.21 percentage points** from the older `14.45%` audit headline.
+- **The prevalence headline.** The canonical full-data composite prevalence — stage-09 `prevalence_report.json`, computed from the real `predictions_full.parquet` (560,354 organizations) — is `0.14389269183196776` (**14.4%**, 95% CI 12.7–16.1%). This matches the paper's headline and Figure B6. (An earlier local dry-run *without* `predictions_full.parquet` reported 14.24%; that preliminary value is superseded and should not be cited.)
 - **The LOW tier is now decomposed instead of treated as one rule-corrected block.** The current local LOW estimate is `0.17332868644104676` (**17.33%**). The old all-Rogan-Gladen LOW estimate was `0.1836004865` (**18.36%**).
 - **Release-time thresholding is now explicitly documented for deployment prevalence.** The current anchor-OOF-derived base-rate threshold is `0.09368807964553742`; the `0.90` target is attainable, with base-rate-adjusted precision `0.9028691334068896` at derived base rate `0.11880075889216252`.
 - **Inference now has two artifacts, not one.** Keep `predictions.parquet` for the deduplicated scoring corpus and release `predictions_full.parquet` for raw-`EIN2` organization-level use.
@@ -54,14 +54,16 @@ Interpretation: this remains a **recall-first** operating point chosen on anchor
 
 ### Headline
 
-The current local corrected prevalence estimate is:
+The canonical full-data prevalence estimate (stage-09 `prevalence_report.json`) is:
 
 | Quantity | Value |
 |---|---:|
-| Composite prevalence | `0.14239498698911504` |
-| Composite prevalence (%) | `14.24%` |
-| 95% CI | `0.12632041470291652` to `0.15846955927531356` |
-| Shift vs earlier `14.45%` headline | about `-0.21` percentage points |
+| Composite prevalence | `0.14389269183196776` |
+| Composite prevalence (%) | `14.4%` |
+| 95% CI | `0.1272700360786716` to `0.16051534758526392` (12.7–16.1%) |
+| Shift vs earlier `14.45%` headline | about `-0.06` percentage points |
+
+> A superseded local dry-run (without `predictions_full.parquet`) had reported `0.14239…` (14.24%). The value above is the real full-data run and matches the paper.
 
 ### Decomposition now used
 

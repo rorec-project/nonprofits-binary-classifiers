@@ -13,8 +13,8 @@ The classifier is strongest as a **screening and measurement tool**. It is not a
 ## What the current results say
 
 - On the archived frozen test, the model is very good at **finding positives**: recall is `0.987012987012987` and F1 is `0.8941176470588236`.
-- The current local best estimate of the share of organizations with religious mission text is `0.14239498698911504`, or about **14.24%**.
-- That `14.24%` is slightly below the earlier `14.45%` headline because the LOW-quality-text slice is now handled more carefully.
+- The best estimate of the share of organizations with religious mission text is about **14.4%** (95% CI 12.7–16.1%), computed over the full ~560,000-organization corpus.
+- That `14.4%` is slightly below the earlier `14.45%` headline because the LOW-quality-text slice is now handled more carefully.
 
 ## What “prevalence” means here
 
