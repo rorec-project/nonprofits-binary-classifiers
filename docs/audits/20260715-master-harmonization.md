@@ -78,7 +78,7 @@ Reusable logic lives in `src/binary_classifier/` (`data/`, `annotate/`, `qc/`, `
 10. **10 visualize** — publication-grade figures (Okabe–Ito palette) over evaluation, inference, and prevalence artifacts.
 11. **11 aggregation_compare** — script-only sensitivity diagnostics for alternative silver-label aggregation methods.
 
-The pipeline runs behind four human gates ([G1–G4](../agents/pipeline/human-gates.md)). The legacy flat-script pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
+The pipeline runs behind four human gates ([G1–G4](../agents/pipeline/human-gates.md)). The legacy flat-script pipeline is **not in this repo**; it is preserved in the `archive/master-2026-06-17` tag (recoverable via `git show archive/master-2026-06-17:<file>`) and is **not executed**.
 
 ---
 
@@ -129,10 +129,11 @@ Landing does not bypass the [G1–G4 gates](../agents/pipeline/human-gates.md). 
 
 ## 8. What this landing changed (beyond the branch work)
 
-Two housekeeping changes were made while preparing the merge:
+Housekeeping changes made while preparing the merge:
 
 1. **Tracked the frozen evaluation artifacts.** `data/processed/evaluation/` and `run_manifest.json` were de-symlinked from the cloud drive into real in-repo files, with targeted `.gitignore` exceptions mirroring the existing `gold/` treatment, so the numbers travel with a clone.
 2. **Reconciled stale evaluation docs.** The `pending §7 / TBD` placeholders in [20260702-local-evaluation-refresh.md](20260702-local-evaluation-refresh.md) were replaced with the real finalized frozen-test numbers, so master lands internally consistent.
+3. **Removed the legacy pipeline from the tree.** The `archive/legacy-pipe/` directory (the original flat-script + notebook pipeline) was deleted for a clean public master. It is preserved byte-identically in the `archive/master-2026-06-17` tag and recoverable via `git show archive/master-2026-06-17:<file>`; doc references were updated to point at the tag.
 
 The ~21 `.agents/plans/*.md` agent scratchpads are **kept** as a development-timeline record (to be reprocessed later).
 

@@ -25,7 +25,7 @@
 ## Key rules
 
 - **`EIN2` is the upstream join key** — carry it through every artifact.
-- **`archive/legacy-pipe/` is reference-only.** Don't run it, and don't "fix" it to match the new pipeline.
+- **The legacy pipeline is not in this repo.** It lives only in the `archive/master-2026-06-17` tag (`git show archive/master-2026-06-17:<file>`) — reference-only, never run it or import from it.
 - **The `.claude/`, `.agents/`, and `.opencode/` directories** are general agent/research scaffolding, not part of the classifier pipeline.
 - **Roadmap facts** live in the README and configuration docs. Future DVC migration, prevalence estimation, encoder choice, and evaluation upgrades are documented there. Keep AGENTS as pointers, not the canonical long-form roadmap.
 

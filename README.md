@@ -578,7 +578,7 @@ bash utils/run.sh "06,07,08"           # run GPU stages
 
 ## Appendix H: Legacy Pipeline
 
-The original flat-script pipeline (`generate_training_data.py`, `split_data.py`, and the five Jupyter notebooks) has been moved verbatim to `archive/legacy-pipe/` for reference. It is **not executed** by the new pipeline and is preserved only for historical comparison.
+The original flat-script pipeline (`generate_training_data.py`, `split_data.py`, and the five Jupyter notebooks) is **not part of this repository**. It is preserved verbatim in the `archive/master-2026-06-17` tag (on origin) and recoverable with `git show archive/master-2026-06-17:<file>` — for historical comparison only; it is **not executed** by the new pipeline.
 
 ---
 

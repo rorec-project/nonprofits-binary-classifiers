@@ -24,7 +24,7 @@ Reusable logic lives in the `src/binary_classifier/` package (`data/`, `annotate
 
 ## Status
 
-Stages 01–10 are built and wired into the orchestrator behind four human gates ([G1–G4](human-gates.md)); stage 11 is a script-only helper over the artifacts the main pipeline produces. The legacy flat-script + notebook pipeline is parked in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–10 are built and wired into the orchestrator behind four human gates ([G1–G4](human-gates.md)); stage 11 is a script-only helper over the artifacts the main pipeline produces. The legacy flat-script + notebook pipeline is **not in this repo**; it is preserved in the `archive/master-2026-06-17` tag and is **not executed**.
 
 The real frozen-test artifact is still governed by one-shot semantics: smoke runs can exercise the enriched stage-07 schema locally, but the shared production `test_evaluation.json` is only finalized after the controlled post-sprint UCloud re-evaluation described in [human-gates.md](human-gates.md).
 

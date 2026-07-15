@@ -8,7 +8,7 @@ A model × prompt ensemble (a closed-API reference model + open-weight models se
 
 ## Status
 
-Stages 01–10 are built and wired into the orchestrator behind four human gates. Stage 11 (aggregation comparison) remains a standalone script. The released inference surface now distinguishes between the deduplicated scoring artifact (`predictions.parquet`) and the per-organization expand-back artifact (`predictions_full.parquet`). The legacy flat-script + notebook pipeline is preserved in `archive/legacy-pipe/` and is **not executed**.
+Stages 01–10 are built and wired into the orchestrator behind four human gates. Stage 11 (aggregation comparison) remains a standalone script. The released inference surface now distinguishes between the deduplicated scoring artifact (`predictions.parquet`) and the per-organization expand-back artifact (`predictions_full.parquet`). The legacy flat-script + notebook pipeline is **not in this repo**; it is preserved in the `archive/master-2026-06-17` tag and is **not executed**.
 
 ## Related
 
