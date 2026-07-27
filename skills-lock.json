@@ -5,7 +5,7 @@
       "source": "netresearch/agent-rules-skill",
       "sourceType": "github",
       "skillPath": "skills/agent-rules/SKILL.md",
-      "computedHash": "a38b0007f3f9ba7f252d64030f8c976d7ac742f5dfa17ae8540c2a3c799d7e9f"
+      "computedHash": "4e1a40b097b38eb45ec91fa59f2cf1d7e72f5c66990bdf6bd9ecd511d8b8cee9"
     },
     "ask-matt": {
       "source": "mattpocock/skills",
@@ -113,7 +113,7 @@
       "source": "microsoft/playwright-cli",
       "sourceType": "github",
       "skillPath": "skills/playwright-cli/SKILL.md",
-      "computedHash": "84495cfda62b6c012afc4cc34a0c35bfc7923ba35983b8c04ce4cace0f35a5d8"
+      "computedHash": "f602822b51bcb6d033749c60731b8f1e80f308222fcb2e4af551905a817c6e08"
     },
     "prototype": {
       "source": "mattpocock/skills",
@@ -125,13 +125,13 @@
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/deprecated/qa/SKILL.md",
-      "computedHash": "20c63e29b268b1f0762cff524b5e321d5e1a773b4f61b90d84811b755948a66c"
+      "computedHash": "223de2b02aa9ab36cfa4fe93e80e527b56e912e7ae725f9d596f6d2457afab77"
     },
     "request-refactor-plan": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/deprecated/request-refactor-plan/SKILL.md",
-      "computedHash": "176cf1d0c4dc4fc4d958c4bc4ed67f222f2656bda2f3f15e3a3e98b2e5edaf2f"
+      "computedHash": "08c06e587d0f979b8731f6a00c67fb8d00e563614daf80bf648d41148e553473"
     },
     "research": {
       "source": "mattpocock/skills",
@@ -203,7 +203,7 @@
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-tickets/SKILL.md",
-      "computedHash": "5d79577541b5cf6dade61c69844432ea20ce7b12527cdda1dd4d6fe8d59a135d"
+      "computedHash": "0349eee265e7005e667b4543de849672106c46d545e998f37d3319300bb07751"
     },
     "triage": {
       "source": "mattpocock/skills",
