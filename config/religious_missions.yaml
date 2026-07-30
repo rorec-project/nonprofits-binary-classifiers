@@ -86,6 +86,11 @@ annotation:
 data:
   allow_synthetic: false
 
+# The names arm keeps its artifacts under interim/names and processed/names.
+names:
+  panel_final_filename: panel_final.parquet
+  panel_filled_gaps_filename: panel_filled_gaps.parquet
+
 # Raw LLM-vs-human validation agreement is logged for continuity, but the
 # freeze gate now uses chance-corrected κ plus the minority-F1 CI floor.
 # κ≈0.70 reproduces the old 0.85 raw-agreement operating point on the roughly

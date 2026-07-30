@@ -392,6 +392,13 @@ class DataConfig(BaseModel):
     allow_synthetic: bool = False
 
 
+class NamesConfig(BaseModel):
+    """Names-arm upstream filenames and its isolated artifact namespace."""
+
+    panel_final_filename: str = "panel_final.parquet"
+    panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
+
+
 class QCConfig(BaseModel):
     """Quality-control gate thresholds.
 
@@ -569,6 +576,7 @@ class BinaryClassifierConfig(BaseModel):
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.
         prevalence: Population-prevalence estimation settings.
+        names: Names-arm upstream filename settings.
 
     """
 
@@ -585,6 +593,7 @@ class BinaryClassifierConfig(BaseModel):
     anchor: AnchorConfig = Field(default_factory=AnchorConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    names: NamesConfig = Field(default_factory=NamesConfig)
     qc: QCConfig = Field(default_factory=QCConfig)
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)

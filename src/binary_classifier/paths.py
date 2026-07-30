@@ -63,6 +63,20 @@ class PathRegistry:
         """BMF unified processed parquet (for NTEE major-group join)."""
         return self._root / self.cfg.paths.raw_dir / "bmf_unified_processed.parquet"
 
+    @property
+    def panel_final_parquet(self) -> Path:
+        """Upstream longitudinal panel artifact used by the names arm."""
+        return self._root / self.cfg.paths.raw_dir / self.cfg.names.panel_final_filename
+
+    @property
+    def panel_filled_gaps_parquet(self) -> Path:
+        """Upstream panel artifact retaining suffix-stripped organization names."""
+        return (
+            self._root
+            / self.cfg.paths.raw_dir
+            / self.cfg.names.panel_filled_gaps_filename
+        )
+
     # ── Downstream directories ───────────────────────────────────────────────
 
     @property
@@ -74,6 +88,26 @@ class PathRegistry:
     def processed_dir(self) -> Path:
         """Directory for final, ready-to-train datasets."""
         return self._root / self.cfg.paths.processed_dir
+
+    @property
+    def names_interim_dir(self) -> Path:
+        """Isolated interim directory for names-arm artifacts."""
+        return self.interim_dir / "names"
+
+    @property
+    def names_processed_dir(self) -> Path:
+        """Isolated processed directory for names-arm artifacts."""
+        return self.processed_dir / "names"
+
+    @property
+    def names_panel_frame(self) -> Path:
+        """501(c)(3) panel name frame."""
+        return self.names_interim_dir / "panel_name_frame.parquet"
+
+    @property
+    def names_bmf_only_frame(self) -> Path:
+        """BMF-only name frame."""
+        return self.names_interim_dir / "bmf_only_name_frame.parquet"
 
     @property
     def gold_dir(self) -> Path:
@@ -320,5 +354,7 @@ class PathRegistry:
             self.predictions_dir / "shards",
             self.prevalence_dir,
             self.figures_dir,
+            self.names_interim_dir,
+            self.names_processed_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
