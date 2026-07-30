@@ -111,7 +111,7 @@ def run_inference(
         registry.calibrator_path,
         registry.base_rate_precision,
     )
-    selected = _load_selected_model(registry, require_checkpoint=predictor is None)
+    selected = load_selected_model(registry, require_checkpoint=predictor is None)
     encoder_id = selected.get("encoder_id")
     max_length = _max_length_for_encoder(cfg, encoder_id)
     metadata = _prediction_metadata(
@@ -312,7 +312,7 @@ def _delete_stale_shards(
             logger.info("Deleted stale inference shard %s", shard_path)
 
 
-def _load_selected_model(
+def load_selected_model(
     registry: PathRegistry,
     *,
     require_checkpoint: bool,

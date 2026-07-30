@@ -227,7 +227,7 @@ def test_run_inference_loads_checkpoint_once_through_score_texts(
     monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
     monkeypatch.setattr(
         predict_mod,
-        "_load_selected_model",
+        "load_selected_model",
         lambda registry, **kwargs: {"encoder_id": "stub-model"},
     )
     monkeypatch.setattr(

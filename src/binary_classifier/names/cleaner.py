@@ -26,14 +26,15 @@ _ACRONYMS = {
 _WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 
 
-def normalize_name(raw: object) -> str:
-    """Repair, suffix-strip, and truecase one organization name."""
+def normalize_name(raw: object, *, strip_suffix: bool = True) -> str:
+    """Repair and truecase one organization name, optionally stripping its suffix."""
     if raw is None or pd.isna(raw):
         return ""
     value = ftfy.fix_text(str(raw)).strip()
     if not value:
         return ""
-    value = basename(value).strip(" ,.;:")
+    if strip_suffix:
+        value = basename(value).strip(" ,.;:")
     words = value.split()
     return " ".join(
         word.upper()

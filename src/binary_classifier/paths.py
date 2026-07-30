@@ -125,6 +125,11 @@ class PathRegistry:
         return self.names_interim_dir / self.cfg.names.divergence_audit_filename
 
     @property
+    def names_scores(self) -> Path:
+        """Cross-field transfer scores for both name-input variants."""
+        return self.names_processed_dir / self.cfg.names.scores_filename
+
+    @property
     def gold_dir(self) -> Path:
         """Git-committed directory for human-coded gold artifacts."""
         return self.processed_dir / "gold"
