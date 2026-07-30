@@ -43,6 +43,8 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "Mission Charity Inc",
                 "BEST_NAME_CASED": "Mission Charity",
+                "BEST_DBA_CASED": "Grace Church",
+                "HAS_DBA": True,
             },
             {
                 "EIN2": "P002",
@@ -50,6 +52,8 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "Name Only Charity Inc",
                 "BEST_NAME_CASED": "Name Only Charity",
+                "BEST_DBA_CASED": None,
+                "HAS_DBA": False,
             },
             {
                 "EIN2": "P003",
@@ -57,6 +61,8 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
                 "COMMON_LEVEL1": "501CX NONPROFIT",
                 "F9_00_ORG_NAME_L1": "Out of Scope",
                 "BEST_NAME_CASED": "Out of Scope",
+                "BEST_DBA_CASED": "Out Of Scope DBA",
+                "HAS_DBA": True,
             },
         ],
     ).to_parquet(tiny_registry.panel_final_parquet, index=False)
@@ -111,6 +117,9 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
     assert panel["name_bare"].tolist() == ["Mission Charity", "Name Only Charity"]
     assert panel["name_raw"].tolist() == ["Mission Charity Inc", "Name Only Charity Inc"]
     assert panel["name_cased"].tolist() == ["Mission Charity", "Name Only Charity"]
+    assert panel["dba_cased"].iloc[0] == "Grace Church"
+    assert pd.isna(panel["dba_cased"].iloc[1])
+    assert panel["has_dba"].tolist() == [True, False]
     assert panel["is_external_religious_flag"].tolist() == [False, True]
     assert panel["is_external_religious_flag"].notna().all()
     assert panel["ntee_major_group"].tolist() == ["?", "X"]

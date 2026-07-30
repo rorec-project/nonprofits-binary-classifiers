@@ -37,6 +37,8 @@ _FRAME_COLUMNS = [
     "name_raw_source",
     "name_cased",
     "name_bare",
+    "dba_cased",
+    "has_dba",
     "has_mission",
     "is_name_only",
     "is_bmf_only",
@@ -99,7 +101,12 @@ def _load_panel(registry: "PathRegistry") -> pd.DataFrame:
     panel_columns = ["EIN2", "COMMON_LEVEL1", "BEST_NAME_CASED"]
     panel_columns.extend(
         column
-        for column in ("F9_00_ORG_NAME_L1", "NAME_CASED")
+        for column in (
+            "F9_00_ORG_NAME_L1",
+            "NAME_CASED",
+            "BEST_DBA_CASED",
+            "HAS_DBA",
+        )
         if column in panel.columns
     )
     panel = _collapse_panel(panel[panel_columns])
@@ -212,6 +219,8 @@ def _finalize_frame(
         result[name_cased_column] if name_cased_column is not None else pd.NA
     )
     result["name_bare"] = result.get("BEST_NAME_BARE_CASED", pd.NA)
+    result["dba_cased"] = result.get("BEST_DBA_CASED", pd.NA)
+    result["has_dba"] = result.get("HAS_DBA", False)
     result["population"] = population
     result["is_name_only"] = ~result["has_mission"] & (not is_bmf_only)
     result["is_bmf_only"] = is_bmf_only

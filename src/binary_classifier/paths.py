@@ -135,6 +135,21 @@ class PathRegistry:
         return self.names_processed_dir / self.cfg.names.validation_filename
 
     @property
+    def names_probe_diagnostics(self) -> Path:
+        """Synthetic-probe diagnostic report for cross-field transfer."""
+        return self.names_processed_dir / self.cfg.names.probe_diagnostics_filename
+
+    @property
+    def names_dba_case_study(self) -> Path:
+        """Reviewable EIN2-level legal-name and DBA comparison cases."""
+        return self.names_processed_dir / self.cfg.names.dba_case_study_filename
+
+    @property
+    def names_dba_case_study_report(self) -> Path:
+        """Summary report for the DBA case study."""
+        return self.names_processed_dir / self.cfg.names.dba_case_study_report_filename
+
+    @property
     def gold_dir(self) -> Path:
         """Git-committed directory for human-coded gold artifacts."""
         return self.processed_dir / "gold"

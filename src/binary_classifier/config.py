@@ -417,6 +417,9 @@ class NamesConfig(BaseModel):
     divergence_audit_filename: str = "name_divergence_audit.json"
     scores_filename: str = "name_scores.parquet"
     validation_filename: str = "name_validation.json"
+    probe_diagnostics_filename: str = "name_probe_diagnostics.json"
+    dba_case_study_filename: str = "name_dba_case_study.parquet"
+    dba_case_study_report_filename: str = "name_dba_case_study_report.json"
     diagnostic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     base_rate_shift_ratio_tolerance: float = Field(default=0.25, ge=0.0)
     expected_counts: NamesExpectedCounts | None = None

@@ -95,6 +95,9 @@ names:
   divergence_audit_filename: name_divergence_audit.json
   scores_filename: name_scores.parquet
   validation_filename: name_validation.json
+  probe_diagnostics_filename: name_probe_diagnostics.json
+  dba_case_study_filename: name_dba_case_study.parquet
+  dba_case_study_report_filename: name_dba_case_study_report.json
   diagnostic_threshold: 0.5
   base_rate_shift_ratio_tolerance: 0.25
   expected_counts:
