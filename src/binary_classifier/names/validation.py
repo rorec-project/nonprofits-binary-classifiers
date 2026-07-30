@@ -10,6 +10,7 @@ import pandas as pd
 
 from binary_classifier import metrics
 from binary_classifier.evaluation.calibration import calibration_metrics
+from binary_classifier.names.gold import require_name_gold_coding_complete
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -55,6 +56,7 @@ def run_name_validation(
     into name-text gold labels. Transfer decisions use the top ``k`` raw scores,
     where ``k`` is the lexicon's positive count, to match operating points.
     """
+    require_name_gold_coding_complete(registry)
     paired, counts = _load_paired_frame(registry)
     variants = {
         variant: _variant_report(cfg, variant_frame)

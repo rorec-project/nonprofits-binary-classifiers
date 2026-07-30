@@ -150,6 +150,21 @@ class PathRegistry:
         return self.names_processed_dir / self.cfg.names.dba_case_study_report_filename
 
     @property
+    def names_gold_manifest(self) -> Path:
+        """Seeded BMF-only name-gold draw with stratum provenance."""
+        return self.names_interim_dir / "names_gold_manifest.csv"
+
+    @property
+    def names_gold_coding_template(self) -> Path:
+        """Human-coding template for the BMF-only names gold sample."""
+        return self.names_processed_dir / "gold" / "names_gold_to_code.csv"
+
+    @property
+    def names_gold_coding_instructions(self) -> Path:
+        """Unchanged mission-construct rubric accompanying the names template."""
+        return self.names_processed_dir / "gold" / "names_gold_coding_instructions.md"
+
+    @property
     def gold_dir(self) -> Path:
         """Git-committed directory for human-coded gold artifacts."""
         return self.processed_dir / "gold"

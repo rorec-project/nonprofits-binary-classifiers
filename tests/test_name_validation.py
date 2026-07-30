@@ -127,6 +127,7 @@ def test_run_name_validation_fails_flat_external_flag_shift(
 
 
 def _write_validation_inputs(registry) -> None:
+    _write_completed_name_gold_template(registry)
     pd.DataFrame(
         {
             "EIN2": ["A", "B", "C", "D", "X", "R"],
@@ -165,6 +166,7 @@ def _write_validation_inputs(registry) -> None:
 
 
 def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> None:
+    _write_completed_name_gold_template(registry)
     ein2s = ["A", "B", "C", "D", "E", "F", "G", "H"]
     populations = ["panel_501c3"] * 4 + ["bmf_only"] * 4
     flags = [True, False, False, False, True, True, False, False]
@@ -220,3 +222,25 @@ def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> Non
     pd.DataFrame(
         {"EIN2": ein2s[:4], "pred_label": [1, 1, 0, 0], "prob_calibrated": [0.9] * 4},
     ).to_parquet(registry.predictions_full_parquet, index=False)
+
+
+def _write_completed_name_gold_template(registry) -> None:
+    registry.names_gold_coding_template.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "EIN2": ["NAMES_GOLD"],
+            "split": ["names_gold"],
+            "text": ["Example name"],
+            "human_label": [0],
+        }
+    ).to_csv(registry.names_gold_coding_template, index=False)
+    pd.DataFrame({"EIN2": ["NAMES_GOLD"]}).to_csv(
+        registry.names_gold_manifest,
+        index=False,
+    )
+    registry.names_gold_coding_instructions.write_text(
+        "Use the unchanged mission construct: positive means observable religious or "
+        "spiritual purpose, tradition, or motivation as a core driver of the work. "
+        "A saint name alone is not religious. Faith-founded identity without religious "
+        "purpose is not religious. Enter only 0 or 1 in human_label.\n"
+    )

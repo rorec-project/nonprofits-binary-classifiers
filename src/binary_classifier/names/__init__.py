@@ -2,11 +2,13 @@
 
 from binary_classifier.names.diagnostics import run_name_diagnostics
 from binary_classifier.names.frame import build_name_frame
+from binary_classifier.names.gold import draw_name_gold
 from binary_classifier.names.score import score_names
 from binary_classifier.names.validation import run_name_validation
 
 __all__ = [
     "build_name_frame",
+    "draw_name_gold",
     "run_name_diagnostics",
     "run_name_validation",
     "score_names",

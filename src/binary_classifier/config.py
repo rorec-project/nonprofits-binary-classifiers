@@ -420,6 +420,24 @@ class NamesConfig(BaseModel):
     probe_diagnostics_filename: str = "name_probe_diagnostics.json"
     dba_case_study_filename: str = "name_dba_case_study.parquet"
     dba_case_study_report_filename: str = "name_dba_case_study_report.json"
+    gold_sample_size: int = Field(default=400, gt=0)
+    gold_seed: int | None = None
+    gold_stratum_quotas: dict[str, int] = Field(
+        default_factory=lambda: {
+            "ntee_x_only": 100,
+            "church_foundation_only": 100,
+            "both_external_flags": 100,
+            "neither_external_flag": 100,
+        }
+    )
+    gold_conflict_quotas: dict[str, int] = Field(
+        default_factory=lambda: {
+            "saint_name": 20,
+            "faith_heritage": 20,
+            "non_christian_tradition": 20,
+            "non_english_name": 20,
+        }
+    )
     diagnostic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     base_rate_shift_ratio_tolerance: float = Field(default=0.25, ge=0.0)
     expected_counts: NamesExpectedCounts | None = None
