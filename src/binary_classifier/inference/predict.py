@@ -113,22 +113,15 @@ def run_inference(
     )
     selected = _load_selected_model(registry, require_checkpoint=predictor is None)
     encoder_id = selected.get("encoder_id")
-    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
-
     max_length = _max_length_for_encoder(cfg, encoder_id)
-
-    scorer = (
-        predictor
-        if predictor is not None
-        else _load_checkpoint_predictor(selected, device=device, max_length=max_length)
-    )
     metadata = _prediction_metadata(
         cfg,
         selected=selected,
-        predictor=scorer,
+        predictor=predictor,
         calibrator=calibrator,
         max_length=max_length,
     )
+    predictor_cache: dict[str, Any] = {}
 
     _delete_stale_shards(
         registry,
@@ -141,7 +134,8 @@ def run_inference(
         cfg,
         registry,
         missions,
-        predictor=scorer,
+        predictor=predictor,
+        predictor_cache=predictor_cache,
         calibrator=calibrator,
         metadata=metadata,
         shard_size=shard_size,
@@ -156,6 +150,7 @@ def run_inference(
     else:
         logger.info("Skipping predictions_full.parquet for limited inference run")
 
+    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
     _write_monitor_scores(
         registry,
         merged,
@@ -414,7 +409,8 @@ def _process_shards(
     registry: PathRegistry,
     frame: pd.DataFrame,
     *,
-    predictor: Any,
+    predictor: Any | None,
+    predictor_cache: dict[str, Any],
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
     shard_size: int,
@@ -438,6 +434,7 @@ def _process_shards(
             cfg,
             shard,
             predictor=predictor,
+            predictor_cache=predictor_cache,
             calibrator=calibrator,
             metadata=metadata,
             selected_model=selected_model,
@@ -493,7 +490,8 @@ def _predict_shard(
     cfg: BinaryClassifierConfig,
     shard: pd.DataFrame,
     *,
-    predictor: Any,
+    predictor: Any | None,
+    predictor_cache: dict[str, Any] | None = None,
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
     selected_model: Mapping[str, Any] | None = None,
@@ -521,6 +519,7 @@ def _predict_shard(
             selected_model or {},
             texts,
             predictor=predictor,
+            predictor_cache=predictor_cache,
         )
         method = cast(CalibrationMethod, calibrator["method"])
         params = cast(Mapping[str, float], calibrator["params"])
@@ -568,6 +567,7 @@ def score_texts(
     texts: Sequence[str],
     *,
     predictor: Any | None = None,
+    predictor_cache: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Score texts with the selected production checkpoint.
 
@@ -578,15 +578,17 @@ def score_texts(
     batch_size = _positive_int(cfg.inference.batch_size, "inference.batch_size")
     encoder_id = str(selected_model.get("encoder_id") or "") or None
     device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
-    scorer = (
-        predictor
-        if predictor is not None
-        else _load_checkpoint_predictor(
+    scorer = predictor
+    if scorer is None and predictor_cache is not None:
+        scorer = predictor_cache.get("predictor")
+    if scorer is None:
+        scorer = _load_checkpoint_predictor(
             selected_model,
             device=device,
             max_length=_max_length_for_encoder(cfg, encoder_id),
         )
-    )
+        if predictor_cache is not None:
+            predictor_cache["predictor"] = scorer
     return _batched_positive_probabilities(
         scorer,
         texts,

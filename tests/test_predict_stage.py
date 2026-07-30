@@ -213,6 +213,44 @@ def test_stale_shards_removed_matching_shards_resumed(
     assert predictor.n_scored == 2
 
 
+def test_run_inference_loads_checkpoint_once_through_score_texts(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    missions = _classifier_only_missions()
+    predictor = _CountingPredictor()
+    loaded: list[object] = []
+    score_predictors: list[object | None] = []
+    score_texts = predict_mod.score_texts
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
+    monkeypatch.setattr(
+        predict_mod,
+        "_load_selected_model",
+        lambda registry, **kwargs: {"encoder_id": "stub-model"},
+    )
+    monkeypatch.setattr(
+        predict_mod,
+        "_load_checkpoint_predictor",
+        lambda selected, **kwargs: loaded.append(selected) or predictor,
+    )
+
+    def record_score(*args, **kwargs):
+        score_predictors.append(kwargs.get("predictor"))
+        return score_texts(*args, **kwargs)
+
+    monkeypatch.setattr(predict_mod, "score_texts", record_score)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    run_inference(tiny_config, tiny_registry)
+
+    assert loaded == [{"encoder_id": "stub-model"}]
+    assert predictor.n_scored == len(missions)
+    assert score_predictors == [None, None]
+
+
 def test_limited_run_does_not_delete_stale_shards(
     tiny_config,
     tiny_registry,
