@@ -110,6 +110,21 @@ class PathRegistry:
         return self.names_interim_dir / "bmf_only_name_frame.parquet"
 
     @property
+    def names_panel_cleaned(self) -> Path:
+        """Panel frame with the shared name cleaner applied."""
+        return self.names_interim_dir / self.cfg.names.panel_cleaned_filename
+
+    @property
+    def names_bmf_only_cleaned(self) -> Path:
+        """BMF-only frame with the shared name cleaner applied."""
+        return self.names_interim_dir / self.cfg.names.bmf_only_cleaned_filename
+
+    @property
+    def names_divergence_audit(self) -> Path:
+        """Divergence audit produced by the names cleaner stage."""
+        return self.names_interim_dir / self.cfg.names.divergence_audit_filename
+
+    @property
     def gold_dir(self) -> Path:
         """Git-committed directory for human-coded gold artifacts."""
         return self.processed_dir / "gold"

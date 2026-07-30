@@ -408,6 +408,9 @@ class NamesConfig(BaseModel):
 
     panel_final_filename: str = "panel_final.parquet"
     panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
+    panel_cleaned_filename: str = "panel_cleaned_names.parquet"
+    bmf_only_cleaned_filename: str = "bmf_only_cleaned_names.parquet"
+    divergence_audit_filename: str = "name_divergence_audit.json"
     expected_counts: NamesExpectedCounts | None = None
 
 

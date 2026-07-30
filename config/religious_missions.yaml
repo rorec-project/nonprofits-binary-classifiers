@@ -90,6 +90,9 @@ data:
 names:
   panel_final_filename: panel_final.parquet
   panel_filled_gaps_filename: panel_filled_gaps.parquet
+  panel_cleaned_filename: panel_cleaned_names.parquet
+  bmf_only_cleaned_filename: bmf_only_cleaned_names.parquet
+  divergence_audit_filename: name_divergence_audit.json
   expected_counts:
     panel_has_mission: 560354
     panel_name_only: 257623

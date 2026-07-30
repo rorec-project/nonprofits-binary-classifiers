@@ -473,6 +473,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cleanco"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e1/0b7b567c915ef1d619713b0caee14041536814767bad0c30b5e6542a40c9/cleanco-2.3.tar.gz", hash = "sha256:26b899b2be871be288408205686c5a1dd5f3ab085b709d041a77f3e3049d2961", size = 12311, upload-time = "2024-05-15T16:18:19.314Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/4e/e4a24eec01fbfda0df23582bc9be5d8c32b324d79481edf6d1ff52b03733/cleanco-2.3-py3-none-any.whl", hash = "sha256:7ab4672cdfdabe2375a608686da86005b33df6f347ebf7849c9d0e2651f27e01", size = 11139, upload-time = "2024-05-15T16:18:18.032Z" },
+]
+
+[[package]]
 name = "cleanlab"
 version = "2.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1273,6 +1282,18 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "ftfy"
+version = "6.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]
@@ -2417,6 +2438,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cleaner = [
+    { name = "cleanco" },
+    { name = "ftfy" },
+]
 diagnostics = [
     { name = "cleanlab" },
     { name = "crowd-kit" },
@@ -2446,10 +2471,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=0.26.0" },
+    { name = "cleanco", marker = "extra == 'cleaner'", specifier = ">=2.3" },
     { name = "cleanlab", marker = "extra == 'diagnostics'", specifier = ">=2.9.0" },
     { name = "crowd-kit", marker = "extra == 'diagnostics'", specifier = ">=1.4.2" },
     { name = "datasets", specifier = ">=4.8.5" },
     { name = "evaluate", specifier = ">=0.4.6" },
+    { name = "ftfy", marker = "extra == 'cleaner'", specifier = ">=6.3" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "nvidia-cuda-nvcc-cu12", marker = "extra == 'nvcc'", specifier = ">=12.8,<13" },
@@ -2471,7 +2498,7 @@ requires-dist = [
     { name = "vllm", marker = "extra == 'serve'", specifier = ">=0.22.0" },
     { name = "wordcloud", specifier = ">=1.9.4" },
 ]
-provides-extras = ["serve", "nvcc", "tracking", "diagnostics", "quant"]
+provides-extras = ["serve", "nvcc", "tracking", "diagnostics", "quant", "cleaner"]
 
 [package.metadata.requires-dev]
 dev = [
