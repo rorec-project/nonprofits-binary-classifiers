@@ -231,9 +231,18 @@ def draw_single_confusion_matrix(
     vmin, vmax = 0, int(values.max())
     for row in range(2):
         for col in range(2):
-            color = blues((values[row, col] - vmin) / (vmax - vmin) if vmax > vmin else 0.5)
+            color = blues(
+                (values[row, col] - vmin) / (vmax - vmin) if vmax > vmin else 0.5
+            )
             ax.add_patch(
-                plt.Rectangle((col - 0.5, row - 0.5), 1, 1, facecolor=color, edgecolor="white", linewidth=1),
+                plt.Rectangle(
+                    (col - 0.5, row - 0.5),
+                    1,
+                    1,
+                    facecolor=color,
+                    edgecolor="white",
+                    linewidth=1,
+                ),
             )
             ax.text(
                 col,

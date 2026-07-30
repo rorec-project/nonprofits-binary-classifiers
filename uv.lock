@@ -2417,10 +2417,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
-    { name = "cleanco" },
     { name = "datasets" },
     { name = "evaluate" },
-    { name = "ftfy" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "openai" },
@@ -2440,6 +2438,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cleaner = [
+    { name = "cleanco" },
+    { name = "ftfy" },
+]
 diagnostics = [
     { name = "cleanlab" },
     { name = "crowd-kit" },
@@ -2469,12 +2471,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=0.26.0" },
-    { name = "cleanco", specifier = ">=2.3" },
+    { name = "cleanco", marker = "extra == 'cleaner'", specifier = ">=2.3" },
     { name = "cleanlab", marker = "extra == 'diagnostics'", specifier = ">=2.9.0" },
     { name = "crowd-kit", marker = "extra == 'diagnostics'", specifier = ">=1.4.2" },
     { name = "datasets", specifier = ">=4.8.5" },
     { name = "evaluate", specifier = ">=0.4.6" },
-    { name = "ftfy", specifier = ">=6.3" },
+    { name = "ftfy", marker = "extra == 'cleaner'", specifier = ">=6.3" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "nvidia-cuda-nvcc-cu12", marker = "extra == 'nvcc'", specifier = ">=12.8,<13" },
@@ -2496,7 +2498,7 @@ requires-dist = [
     { name = "vllm", marker = "extra == 'serve'", specifier = ">=0.22.0" },
     { name = "wordcloud", specifier = ">=1.9.4" },
 ]
-provides-extras = ["serve", "nvcc", "tracking", "diagnostics", "quant"]
+provides-extras = ["serve", "nvcc", "tracking", "diagnostics", "quant", "cleaner"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -937,7 +937,9 @@ def _maybe_render_population_language_keyness(
     rendered = False
     for label_col in _PREDICTION_LABEL_COLUMNS:
         if label_col not in predictions.columns:
-            logger.warning("Skipping population keyness for %s; missing column.", label_col)
+            logger.warning(
+                "Skipping population keyness for %s; missing column.", label_col
+            )
             continue
         for ngram_name, ngram_range in _POPULATION_NGRAM_RANGES:
             if label_col != "pred_label" and ngram_name != "unigram":
@@ -957,30 +959,36 @@ def _maybe_render_population_language_keyness(
                     _save_plot(
                         registry,
                         f"population_term_scatter_{label_col}_{ngram_name}",
-                        lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: term_scatter_plot(
-                            keyness,
-                            ax,
-                            title=f"Population term rates by {label_col} ({ngram_name})",
+                        lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: (
+                            term_scatter_plot(
+                                keyness,
+                                ax,
+                                title=f"Population term rates by {label_col} ({ngram_name})",
+                            )
                         ),
                         figsize=figure_size(width=PAGE_WIDTH, height=5.6),
                     )
                     _save_plot(
                         registry,
                         f"population_keyness_volcano_{label_col}_{ngram_name}",
-                        lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: keyness_volcano_plot(
-                            keyness,
-                            ax,
-                            title=f"Population keyness by {label_col} ({ngram_name})",
+                        lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: (
+                            keyness_volcano_plot(
+                                keyness,
+                                ax,
+                                title=f"Population keyness by {label_col} ({ngram_name})",
+                            )
                         ),
                         figsize=figure_size(width=PAGE_WIDTH, height=4.8),
                     )
                 _save_plot(
                     registry,
                     f"population_top_terms_lollipop_{label_col}_{ngram_name}",
-                    lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: top_terms_lollipop_plot(
-                        keyness,
-                        ax,
-                        title=f"Top population distinctive terms by {label_col} ({ngram_name})",
+                    lambda ax, keyness=keyness, label_col=label_col, ngram_name=ngram_name: (
+                        top_terms_lollipop_plot(
+                            keyness,
+                            ax,
+                            title=f"Top population distinctive terms by {label_col} ({ngram_name})",
+                        )
                     ),
                     figsize=figure_size(width=PAGE_WIDTH, height=6.2),
                 )
