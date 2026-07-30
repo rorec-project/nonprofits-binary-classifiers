@@ -82,7 +82,7 @@ def _audit_panel(panel: pd.DataFrame) -> dict[str, object]:
         lost_acronyms = [
             token
             for token in upstream
-            if token in _ACRONYMS and token not in cleaned_exact
+            if token.upper() in _ACRONYMS and token.upper() not in cleaned_exact
         ]
         if lost_religious:
             blocking.append(f"{row['EIN2']}: religious token(s) lost: {lost_religious}")

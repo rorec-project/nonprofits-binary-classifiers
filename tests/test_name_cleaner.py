@@ -14,8 +14,12 @@ from binary_classifier.names.cleaner import clean_names, normalize_name
     [
         ("FIRST AME ZION CHURCH, INC.", "First AME Zion Church"),
         ("COGIC COMMUNITY CENTER LLC", "COGIC Community Center"),
+        ("ELCA COMMUNITY CENTER LLC", "ELCA Community Center"),
+        ("LDS COMMUNITY CENTER LLC", "LDS Community Center"),
         ("CAFÃ‰ MINISTRIES, INC", "Café Ministries"),
         (None, ""),
+        (pd.NA, ""),
+        (float("nan"), ""),
         ("   ", ""),
     ],
 )
@@ -85,15 +89,30 @@ def test_clean_names_blocks_religious_token_loss(tiny_registry, monkeypatch) -> 
         clean_names(tiny_registry.cfg, tiny_registry)
 
 
-def test_clean_names_blocks_denominational_acronym_loss(tiny_registry, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("acronym", "bare_name"),
+    [
+        ("AME", "First AME Church"),
+        ("AME", "First Ame Church"),
+        ("COGIC", "First Cogic Church"),
+        ("ELCA", "First Elca Church"),
+        ("LDS", "First Lds Church"),
+    ],
+)
+def test_clean_names_blocks_denominational_acronym_loss(
+    tiny_registry,
+    monkeypatch,
+    acronym,
+    bare_name,
+) -> None:
     _write_name_frames(
         tiny_registry,
-        panel_name="FIRST AME CHURCH INC.",
-        bare_name="First AME Church",
+        panel_name=f"FIRST {acronym} CHURCH INC.",
+        bare_name=bare_name,
     )
     monkeypatch.setattr(
         "binary_classifier.names.cleaner.normalize_name",
-        lambda raw: "First Ame Church",
+        lambda raw: "First Church",
     )
 
     with pytest.raises(ValueError, match="acronym"):
