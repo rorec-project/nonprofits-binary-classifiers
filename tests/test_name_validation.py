@@ -66,6 +66,66 @@ def test_run_name_validation_rejects_incomplete_variant_pair(
         run_name_validation(tiny_config, tiny_registry)
 
 
+def test_run_name_validation_reports_external_flags_and_gold_offset(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """The stage artifact reports IRS diagnostics and an uncorrected gold offset."""
+    tiny_config.names.diagnostic_threshold = 0.5
+    tiny_config.names.base_rate_shift_ratio_tolerance = 0.25
+    _write_external_validation_inputs(tiny_registry, flat_model_rate=False)
+
+    run_name_validation(tiny_config, tiny_registry)
+
+    report = json.loads(tiny_registry.names_validation.read_text())
+    external = report["external_flag_validation"]
+    panel = external["populations"]["panel_501c3"]["suffix_stripped"]
+    bmf_only = external["populations"]["bmf_only"]["suffix_stripped"]
+    assert panel["flag_base_rate"] == 0.25
+    assert panel["model_positive_rate"] == 0.25
+    assert bmf_only["flag_base_rate"] == 0.5
+    assert bmf_only["model_positive_rate"] == 0.5
+    assert panel["metrics"]["precision"] == 1.0
+    offset = external["construct_offset"]
+    assert offset["source_population"] == (
+        "uncontaminated panel prompt_dev + validation overlap"
+    )
+    assert offset["flag_construct"] == "IRS religious auspice"
+    assert offset["target_construct"] == "observable religious purpose"
+    assert offset["n_overlap"] == 4
+    assert offset["offset"] == 0.25
+    assert offset["flag_vs_human_purpose_metrics"]["confusion_matrix"] == {
+        "tn": 3,
+        "fp": 1,
+        "fn": 0,
+        "tp": 0,
+    }
+    assert offset["correction_applied"] is False
+    assert "must not be read as purpose prevalence" in offset["interpretation"]
+    shift = external["base_rate_shift"]
+    assert shift["absolute_flag_rate_difference"] == 0.25
+    assert shift["absolute_model_positive_rate_difference"] == 0.25
+    assert shift["verdict"] == "PASS"
+    assert external["base_rate_shift"]["failure_interpretation"]
+
+
+def test_run_name_validation_fails_flat_external_flag_shift(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """A model rate that does not track the flag shift emits an explicit FAIL."""
+    _write_external_validation_inputs(tiny_registry, flat_model_rate=True)
+
+    run_name_validation(tiny_config, tiny_registry)
+
+    report = json.loads(tiny_registry.names_validation.read_text())
+    shift = report["external_flag_validation"]["base_rate_shift"]
+    assert shift["flag_rate_ratio"] == 2.0
+    assert shift["model_positive_rate_ratio"] == 1.0
+    assert shift["verdict"] == "FAIL"
+    assert "input shape rather than measuring religion" in shift["interpretation"]
+
+
 def _write_validation_inputs(registry) -> None:
     pd.DataFrame(
         {
@@ -102,3 +162,61 @@ def _write_validation_inputs(registry) -> None:
                 },
             )
     pd.DataFrame(scores).to_parquet(registry.names_scores, index=False)
+
+
+def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> None:
+    ein2s = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    populations = ["panel_501c3"] * 4 + ["bmf_only"] * 4
+    flags = [True, False, False, False, True, True, False, False]
+    has_mission = [True] * 4 + [False] * 4
+    pd.DataFrame(
+        {
+            "EIN2": ein2s[:4],
+            "has_mission": has_mission[:4],
+            "is_manifest_contaminated": [False] * 4,
+            "is_external_religious_flag": flags[:4],
+        },
+    ).to_parquet(registry.names_panel_cleaned, index=False)
+    pd.DataFrame(
+        {
+            "EIN2": ein2s[4:],
+            "population": ["bmf_only"] * 4,
+            "is_external_religious_flag": flags[4:],
+        },
+    ).to_parquet(registry.names_bmf_only_cleaned, index=False)
+
+    model_scores = [0.9, 0.1, 0.2, 0.3]
+    if flat_model_rate:
+        bmf_scores = [0.9, 0.1, 0.2, 0.3]
+    else:
+        bmf_scores = [0.9, 0.8, 0.2, 0.3]
+    scores = []
+    for variant in ("suffix_stripped", "suffix_retaining"):
+        for ein2, population, probability, flag in zip(
+            ein2s,
+            populations,
+            model_scores + bmf_scores,
+            flags,
+            strict=True,
+        ):
+            scores.append(
+                {
+                    "EIN2": ein2,
+                    "population": population,
+                    "input_variant": variant,
+                    "prob_raw": probability,
+                    "lexicon_rule_label": int(flag),
+                },
+            )
+    pd.DataFrame(scores).to_parquet(registry.names_scores, index=False)
+    pd.DataFrame(
+        {
+            "EIN2": ein2s[:4],
+            "split": ["prompt_dev", "prompt_dev", "validation", "validation"],
+            "text": ["a", "b", "c", "d"],
+            "human_label": [0, 0, 0, 0],
+        },
+    ).to_csv(registry.gold_coding_template, index=False)
+    pd.DataFrame(
+        {"EIN2": ein2s[:4], "pred_label": [1, 1, 0, 0], "prob_calibrated": [0.9] * 4},
+    ).to_parquet(registry.predictions_full_parquet, index=False)

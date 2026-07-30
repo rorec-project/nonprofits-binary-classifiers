@@ -404,7 +404,11 @@ class NamesExpectedCounts(BaseModel):
 
 
 class NamesConfig(BaseModel):
-    """Names-arm upstream filenames and optional snapshot reconciliation."""
+    """Names-arm filenames, diagnostics, and optional snapshot reconciliation.
+
+    ``diagnostic_threshold`` is deliberately not a transferable operating point;
+    it only turns raw name scores into labels for the external-flag diagnostic.
+    """
 
     panel_final_filename: str = "panel_final.parquet"
     panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
@@ -413,6 +417,8 @@ class NamesConfig(BaseModel):
     divergence_audit_filename: str = "name_divergence_audit.json"
     scores_filename: str = "name_scores.parquet"
     validation_filename: str = "name_validation.json"
+    diagnostic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    base_rate_shift_ratio_tolerance: float = Field(default=0.25, ge=0.0)
     expected_counts: NamesExpectedCounts | None = None
 
 

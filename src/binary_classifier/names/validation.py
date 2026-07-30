@@ -18,13 +18,25 @@ if TYPE_CHECKING:
 
 _NAME_SCORE_COLUMNS = {
     "EIN2",
+    "population",
     "input_variant",
     "prob_raw",
     "lexicon_rule_label",
 }
 _MISSION_SCORE_COLUMNS = {"EIN2", "pred_label", "prob_calibrated"}
 _PANEL_COLUMNS = {"EIN2", "has_mission", "is_manifest_contaminated"}
+_FLAG_COLUMN = "is_external_religious_flag"
 _INPUT_VARIANTS = {"suffix_stripped", "suffix_retaining"}
+_GOLD_SPLITS = {"prompt_dev", "validation"}
+_SHIFT_FAILURE_INTERPRETATION = (
+    "If positive rates are approximately flat despite the known external-flag "
+    "base-rate shift, the model is responding to input shape rather than "
+    "measuring religion; the names arm is falsified."
+)
+_CONSTRUCT_OFFSET_INTERPRETATION = (
+    "External-flag results are auspice-aligned and must not be read as purpose "
+    "prevalence."
+)
 _LIMITATIONS = [
     "This paired test can falsify transfer cheaply but cannot validate it: "
     "mission-derived labels can mark a correct name prediction wrong, and the "
@@ -64,6 +76,9 @@ def run_name_validation(
         "variants": variants,
         "limitations": _LIMITATIONS,
     }
+    external = _external_flag_report(cfg, registry, paired)
+    if external is not None:
+        report["external_flag_validation"] = external
     registry.ensure_dirs()
     registry.names_validation.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
@@ -180,6 +195,222 @@ def _variant_report(cfg: BinaryClassifierConfig, frame: pd.DataFrame) -> dict[st
             "mean_squared_error": float(np.mean(np.square(score_difference))),
         },
     }
+
+
+def _external_flag_report(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    paired: pd.DataFrame,
+) -> dict[str, Any] | None:
+    """Report the names-arm external-label diagnostic without changing paired use."""
+    if not registry.names_bmf_only_cleaned.exists():
+        panel = pd.read_parquet(registry.names_panel_cleaned)
+        if _FLAG_COLUMN not in panel:
+            return None
+        raise ValueError("External-flag validation requires the BMF-only name frame.")
+    panel = _read_parquet(
+        registry.names_panel_cleaned,
+        {"EIN2", _FLAG_COLUMN},
+    )
+    bmf_only = _read_parquet(
+        registry.names_bmf_only_cleaned,
+        {"EIN2", _FLAG_COLUMN},
+    )
+    flags = pd.concat(
+        [
+            panel.assign(population="panel_501c3"),
+            bmf_only.assign(population="bmf_only"),
+        ],
+        ignore_index=True,
+    )[["EIN2", "population", _FLAG_COLUMN]]
+    flags["EIN2"] = _normalize_ein2(flags["EIN2"])
+    _assert_unique(flags, ["EIN2"], "external flag frame")
+    scores = _read_parquet(
+        registry.names_scores,
+        {"EIN2", "input_variant", "prob_raw", "population"},
+    )[["EIN2", "input_variant", "prob_raw", "population"]]
+    scores["EIN2"] = _normalize_ein2(scores["EIN2"])
+    _assert_unique(scores, ["EIN2", "input_variant"], "name scores")
+    scores = scores.merge(
+        flags,
+        on="EIN2",
+        how="inner",
+        validate="many_to_one",
+        suffixes=("_score", "_frame"),
+    )
+    if not scores["population_score"].eq(scores["population_frame"]).all():
+        raise ValueError("Name-score populations do not match the cleaned name frames.")
+    scores = scores.rename(columns={"population_score": "population"})
+    _validate_external_scores(scores)
+    threshold = float(cfg.names.diagnostic_threshold)
+    populations: dict[str, dict[str, Any]] = {}
+    for (population, variant), frame in scores.groupby(
+        ["population", "input_variant"], sort=True
+    ):
+        flag = frame[_FLAG_COLUMN].astype(int).to_numpy()
+        score = frame["prob_raw"].astype(float).to_numpy()
+        prediction = (score >= threshold).astype(int)
+        populations.setdefault(str(population), {})[str(variant)] = {
+            "n": len(frame),
+            "diagnostic_threshold": threshold,
+            "flag_base_rate": float(flag.mean()),
+            "model_positive_rate": float(prediction.mean()),
+            "metrics": metrics.compute_metric_bundle(
+                flag,
+                prediction,
+                y_score=score,
+                seed=int(cfg.SEED),
+                n_resamples=int(cfg.evaluation.bootstrap_resamples),
+            ),
+        }
+
+    gold_offset = _gold_construct_offset(cfg, registry, flags, paired)
+    shift = _base_rate_shift(
+        cfg,
+        populations["panel_501c3"]["suffix_stripped"],
+        populations["bmf_only"]["suffix_stripped"],
+    )
+    if gold_offset is not None:
+        populations["bmf_only"]["gold_construct_offset"] = {
+            "offset": gold_offset["offset"],
+            "correction_applied": False,
+        }
+    return {
+        "populations": populations,
+        "construct_offset": gold_offset,
+        "base_rate_shift": shift,
+        "limitations": [
+            "The external flag measures religious auspice, not observable religious "
+            "purpose. Its measured construct offset is reported without numerical "
+            "correction."
+        ],
+    }
+
+
+def _gold_construct_offset(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    flags: pd.DataFrame,
+    paired: pd.DataFrame,
+) -> dict[str, Any] | None:
+    """Quantify auspice-versus-purpose disagreement on the clean gold overlap."""
+    if not registry.gold_coding_template.exists():
+        return None
+    gold = pd.read_csv(registry.gold_coding_template)
+    required = {"EIN2", "split", "human_label"}
+    missing = sorted(required.difference(gold.columns))
+    if missing:
+        raise ValueError(
+            f"{registry.gold_coding_template} is missing required columns: "
+            f"{', '.join(missing)}"
+        )
+    gold = gold.loc[gold["split"].astype(str).isin(_GOLD_SPLITS)].copy()
+    gold["EIN2"] = _normalize_ein2(gold["EIN2"])
+    gold["human_label"] = pd.to_numeric(gold["human_label"], errors="coerce")
+    overlap = gold.merge(
+        flags.loc[flags["population"].eq("panel_501c3")],
+        on="EIN2",
+        how="inner",
+        validate="one_to_one",
+    )
+    overlap = overlap.merge(
+        paired[["EIN2", "pred_label"]].drop_duplicates("EIN2"),
+        on="EIN2",
+        how="inner",
+        validate="one_to_one",
+    )
+    if overlap.empty or overlap["human_label"].isna().any():
+        return None
+    flag_rate = float(overlap[_FLAG_COLUMN].astype(int).mean())
+    human_rate = float(overlap["human_label"].astype(int).mean())
+    flag_metrics = metrics.compute_metric_bundle(
+        overlap["human_label"].astype(int).to_numpy(),
+        overlap[_FLAG_COLUMN].astype(int).to_numpy(),
+        seed=int(cfg.SEED),
+        n_resamples=int(cfg.evaluation.bootstrap_resamples),
+    )
+    return {
+        "source_population": "uncontaminated panel prompt_dev + validation overlap",
+        "flag_construct": "IRS religious auspice",
+        "target_construct": "observable religious purpose",
+        "n_overlap": len(overlap),
+        "flag_rate": flag_rate,
+        "human_purpose_rate": human_rate,
+        "offset": flag_rate - human_rate,
+        "mission_label_rate": float(overlap["pred_label"].astype(int).mean()),
+        "flag_vs_human_purpose_metrics": flag_metrics,
+        "correction_applied": False,
+        "interpretation": _CONSTRUCT_OFFSET_INTERPRETATION,
+    }
+
+
+def _base_rate_shift(
+    cfg: BinaryClassifierConfig,
+    panel: dict[str, Any],
+    bmf_only: dict[str, Any],
+) -> dict[str, Any]:
+    """Falsify transfer when BMF-only scores fail to follow the known flag shift."""
+    panel_flag_rate = float(panel["flag_base_rate"])
+    bmf_flag_rate = float(bmf_only["flag_base_rate"])
+    panel_model_rate = float(panel["model_positive_rate"])
+    bmf_model_rate = float(bmf_only["model_positive_rate"])
+    flag_ratio = _rate_ratio(bmf_flag_rate, panel_flag_rate)
+    model_ratio = _rate_ratio(bmf_model_rate, panel_model_rate)
+    relative_error = (
+        abs(model_ratio / flag_ratio - 1.0)
+        if flag_ratio is not None and model_ratio is not None
+        else None
+    )
+    tolerance = float(cfg.names.base_rate_shift_ratio_tolerance)
+    target_rate_higher = bmf_model_rate > panel_model_rate
+    return {
+        "flag_rate_ratio": flag_ratio,
+        "model_positive_rate_ratio": model_ratio,
+        "relative_ratio_error": relative_error,
+        "ratio_tolerance": tolerance,
+        "absolute_flag_rate_difference": abs(bmf_flag_rate - panel_flag_rate),
+        "absolute_model_positive_rate_difference": abs(
+            bmf_model_rate - panel_model_rate
+        ),
+        "target_model_positive_rate_higher": target_rate_higher,
+        "verdict": (
+            "PASS"
+            if target_rate_higher
+            and relative_error is not None
+            and relative_error <= tolerance
+            else "FAIL"
+        ),
+        "interpretation": _SHIFT_FAILURE_INTERPRETATION,
+        "failure_interpretation": _SHIFT_FAILURE_INTERPRETATION,
+    }
+
+
+def _rate_ratio(numerator: float, denominator: float) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def _validate_external_scores(frame: pd.DataFrame) -> None:
+    """Validate external-label inputs before calculating diagnostic metrics."""
+    populations = set(frame["population"].astype(str))
+    required_populations = {"panel_501c3", "bmf_only"}
+    if populations != required_populations:
+        raise ValueError(
+            "External-flag validation requires scores for panel_501c3 and bmf_only."
+        )
+    variants_by_population = {
+        population: set(group["input_variant"].astype(str))
+        for population, group in frame.groupby("population")
+    }
+    if any(variants != _INPUT_VARIANTS for variants in variants_by_population.values()):
+        raise ValueError(
+            "External-flag validation requires both name-score variants in each population."
+        )
+    flags = pd.to_numeric(frame[_FLAG_COLUMN], errors="coerce")
+    if flags.isna().any() or not flags.isin([0, 1]).all():
+        raise ValueError("External religious flags must be binary 0/1.")
+    scores = pd.to_numeric(frame["prob_raw"], errors="coerce")
+    if scores.isna().any() or not scores.between(0.0, 1.0).all():
+        raise ValueError("External-validation prob_raw values must be in [0, 1].")
 
 
 def _top_k_predictions(frame: pd.DataFrame, positive_count: int) -> np.ndarray:
