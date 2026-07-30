@@ -48,6 +48,10 @@ def test_run_name_validation_compares_uncontaminated_paired_variants(
         0.37
     )
     assert "cannot validate" in report["limitations"][0]
+    gold = report["bmf_only_gold"]
+    assert gold["target_population"] == "bmf_only"
+    assert gold["n_gold"] == 1
+    assert gold["variants"]["suffix_stripped"]["design_weighted_accuracy"] == 1.0
 
 
 def test_run_name_validation_rejects_incomplete_variant_pair(
@@ -63,6 +67,20 @@ def test_run_name_validation_rejects_incomplete_variant_pair(
     )
 
     with pytest.raises(ValueError, match="both required input variants"):
+        run_name_validation(tiny_config, tiny_registry)
+
+
+def test_run_name_validation_rejects_template_text_changed_after_draw(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """The gate rejects coding against text other than the drawn BMF-only name."""
+    _write_validation_inputs(tiny_registry)
+    template = pd.read_csv(tiny_registry.names_gold_coding_template)
+    template.loc[0, "text"] = "Altered name"
+    template.to_csv(tiny_registry.names_gold_coding_template, index=False)
+
+    with pytest.raises(ValueError, match="text and split"):
         run_name_validation(tiny_config, tiny_registry)
 
 
@@ -163,6 +181,7 @@ def _write_validation_inputs(registry) -> None:
                 },
             )
     pd.DataFrame(scores).to_parquet(registry.names_scores, index=False)
+    _append_gold_scores(registry)
 
 
 def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> None:
@@ -211,6 +230,7 @@ def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> Non
                 },
             )
     pd.DataFrame(scores).to_parquet(registry.names_scores, index=False)
+    _append_gold_scores(registry)
     pd.DataFrame(
         {
             "EIN2": ein2s[:4],
@@ -234,7 +254,15 @@ def _write_completed_name_gold_template(registry) -> None:
             "human_label": [0],
         }
     ).to_csv(registry.names_gold_coding_template, index=False)
-    pd.DataFrame({"EIN2": ["NAMES_GOLD"]}).to_csv(
+    pd.DataFrame(
+        {
+            "EIN2": ["NAMES_GOLD"],
+            "name_raw": ["Example name"],
+            "population": ["bmf_only"],
+            "inclusion_probability": [1.0],
+            "sampling_cell": ["ntee_x_only|none"],
+        }
+    ).to_csv(
         registry.names_gold_manifest,
         index=False,
     )
@@ -244,3 +272,32 @@ def _write_completed_name_gold_template(registry) -> None:
         "A saint name alone is not religious. Faith-founded identity without religious "
         "purpose is not religious. Enter only 0 or 1 in human_label.\n"
     )
+
+
+def _append_gold_scores(registry) -> None:
+    scores = pd.read_parquet(registry.names_scores)
+    scores = pd.concat(
+        [
+            scores,
+            pd.DataFrame(
+                [
+                    {
+                        "EIN2": "NAMES_GOLD",
+                        "population": "bmf_only",
+                        "input_variant": "suffix_stripped",
+                        "prob_raw": 0.1,
+                        "lexicon_rule_label": 0,
+                    },
+                    {
+                        "EIN2": "NAMES_GOLD",
+                        "population": "bmf_only",
+                        "input_variant": "suffix_retaining",
+                        "prob_raw": 0.1,
+                        "lexicon_rule_label": 0,
+                    },
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    scores.to_parquet(registry.names_scores, index=False)

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from hashlib import sha256
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import Bounds, LinearConstraint, milp
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -54,6 +56,7 @@ _CODING_RUBRIC = (
     "purpose is not religious. Enter only 0 or 1 in human_label."
 )
 _CODING_TEMPLATE_COLUMNS = ["EIN2", "split", "text", "human_label"]
+_CONFLICT_CATEGORIES = frozenset(_CONFLICT_PATTERNS)
 
 
 def draw_name_gold(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
@@ -93,8 +96,8 @@ def require_name_gold_coding_complete(registry: PathRegistry) -> None:
             "Names gold manifest and coding template are required before validation: "
             f"{manifest_path}, {template_path}"
         )
-    template = pd.read_csv(template_path)
-    manifest = pd.read_csv(manifest_path)
+    template = pd.read_csv(template_path, dtype={"EIN2": "string"})
+    manifest = pd.read_csv(manifest_path, dtype={"EIN2": "string"})
     _require_ein2_column(template, template_path)
     _require_ein2_column(manifest, manifest_path)
     if template.columns.tolist() != _CODING_TEMPLATE_COLUMNS:
@@ -108,6 +111,19 @@ def require_name_gold_coding_complete(registry: PathRegistry) -> None:
     if set(template["EIN2"]) != set(manifest["EIN2"]):
         raise ValueError(
             "Names gold coding template EIN2 values must match the manifest."
+        )
+    if "name_raw" not in manifest:
+        raise ValueError(f"{manifest_path} is missing required column: name_raw")
+    template_by_ein2 = template.set_index("EIN2")
+    manifest_by_ein2 = manifest.set_index("EIN2")
+    if (
+        not template_by_ein2["split"].eq("names_gold").all()
+        or not template_by_ein2["text"]
+        .eq(manifest_by_ein2.loc[template_by_ein2.index, "name_raw"])
+        .all()
+    ):
+        raise ValueError(
+            "Names gold coding template text and split must match the manifest."
         )
     labels = pd.to_numeric(template["human_label"], errors="coerce")
     if labels.isna().any() or not labels.isin([0, 1]).all():
@@ -125,10 +141,7 @@ def _validate_quotas(cfg: BinaryClassifierConfig) -> dict[str, int]:
         )
     if sum(quotas.values()) != cfg.names.gold_sample_size:
         raise ValueError("gold_stratum_quotas must sum to gold_sample_size.")
-    unknown_conflicts = set(cfg.names.gold_conflict_quotas).difference(
-        _CONFLICT_PATTERNS
-    )
-    if unknown_conflicts or any(
+    if set(cfg.names.gold_conflict_quotas) != _CONFLICT_CATEGORIES or any(
         count < 0 for count in cfg.names.gold_conflict_quotas.values()
     ):
         raise ValueError("gold_conflict_quotas contains an unknown or negative quota.")
@@ -141,82 +154,74 @@ def _sample(
     conflict_quotas: dict[str, int],
     seed: int,
 ) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    selected: list[int] = []
-    selected_by_stratum = {stratum: 0 for stratum in _STRATA}
-    for category, quota in conflict_quotas.items():
-        candidates = eligible.loc[
-            eligible["conflict_categories"].map(lambda values: category in values)
-        ]
-        picked = _sample_conflict_candidates(
-            candidates, selected, selected_by_stratum, quotas, quota, rng, category
-        )
-        new_picks = picked.loc[~picked.index.isin(selected)]
-        selected.extend(new_picks.index.tolist())
-        for stratum, count in new_picks["gold_stratum"].value_counts().items():
-            selected_by_stratum[stratum] += int(count)
-    for stratum, quota in quotas.items():
-        candidates = eligible.loc[
-            eligible["gold_stratum"].eq(stratum) & ~eligible.index.isin(selected)
-        ]
-        picked = _sample_candidates(
-            candidates,
-            quota - selected_by_stratum[stratum],
-            rng,
-            stratum,
-        )
-        selected.extend(picked.index.tolist())
-    return eligible.loc[selected].sort_values("EIN2").reset_index(drop=True)
-
-
-def _sample_candidates(
-    candidates: pd.DataFrame,
-    count: int,
-    rng: np.random.Generator,
-    description: str,
-) -> pd.DataFrame:
-    if len(candidates) < count:
-        raise ValueError(
-            f"Insufficient eligible BMF-only rows for {description}: need {count}, "
-            f"found {len(candidates)}."
-        )
-    if count == 0:
-        return candidates.iloc[0:0]
-    positions = rng.choice(len(candidates), size=count, replace=False)
-    return candidates.iloc[positions]
-
-
-def _sample_conflict_candidates(
-    candidates: pd.DataFrame,
-    selected: list[int],
-    selected_by_stratum: dict[str, int],
-    quotas: dict[str, int],
-    quota: int,
-    rng: np.random.Generator,
-    category: str,
-) -> pd.DataFrame:
-    """Reuse selected overlaps before consuming capacity in another stratum."""
-    selected_candidates = candidates.loc[candidates.index.isin(selected)]
-    if len(selected_candidates) >= quota:
-        return _sample_candidates(
-            selected_candidates,
-            quota,
-            rng,
-            f"conflict category {category}",
-        )
-    available = candidates.loc[
-        ~candidates.index.isin(selected)
-        & candidates["gold_stratum"].map(
-            lambda stratum: selected_by_stratum[stratum] < quotas[stratum]
-        )
-    ]
-    remainder = _sample_candidates(
-        available,
-        quota - len(selected_candidates),
-        rng,
-        f"conflict category {category}",
+    """Allocate stratum-by-conflict cells jointly before sampling within cells."""
+    eligible = eligible.copy()
+    eligible["conflict_mask"] = eligible["conflict_categories"].map(
+        lambda categories: "|".join(categories) if categories else "none"
     )
-    return pd.concat([selected_candidates, remainder])
+    grouped = [
+        (cast(tuple[str, str], key), frame)
+        for key, frame in eligible.groupby(["gold_stratum", "conflict_mask"], sort=True)
+    ]
+    keys = [key for key, _ in grouped]
+    sizes = np.array([len(frame) for _, frame in grouped], dtype=float)
+    constraints: list[np.ndarray] = []
+    lower: list[float] = []
+    upper: list[float] = []
+    for stratum in sorted(_STRATA):
+        constraints.append(
+            np.array([float(key[0] == stratum) for key in keys], dtype=float)
+        )
+        lower.append(float(quotas[stratum]))
+        upper.append(float(quotas[stratum]))
+    for category in sorted(_CONFLICT_CATEGORIES):
+        constraints.append(
+            np.array(
+                [float(category in key[1].split("|")) for key in keys], dtype=float
+            )
+        )
+        lower.append(float(conflict_quotas[category]))
+        upper.append(np.inf)
+    objective = np.array(
+        [_seeded_priority(seed, f"{stratum}\0{mask}") for stratum, mask in keys]
+    )
+    result = milp(
+        c=objective,
+        integrality=np.ones(len(keys)),
+        bounds=Bounds(np.zeros(len(keys)), sizes),
+        constraints=LinearConstraint(np.vstack(constraints), lower, upper),
+        options={"disp": False},
+    )
+    if not result.success or result.x is None:
+        raise ValueError(
+            "Configured stratum and conflict quotas are jointly infeasible for "
+            "the BMF-only names frame."
+        )
+    samples: list[pd.DataFrame] = []
+    for (stratum, mask), frame, count in zip(
+        keys,
+        (frame for _, frame in grouped),
+        np.rint(result.x).astype(int),
+        strict=True,
+    ):
+        if count == 0:
+            continue
+        ordered = frame.assign(
+            _priority=frame["EIN2"].map(lambda ein2: _seeded_priority(seed, str(ein2)))
+        ).sort_values(["_priority", "EIN2"])
+        sample = ordered.iloc[:count].copy()
+        sample["sampling_cell"] = f"{stratum}|{mask}"
+        sample["sampling_cell_population"] = len(frame)
+        sample["inclusion_probability"] = count / len(frame)
+        samples.append(sample.drop(columns="_priority"))
+    return (
+        pd.concat(samples, ignore_index=True).sort_values("EIN2").reset_index(drop=True)
+    )
+
+
+def _seeded_priority(seed: int, value: str) -> float:
+    digest = sha256(f"{seed}\0{value}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64
 
 
 def _strata(frame: pd.DataFrame) -> pd.Series:
@@ -265,7 +270,7 @@ def _write_artifacts(draw: pd.DataFrame, registry: PathRegistry) -> None:
             "preserving human labels."
         )
     if template_path.exists():
-        existing = pd.read_csv(template_path)
+        existing = pd.read_csv(template_path, dtype={"EIN2": "string"})
         _require_ein2_column(existing, template_path)
         expected = pd.DataFrame(
             {

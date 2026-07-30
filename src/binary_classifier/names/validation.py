@@ -78,6 +78,7 @@ def run_name_validation(
         "variants": variants,
         "limitations": _LIMITATIONS,
     }
+    report["bmf_only_gold"] = _bmf_only_gold_report(cfg, registry)
     external = _external_flag_report(cfg, registry, paired)
     if external is not None:
         report["external_flag_validation"] = external
@@ -85,6 +86,95 @@ def run_name_validation(
     registry.names_validation.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )
+
+
+def _bmf_only_gold_report(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> dict[str, Any]:
+    """Report completed BMF-only gold accuracy with sampling-cell weights."""
+    template = pd.read_csv(
+        registry.names_gold_coding_template, dtype={"EIN2": "string"}
+    )
+    manifest = pd.read_csv(registry.names_gold_manifest, dtype={"EIN2": "string"})
+    required_manifest = {
+        "EIN2",
+        "population",
+        "inclusion_probability",
+        "sampling_cell",
+    }
+    missing = sorted(required_manifest.difference(manifest.columns))
+    if missing:
+        raise ValueError(
+            "Names gold manifest is missing required columns: " + ", ".join(missing)
+        )
+    gold = template[["EIN2", "human_label"]].merge(
+        manifest[["EIN2", "population", "inclusion_probability", "sampling_cell"]],
+        on="EIN2",
+        how="inner",
+        validate="one_to_one",
+    )
+    if not gold["population"].eq("bmf_only").all():
+        raise ValueError(
+            "Names gold manifest must contain only BMF-only organizations."
+        )
+    gold["EIN2"] = _normalize_ein2(gold["EIN2"])
+    inclusion_probability = pd.to_numeric(
+        gold["inclusion_probability"], errors="coerce"
+    )
+    if (
+        inclusion_probability.isna().any()
+        or ~np.isfinite(inclusion_probability).all()
+        or ~(inclusion_probability.gt(0) & inclusion_probability.le(1)).all()
+    ):
+        raise ValueError(
+            "Names gold inclusion probabilities must be finite values in (0, 1]."
+        )
+    gold["inclusion_probability"] = inclusion_probability
+    scores = _read_parquet(registry.names_scores, _NAME_SCORE_COLUMNS)
+    scores["EIN2"] = _normalize_ein2(scores["EIN2"])
+    if scores.duplicated(["EIN2", "input_variant"]).any():
+        raise ValueError("Name scores must contain one row per EIN2 and input variant.")
+    gold_scores = gold.merge(scores, on="EIN2", how="inner", validate="one_to_many")
+    expected_pairs = {
+        (ein2, variant) for ein2 in gold["EIN2"] for variant in _INPUT_VARIANTS
+    }
+    observed_pairs = set(
+        zip(gold_scores["EIN2"], gold_scores["input_variant"], strict=True)
+    )
+    if observed_pairs != expected_pairs:
+        raise ValueError(
+            "Name scores must cover both variants for every BMF-only gold row."
+        )
+    variants: dict[str, Any] = {}
+    for variant, frame in gold_scores.groupby("input_variant", sort=True):
+        frame = frame.sort_values("EIN2").reset_index(drop=True)
+        y_true = frame["human_label"].astype(int).to_numpy()
+        prediction = (
+            frame["prob_raw"].astype(float).to_numpy()
+            >= float(cfg.names.diagnostic_threshold)
+        ).astype(int)
+        weights = 1 / frame["inclusion_probability"].astype(float).to_numpy()
+        variants[str(variant)] = {
+            "diagnostic_threshold": float(cfg.names.diagnostic_threshold),
+            "unweighted_metrics": metrics.compute_metric_bundle(
+                y_true,
+                prediction,
+                y_score=frame["prob_raw"].astype(float).to_numpy(),
+                seed=int(cfg.SEED),
+                n_resamples=int(cfg.evaluation.bootstrap_resamples),
+            ),
+            "design_weighted_accuracy": float(
+                np.average(prediction == y_true, weights=weights)
+            ),
+        }
+    return {
+        "target_population": "bmf_only",
+        "reference": "completed BMF-only names gold labels",
+        "design": "sampling-cell weighted stratified conflict-enriched sample",
+        "n_gold": len(gold),
+        "variants": variants,
+    }
 
 
 def _load_paired_frame(registry: PathRegistry) -> tuple[pd.DataFrame, dict[str, int]]:

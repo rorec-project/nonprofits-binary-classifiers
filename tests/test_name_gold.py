@@ -27,7 +27,7 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
     pd.DataFrame(
         [
             {
-                "EIN2": "X001",
+                "EIN2": "001",
                 "population": "bmf_only",
                 "name_raw": "Saint Mary Hospital",
                 "is_bmf_only": True,
@@ -151,10 +151,39 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
     )
 
     first_draw = manifest.copy()
+    draw_name_gold(tiny_registry.cfg, tiny_registry)
     tiny_registry.names_gold_manifest.unlink()
     tiny_registry.names_gold_coding_template.unlink()
     draw_name_gold(tiny_registry.cfg, tiny_registry)
     pd.testing.assert_frame_equal(first_draw, pd.read_csv(tiny_registry.names_gold_manifest))
+
+
+def test_draw_name_gold_rejects_missing_required_conflict_quota(tiny_registry) -> None:
+    """Every documented conflict category must be configured for oversampling."""
+    tiny_registry.cfg.names.gold_sample_size = 1
+    tiny_registry.cfg.names.gold_stratum_quotas = {
+        "ntee_x_only": 1,
+        "church_foundation_only": 0,
+        "both_external_flags": 0,
+        "neither_external_flag": 0,
+    }
+    tiny_registry.cfg.names.gold_conflict_quotas = {"saint_name": 0}
+    pd.DataFrame(
+        [
+            {
+                "EIN2": "001",
+                "population": "bmf_only",
+                "name_raw": "Saint Mary",
+                "is_bmf_only": True,
+                "is_manifest_contaminated": False,
+                "is_ntee_x": True,
+                "is_church_foundation": False,
+            }
+        ]
+    ).to_parquet(tiny_registry.names_bmf_only_frame, index=False)
+
+    with pytest.raises(ValueError, match="gold_conflict_quotas"):
+        draw_name_gold(tiny_registry.cfg, tiny_registry)
 
 
 def test_name_validation_requires_completed_name_gold_coding(tiny_registry) -> None:
