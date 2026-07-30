@@ -94,6 +94,7 @@ names:
   bmf_only_cleaned_filename: bmf_only_cleaned_names.parquet
   divergence_audit_filename: name_divergence_audit.json
   scores_filename: name_scores.parquet
+  validation_filename: name_validation.json
   expected_counts:
     panel_has_mission: 560354
     panel_name_only: 257623

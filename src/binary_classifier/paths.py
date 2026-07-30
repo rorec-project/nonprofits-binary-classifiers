@@ -130,6 +130,11 @@ class PathRegistry:
         return self.names_processed_dir / self.cfg.names.scores_filename
 
     @property
+    def names_validation(self) -> Path:
+        """Paired transfer-validation report for the names arm."""
+        return self.names_processed_dir / self.cfg.names.validation_filename
+
+    @property
     def gold_dir(self) -> Path:
         """Git-committed directory for human-coded gold artifacts."""
         return self.processed_dir / "gold"

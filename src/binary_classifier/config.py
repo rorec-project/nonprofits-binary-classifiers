@@ -412,6 +412,7 @@ class NamesConfig(BaseModel):
     bmf_only_cleaned_filename: str = "bmf_only_cleaned_names.parquet"
     divergence_audit_filename: str = "name_divergence_audit.json"
     scores_filename: str = "name_scores.parquet"
+    validation_filename: str = "name_validation.json"
     expected_counts: NamesExpectedCounts | None = None
 
 
