@@ -101,7 +101,7 @@ def run_inference(
     """
     registry.ensure_dirs()
     shard_size = _positive_int(cfg.inference.shard_size, "inference.shard_size")
-    batch_size = _positive_int(cfg.inference.batch_size, "inference.batch_size")
+    _positive_int(cfg.inference.batch_size, "inference.batch_size")
 
     logger.info("Loading full mission corpus for inference...")
     missions = _prepare_inference_frame(cfg, load_missions(cfg), limit=limit)
@@ -115,12 +115,7 @@ def run_inference(
     encoder_id = selected.get("encoder_id")
     device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
 
-    max_length = 512
-    if encoder_id:
-        for enc in cfg.training.encoders:
-            if enc.id == encoder_id:
-                max_length = enc.max_length
-                break
+    max_length = _max_length_for_encoder(cfg, encoder_id)
 
     scorer = (
         predictor
@@ -150,9 +145,7 @@ def run_inference(
         calibrator=calibrator,
         metadata=metadata,
         shard_size=shard_size,
-        batch_size=batch_size,
-        device=device,
-        precision=precision,
+        selected_model=selected,
     )
     merged = _merge_shards(shard_paths)
     _validate_ein2_completeness(missions["EIN2"], merged["EIN2"])
@@ -408,6 +401,14 @@ def _load_checkpoint_predictor(
     return _HFPredictor()
 
 
+def _max_length_for_encoder(cfg: BinaryClassifierConfig, encoder_id: str | None) -> int:
+    if encoder_id:
+        for enc in cfg.training.encoders:
+            if enc.id == encoder_id:
+                return enc.max_length
+    return 512
+
+
 def _process_shards(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -417,9 +418,7 @@ def _process_shards(
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
     shard_size: int,
-    batch_size: int,
-    device: Device,
-    precision: Precision,
+    selected_model: Mapping[str, Any],
 ) -> list[Path]:
     paths: list[Path] = []
     shards_dir = registry.predictions_dir / "shards"
@@ -441,9 +440,7 @@ def _process_shards(
             predictor=predictor,
             calibrator=calibrator,
             metadata=metadata,
-            batch_size=batch_size,
-            device=device,
-            precision=precision,
+            selected_model=selected_model,
         )
         predictions.to_parquet(shard_path, index=False)
         logger.info("Wrote inference shard %s (%d rows)", shard_path, len(predictions))
@@ -499,11 +496,8 @@ def _predict_shard(
     predictor: Any,
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
-    batch_size: int,
-    device: Device,
-    precision: Precision,
+    selected_model: Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
-    del cfg
     output = shard[["EIN2", "decision_source", "tier", "Q", "ntee_major_group"]].copy()
     output["prob_raw"] = np.nan
     output["prob_calibrated"] = np.nan
@@ -522,12 +516,11 @@ def _predict_shard(
     classifier_mask = ~rule_mask & ~abstain_mask
     if classifier_mask.any():
         texts = shard.loc[classifier_mask, "mission_text"].astype(str).tolist()
-        raw = _batched_positive_probabilities(
-            predictor,
+        raw = score_texts(
+            cfg,
+            selected_model or {},
             texts,
-            batch_size=batch_size,
-            device=device,
-            precision=precision,
+            predictor=predictor,
         )
         method = cast(CalibrationMethod, calibrator["method"])
         params = cast(Mapping[str, float], calibrator["params"])
@@ -567,6 +560,40 @@ def _predict_shard(
     for key, value in metadata.items():
         output[key] = value
     return output[_PREDICTION_COLUMNS].copy()
+
+
+def score_texts(
+    cfg: BinaryClassifierConfig,
+    selected_model: Mapping[str, Any],
+    texts: Sequence[str],
+    *,
+    predictor: Any | None = None,
+) -> np.ndarray:
+    """Score texts with the selected production checkpoint.
+
+    Resolves the configured runtime policy, loads the checkpoint unless a cached
+    predictor is provided, and returns validated positive-class probabilities in
+    the same order as ``texts``.
+    """
+    batch_size = _positive_int(cfg.inference.batch_size, "inference.batch_size")
+    encoder_id = str(selected_model.get("encoder_id") or "") or None
+    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
+    scorer = (
+        predictor
+        if predictor is not None
+        else _load_checkpoint_predictor(
+            selected_model,
+            device=device,
+            max_length=_max_length_for_encoder(cfg, encoder_id),
+        )
+    )
+    return _batched_positive_probabilities(
+        scorer,
+        texts,
+        batch_size=batch_size,
+        device=device,
+        precision=precision,
+    )
 
 
 def _batched_positive_probabilities(

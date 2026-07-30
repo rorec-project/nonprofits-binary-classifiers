@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 
 from binary_classifier.inference import predict as predict_mod
+from binary_classifier.inference import score_texts
 from binary_classifier.inference.predict import run_inference
 
 
@@ -50,6 +52,24 @@ def test_resolve_device_precision_encoder_override(tiny_config) -> None:
     finally:
         torch.cuda.is_available = original_cuda_available
         torch.cuda.is_bf16_supported = original_bf16_supported
+
+
+def test_score_texts_returns_ordered_positive_probabilities(tiny_config) -> None:
+    tiny_config.inference.device = "cpu"
+    tiny_config.inference.batch_size = 2
+    texts = ["first", "second", "third"]
+
+    scores = score_texts(
+        tiny_config,
+        {"encoder_id": "stub-model"},
+        texts,
+        predictor=_TextScorePredictor({"first": 0.1, "second": 0.8, "third": 0.3}),
+    )
+
+    assert len(scores) == len(texts)
+    np.testing.assert_allclose(scores, [0.1, 0.8, 0.3])
+    assert np.isfinite(scores).all()
+    assert ((scores >= 0.0) & (scores <= 1.0)).all()
 
 
 def test_run_inference_writes_schema_rules_monitor_and_metadata(
@@ -124,9 +144,6 @@ def test_predict_shard_release_labels_use_thresholds_for_classifier_rows(
         predictor=_FixedPredictor([0.65, 0.85]),
         calibrator=_calibrator_payload(),
         metadata=_metadata_payload(tiny_config),
-        batch_size=2,
-        device="cpu",
-        precision="fp32",
     )
 
     assert predictions["pred_label"].tolist() == [1, 1]
@@ -150,9 +167,6 @@ def test_predict_shard_release_labels_equal_pred_label_for_rule_rows(
         predictor=_FixedPredictor([]),
         calibrator=_calibrator_payload(),
         metadata=_metadata_payload(tiny_config),
-        batch_size=2,
-        device="cpu",
-        precision="fp32",
     )
 
     assert predictions["pred_label"].tolist() == [1, 0, 0]
@@ -583,6 +597,17 @@ class _FixedPredictor:
     def predict_proba(self, texts):
         assert len(texts) == len(self.scores)
         return [[1.0 - score, score] for score in self.scores]
+
+
+class _TextScorePredictor:
+    def __init__(self, scores_by_text) -> None:
+        self.scores_by_text = scores_by_text
+
+    def predict_proba(self, texts):
+        return [
+            [1.0 - self.scores_by_text[text], self.scores_by_text[text]]
+            for text in texts
+        ]
 
 
 def _classifier_row(ein2: str, text: str) -> dict:
