@@ -11,6 +11,7 @@ import pandas as pd
 from binary_classifier import metrics
 from binary_classifier.evaluation.calibration import calibration_metrics
 from binary_classifier.names.gold import require_name_gold_coding_complete
+from binary_classifier.names.identifiers import normalize_ein2
 
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig
@@ -118,7 +119,7 @@ def _bmf_only_gold_report(
         raise ValueError(
             "Names gold manifest must contain only BMF-only organizations."
         )
-    gold["EIN2"] = _normalize_ein2(gold["EIN2"])
+    gold["EIN2"] = normalize_ein2(gold["EIN2"])
     inclusion_probability = pd.to_numeric(
         gold["inclusion_probability"], errors="coerce"
     )
@@ -132,7 +133,7 @@ def _bmf_only_gold_report(
         )
     gold["inclusion_probability"] = inclusion_probability
     scores = _read_parquet(registry.names_scores, _NAME_SCORE_COLUMNS)
-    scores["EIN2"] = _normalize_ein2(scores["EIN2"])
+    scores["EIN2"] = normalize_ein2(scores["EIN2"])
     if scores.duplicated(["EIN2", "input_variant"]).any():
         raise ValueError("Name scores must contain one row per EIN2 and input variant.")
     gold_scores = gold.merge(scores, on="EIN2", how="inner", validate="one_to_many")
@@ -536,7 +537,7 @@ def _assert_unique(frame: pd.DataFrame, columns: list[str], description: str) ->
 
 
 def _normalize_ein2(series: pd.Series) -> pd.Series:
-    normalized = series.astype("string").str.strip()
+    normalized = normalize_ein2(series)
     if normalized.isna().any() or normalized.eq("").any():
         raise ValueError("Paired validation inputs contain missing EIN2 values.")
     return normalized

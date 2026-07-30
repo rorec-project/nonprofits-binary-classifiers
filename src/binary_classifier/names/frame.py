@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from binary_classifier.names.identifiers import normalize_ein2
+
 if TYPE_CHECKING:
     from binary_classifier.config import BinaryClassifierConfig, NamesExpectedCounts
     from binary_classifier.paths import PathRegistry
@@ -118,7 +120,7 @@ def _load_missions(registry: "PathRegistry") -> pd.DataFrame:
     missions = pd.read_parquet(registry.missions_parquet)
     _require_columns(missions, _MISSIONS_REQUIRED_COLUMNS, registry.missions_parquet)
     missions = missions[["EIN2", "LONGEST_MISSION"]].copy()
-    missions["EIN2"] = _normalize_ein2(missions["EIN2"])
+    missions["EIN2"] = normalize_ein2(missions["EIN2"])
     _assert_unique_ein2(missions, "missions")
     missions["has_mission"] = _has_text(missions["LONGEST_MISSION"])
     return missions[["EIN2", "has_mission"]]
@@ -128,7 +130,7 @@ def _load_bmf(registry: "PathRegistry") -> pd.DataFrame:
     bmf = pd.read_parquet(registry.bmf_parquet)
     _require_columns(bmf, _BMF_REQUIRED_COLUMNS, registry.bmf_parquet)
     bmf = bmf.copy()
-    bmf["EIN2"] = _normalize_ein2(bmf["EIN2"])
+    bmf["EIN2"] = normalize_ein2(bmf["EIN2"])
     _assert_unique_ein2(bmf, "BMF")
     ntee_major_group = bmf["NTEE_IRS"].astype("string").str.strip().str.upper().str[0]
     bmf["ntee_major_group"] = ntee_major_group.where(
@@ -253,7 +255,7 @@ def _panel_raw_name_column(panel: pd.DataFrame) -> str:
 
 def _collapse_panel(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
-    frame["EIN2"] = _normalize_ein2(frame["EIN2"])
+    frame["EIN2"] = normalize_ein2(frame["EIN2"])
     _assert_nonempty_ein2(frame, "panel")
     varying = frame.groupby("EIN2", dropna=False).nunique(dropna=False)
     conflicting = varying.gt(1).any(axis=1)
@@ -270,7 +272,7 @@ def _load_manifest_ein2s(registry: "PathRegistry") -> set[str]:
         if not path.exists():
             continue
         manifest = pd.read_csv(path, usecols=["EIN2"])
-        manifests.append(_normalize_ein2(manifest["EIN2"]))
+        manifests.append(normalize_ein2(manifest["EIN2"]))
     if not manifests:
         return set()
     return set(pd.concat(manifests, ignore_index=True).dropna())
@@ -308,10 +310,6 @@ def _require_columns(frame: pd.DataFrame, required: set[str], source: object) ->
     missing = sorted(required.difference(frame.columns))
     if missing:
         raise ValueError(f"{source} is missing required columns: {', '.join(missing)}")
-
-
-def _normalize_ein2(values: pd.Series) -> pd.Series:
-    return values.astype("string").str.strip()
 
 
 def _has_text(values: pd.Series) -> pd.Series:

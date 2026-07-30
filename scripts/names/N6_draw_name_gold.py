@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
-    """Run stage N6."""
+    """Run N6 without consuming model outputs, enabling parallel human coding.
+
+    The stage writes the BMF-only coding template and preserves any existing human
+    labels when a re-run reproduces the same seeded draw.
+    """
     parser = argparse.ArgumentParser(description="Draw BMF-only names gold sample.")
     parser.add_argument(
         "--config", type=Path, default=Path("config/religious_missions.yaml")

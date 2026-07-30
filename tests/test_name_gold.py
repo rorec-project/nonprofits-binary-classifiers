@@ -1,5 +1,7 @@
 """Tests for the names-arm BMF-only human-gold stage."""
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -9,8 +11,10 @@ from binary_classifier.names.validation import run_name_validation
 
 def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
     tiny_registry,
+    caplog,
 ) -> None:
     """The public stage seam emits the configured BMF-only coding sample."""
+    caplog.set_level(logging.INFO, logger="binary_classifier.names.gold")
     tiny_registry.cfg.names.gold_sample_size = 8
     tiny_registry.cfg.names.gold_stratum_quotas = {
         "ntee_x_only": 2,
@@ -65,7 +69,7 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
             {
                 "EIN2": "B001",
                 "population": "bmf_only",
-                "name_raw": "Fundacion Esperanza",
+                "name_raw": "Societe Culturelle",
                 "is_bmf_only": True,
                 "is_manifest_contaminated": False,
                 "is_ntee_x": True,
@@ -83,7 +87,7 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
             {
                 "EIN2": "N001",
                 "population": "bmf_only",
-                "name_raw": "Neighborhood Service",
+                "name_raw": "Saint Thomas Community Hospital",
                 "is_bmf_only": True,
                 "is_manifest_contaminated": False,
                 "is_ntee_x": False,
@@ -132,6 +136,11 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
     }.issubset(
         set("|".join(manifest["conflict_categories"].dropna()).split("|"))
     )
+    saint_conflicts = manifest[
+        manifest["conflict_categories"].str.contains("saint_name")
+    ]
+    assert not saint_conflicts["is_ntee_x"].any()
+    assert not saint_conflicts["is_church_foundation"].any()
     assert all(
         realized >= tiny_registry.cfg.names.gold_conflict_quotas[category]
         for category, realized in {
@@ -149,6 +158,8 @@ def test_draw_name_gold_writes_reproducible_stratified_bmf_only_template(
     assert "saint name alone is not religious" in (
         tiny_registry.names_gold_coding_instructions.read_text()
     )
+    assert "conflicts=" in caplog.text
+    assert "non_english_name" in caplog.text
 
     first_draw = manifest.copy()
     draw_name_gold(tiny_registry.cfg, tiny_registry)

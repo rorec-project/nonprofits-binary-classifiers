@@ -1,4 +1,10 @@
-"""Draw and gate the BMF-only human-coded names gold sample."""
+"""Draw and gate the BMF-only human-coded names gold sample.
+
+The draw deliberately excludes panel organizations and manifest-contaminated rows
+so human labels estimate the names arm's target population without reusing mission
+training or evaluation records. It preserves the mission-label construct while
+oversampling documented ambiguity cases for coder review.
+"""
 
 from __future__ import annotations
 
@@ -33,8 +39,8 @@ _STRATA = {
     "both_external_flags",
     "neither_external_flag",
 }
+_SAINT_NAME_PATTERN = re.compile(r"\b(?:st\.?|saint)\s+\w+", re.IGNORECASE)
 _CONFLICT_PATTERNS = {
-    "saint_name": re.compile(r"\b(?:st\.?|saint)\s+\w+", re.IGNORECASE),
     "faith_heritage": re.compile(
         r"\b(?:faith|grace|trinity|covenant|heritage)\b", re.IGNORECASE
     ),
@@ -44,8 +50,9 @@ _CONFLICT_PATTERNS = {
         re.IGNORECASE,
     ),
     "non_english_name": re.compile(
-        r"\b(?:amigos|asociacion|centro|comunidad|escuela|fundacion|iglesia|"
-        r"sociedad)\b|[^\x00-\x7f]",
+        r"\b(?:amigos|asociacion|associazione|associacao|centro|comunidad|"
+        r"cultura|culturelle|ecole|escuela|fondation|fundacion|gemeinde|iglesia|"
+        r"societe|sociedad|verein)\b|[^\x00-\x7f]",
         re.IGNORECASE,
     ),
 }
@@ -56,11 +63,16 @@ _CODING_RUBRIC = (
     "purpose is not religious. Enter only 0 or 1 in human_label."
 )
 _CODING_TEMPLATE_COLUMNS = ["EIN2", "split", "text", "human_label"]
-_CONFLICT_CATEGORIES = frozenset(_CONFLICT_PATTERNS)
+_CONFLICT_CATEGORIES = frozenset({"saint_name", *_CONFLICT_PATTERNS})
 
 
 def draw_name_gold(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
-    """Draw a seeded, stratified BMF-only names sample and coding template."""
+    """Draw a seeded, stratified BMF-only names sample and coding template.
+
+    The BMF-only source isolates the coverage population absent from the panel.
+    External flags allocate adequate representation without changing the unchanged
+    mission-purpose coding rubric written with the human-label template.
+    """
     frame = pd.read_parquet(registry.names_bmf_only_frame)
     _require_columns(frame)
     quotas = _validate_quotas(cfg)
@@ -72,18 +84,20 @@ def draw_name_gold(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
     if eligible["EIN2"].duplicated().any():
         raise ValueError("BMF-only gold frame must contain one row per EIN2.")
     eligible["gold_stratum"] = _strata(eligible)
-    eligible["conflict_categories"] = eligible["name_raw"].map(_conflict_categories)
+    eligible["conflict_categories"] = eligible.apply(_conflict_categories, axis=1)
     seed = int(cfg.names.gold_seed if cfg.names.gold_seed is not None else cfg.SEED)
     draw = _sample(eligible, quotas, cfg.names.gold_conflict_quotas, seed)
+    conflict_counts = _conflict_counts(draw)
     draw["conflict_categories"] = draw["conflict_categories"].map(
         lambda categories: "|".join(categories) if categories else "none"
     )
     _write_artifacts(draw, registry)
     logger.info(
-        "Drew %d BMF-only names gold rows (seed=%d): %s",
+        "Drew %d BMF-only names gold rows (seed=%d): strata=%s conflicts=%s",
         len(draw),
         seed,
         draw["gold_stratum"].value_counts().sort_index().to_dict(),
+        conflict_counts,
     )
 
 
@@ -154,7 +168,12 @@ def _sample(
     conflict_quotas: dict[str, int],
     seed: int,
 ) -> pd.DataFrame:
-    """Allocate stratum-by-conflict cells jointly before sampling within cells."""
+    """Allocate and sample reproducible BMF-only stratum/conflict cells jointly.
+
+    Joint allocation keeps configured external-flag representation while ensuring
+    ambiguity cases receive their requested oversampling. Seeded priorities make
+    repeated draws stable without changing the probability recorded per cell.
+    """
     eligible = eligible.copy()
     eligible["conflict_mask"] = eligible["conflict_categories"].map(
         lambda categories: "|".join(categories) if categories else "none"
@@ -238,13 +257,38 @@ def _strata(frame: pd.DataFrame) -> pd.Series:
     )
 
 
-def _conflict_categories(name: object) -> list[str]:
-    text = str(name)
-    return [
+def _conflict_categories(row: pd.Series) -> list[str]:
+    """Return review-enrichment cues available before human coding.
+
+    Saint names enter the conflict quota only when both external auspice flags are
+    absent. This is a pre-coding secular proxy, not a claim about the gold label.
+    Non-English cues are multilingual lexical indicators rather than language ID.
+    """
+    text = str(row["name_raw"])
+    categories = [
         category
         for category, pattern in _CONFLICT_PATTERNS.items()
         if pattern.search(text) is not None
     ]
+    if (
+        _SAINT_NAME_PATTERN.search(text) is not None
+        and not bool(row["is_ntee_x"])
+        and not bool(row["is_church_foundation"])
+    ):
+        categories.insert(0, "saint_name")
+    return categories
+
+
+def _conflict_counts(draw: pd.DataFrame) -> dict[str, int]:
+    """Count realized quota memberships, allowing rows in several categories."""
+    return {
+        category: int(
+            draw["conflict_categories"]
+            .map(lambda categories: category in categories)
+            .sum()
+        )
+        for category in sorted(_CONFLICT_CATEGORIES)
+    }
 
 
 def _require_columns(frame: pd.DataFrame) -> None:
