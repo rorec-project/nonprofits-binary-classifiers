@@ -90,6 +90,13 @@ data:
 names:
   panel_final_filename: panel_final.parquet
   panel_filled_gaps_filename: panel_filled_gaps.parquet
+  expected_counts:
+    panel_has_mission: 560354
+    panel_name_only: 257623
+    panel_no_name_no_mission: 14707
+    panel_name_only_flagged: 26759
+    bmf_only: 2004353
+    bmf_only_flagged: 396379
 
 # Raw LLM-vs-human validation agreement is logged for continuity, but the
 # freeze gate now uses chance-corrected κ plus the minority-F1 CI floor.

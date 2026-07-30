@@ -392,11 +392,23 @@ class DataConfig(BaseModel):
     allow_synthetic: bool = False
 
 
+class NamesExpectedCounts(BaseModel):
+    """Snapshot counts that reconcile the names-arm input populations."""
+
+    panel_has_mission: int
+    panel_name_only: int
+    panel_no_name_no_mission: int
+    panel_name_only_flagged: int
+    bmf_only: int
+    bmf_only_flagged: int
+
+
 class NamesConfig(BaseModel):
-    """Names-arm upstream filenames and its isolated artifact namespace."""
+    """Names-arm upstream filenames and optional snapshot reconciliation."""
 
     panel_final_filename: str = "panel_final.parquet"
     panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
+    expected_counts: NamesExpectedCounts | None = None
 
 
 class QCConfig(BaseModel):
