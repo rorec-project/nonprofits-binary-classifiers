@@ -4,7 +4,7 @@ These constructed strings diagnose model response patterns; they are not a
 representative evaluation set and must never be used for accuracy claims.
 """
 
-PROBE_SET_VERSION = "v1"
+PROBE_SET_VERSION = "v2"
 
 PROBES = (
     ("tradition_baptist", "tradition_token", "First Baptist Church", "baptist_pair"),
@@ -19,13 +19,13 @@ PROBES = (
     (
         "secular_jewish",
         "matched_control",
-        "Beth Shalom Community Center",
+        "Beth Shalom Center",
         "synagogue_pair",
     ),
     ("muslim", "tradition_token", "Al Noor Mosque", "mosque_pair"),
-    ("secular_muslim", "matched_control", "Al Noor Community Center", "mosque_pair"),
-    ("hindu", "tradition_token", "Lakshmi Hindu Temple", "temple_pair"),
-    ("secular_hindu", "matched_control", "Lakshmi Cultural Center", "temple_pair"),
-    ("buddhist", "tradition_token", "Lotus Buddhist Temple", "buddhist_pair"),
-    ("secular_buddhist", "matched_control", "Lotus Cultural Center", "buddhist_pair"),
+    ("secular_muslim", "matched_control", "Al Noor Center", "mosque_pair"),
+    ("hindu", "tradition_token", "Lakshmi Hindu Center", "hindu_pair"),
+    ("secular_hindu", "matched_control", "Lakshmi Civic Center", "hindu_pair"),
+    ("buddhist", "tradition_token", "Lotus Buddhist Center", "buddhist_pair"),
+    ("secular_buddhist", "matched_control", "Lotus Community Center", "buddhist_pair"),
 )

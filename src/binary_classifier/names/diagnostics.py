@@ -226,10 +226,10 @@ def _build_dba_case_study(
         "grain": "EIN2 using BEST_NAME_CASED and BEST_DBA_CASED",
         "dba_having_organizations": len(candidates),
         "dba_adds_religious_token_count": int(
-            cases["token_direction"].eq("dba_adds_religious_token").sum()
+            cases["dba_only_religious_tokens"].map(bool).sum()
         ),
         "legal_name_adds_religious_token_count": int(
-            cases["token_direction"].eq("legal_name_adds_religious_token").sum()
+            cases["legal_name_only_religious_tokens"].map(bool).sum()
         ),
         "model_id": model_id,
         "checkpoint_sha256": checkpoint_sha256,
@@ -245,6 +245,8 @@ def _religious_tokens(text: str) -> list[str]:
 
 
 def _token_direction(row: pd.Series) -> str:
+    if row["dba_only_religious_tokens"] and row["legal_name_only_religious_tokens"]:
+        return "both_names_add_religious_token"
     if row["dba_only_religious_tokens"]:
         return "dba_adds_religious_token"
     return "legal_name_adds_religious_token"

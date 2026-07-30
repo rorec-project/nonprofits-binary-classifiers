@@ -41,6 +41,14 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
                 "has_dba": False,
                 "is_manifest_contaminated": False,
             },
+            {
+                "EIN2": "P004",
+                "population": "panel_501c3",
+                "name_cased": "First Baptist Church",
+                "dba_cased": "Grace Bible Church",
+                "has_dba": True,
+                "is_manifest_contaminated": False,
+            },
         ],
     ).to_parquet(tiny_registry.names_panel_cleaned, index=False)
     monkeypatch.setattr(
@@ -62,7 +70,7 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
         "faith_heritage",
         "matched_control",
     }
-    assert probes["probe_set_version"] == "v1"
+    assert probes["probe_set_version"] == "v2"
     assert {record["probe_id"] for record in probes["records"]} >= {
         "tradition_baptist",
         "control_community",
@@ -79,21 +87,24 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
     ) == "baptist_pair"
     assert all(record["prob_raw"] in {0.2, 0.8} for record in probes["records"])
     assert all(record["model_id"] == "stub-model" for record in probes["records"])
-    assert set(cases["EIN2"]) == {"P001", "P002"}
+    assert set(cases["EIN2"]) == {"P001", "P002", "P004"}
     assert cases.set_index("EIN2")["token_direction"].to_dict() == {
         "P001": "dba_adds_religious_token",
         "P002": "legal_name_adds_religious_token",
+        "P004": "both_names_add_religious_token",
     }
     assert cases.set_index("EIN2")["legal_name_prob_raw"].to_dict() == {
         "P001": 0.2,
         "P002": 0.8,
+        "P004": 0.8,
     }
     assert cases.set_index("EIN2")["dba_name_prob_raw"].to_dict() == {
         "P001": 0.8,
         "P002": 0.2,
+        "P004": 0.8,
     }
-    assert report["dba_adds_religious_token_count"] == 1
-    assert report["legal_name_adds_religious_token_count"] == 1
+    assert report["dba_adds_religious_token_count"] == 2
+    assert report["legal_name_adds_religious_token_count"] == 2
     assert report["diagnostic_only"] is True
     assert report["production_input_variant"] is False
 
