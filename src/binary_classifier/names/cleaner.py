@@ -27,14 +27,23 @@ _WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 
 
 def normalize_name(raw: object, *, strip_suffix: bool = True) -> str:
-    """Repair and truecase one organization name, optionally stripping its suffix."""
+    """Repair and truecase one raw organization name.
+
+    Legal suffix removal is optional so transfer scoring can compare its primary
+    suffix-stripped input with a suffix-retaining ablation under identical encoding
+    repair and casing rules.
+    """
     if raw is None or pd.isna(raw):
         return ""
+
+    # Repair source encoding before suffix and casing transformations.
     value = ftfy.fix_text(str(raw)).strip()
     if not value:
         return ""
     if strip_suffix:
         value = basename(value).strip(" ,.;:")
+
+    # Preserve known denominational acronyms while truecasing BMF uppercase names.
     words = value.split()
     return " ".join(
         word.upper()
@@ -45,12 +54,19 @@ def normalize_name(raw: object, *, strip_suffix: bool = True) -> str:
 
 
 def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None:
-    """Clean both name populations and fail on dangerous panel divergence."""
+    """Clean both populations and gate on religious-token divergence from upstream.
+
+    Applying one transformation from each population's raw name avoids confounding
+    population comparisons with preprocessing differences. The panel audit blocks
+    only when this cleaner removes a religious token retained upstream.
+    """
+    # Normalize both populations with the identical raw-name transformation.
     panel = pd.read_parquet(registry.names_panel_frame).copy()
     bmf_only = pd.read_parquet(registry.names_bmf_only_frame).copy()
     panel["name_cleaned"] = panel["name_raw"].map(normalize_name)
     bmf_only["name_cleaned"] = bmf_only["name_raw"].map(normalize_name)
 
+    # Persist the audit before failing so a dangerous divergence is diagnosable.
     audit = _audit_panel(panel)
     registry.ensure_dirs()
     panel.to_parquet(registry.names_panel_cleaned, index=False)
@@ -70,6 +86,7 @@ def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None
 
 
 def _audit_panel(panel: pd.DataFrame) -> dict[str, object]:
+    """Compare panel cleaning with upstream output and identify blocking token loss."""
     blocking: list[str] = []
     nonblocking: list[dict[str, str]] = []
     for _, row in panel.iterrows():
@@ -108,12 +125,14 @@ def _audit_panel(panel: pd.DataFrame) -> dict[str, object]:
 
 
 def _tokens(value: object) -> list[str]:
+    """Extract comparable word tokens from a raw or cleaned name value."""
     if value is None or pd.isna(value):
         return []
     return _WORD_RE.findall(str(value))
 
 
 def _religious_tokens(tokens: list[str]) -> set[str]:
+    """Return tokens belonging to the shared religious lexicon."""
     lexicon_words = {
         word.lower() for entry in RELIGIOUS_LEXICON for word in entry.split()
     }

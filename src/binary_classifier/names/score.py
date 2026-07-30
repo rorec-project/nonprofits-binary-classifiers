@@ -29,6 +29,9 @@ _OUTPUT_COLUMNS = [
     "lexicon_rule_label",
     "calibration_status",
     "thresholds_transferable",
+    "threshold",
+    "threshold_maxf1",
+    "threshold_baserate",
     "model_id",
     "checkpoint_sha256",
     "inference_date",
@@ -46,18 +49,25 @@ def score_names(
 
     The primary suffix-stripped input and suffix-retaining ablation share the same
     encoding repair and truecasing. Mission-derived calibration and thresholds are
-    intentionally not applied because they do not transfer across text fields.
+    intentionally not applied because they do not transfer across text fields. The
+    mission cut points remain in the artifact as explicitly non-transferable
+    provenance, not as name-classification decisions.
     """
+    # Load both populations before scoring so every reachable EIN2 receives both variants.
     panel = _load_cleaned_frame(registry.names_panel_cleaned)
     bmf_only = _load_cleaned_frame(registry.names_bmf_only_cleaned)
     names = pd.concat([panel, bmf_only], ignore_index=True)
     _assert_unique_ein2(names)
 
+    # Preserve mission operating points for auditability without applying them to names.
+    thresholds = _load_mission_thresholds(registry)
     selected = load_selected_model(registry, require_checkpoint=predictor is None)
+
     records = _score_variants(
         cfg,
         names,
         selected,
+        thresholds=thresholds,
         predictor=predictor,
         predictor_cache={},
     )
@@ -85,11 +95,45 @@ def _assert_unique_ein2(frame: pd.DataFrame) -> None:
         )
 
 
+def _load_mission_thresholds(registry: PathRegistry) -> dict[str, float]:
+    """Load mission cut points retained as non-transferable score metadata."""
+    calibrator_path = registry.calibrator_path
+    if not calibrator_path.exists():
+        raise RuntimeError(
+            f"Calibrator artifact not found at {calibrator_path}. Run stage 07 first.",
+        )
+    calibrator = json.loads(calibrator_path.read_text())
+    if not isinstance(calibrator, dict):
+        raise ValueError(f"{calibrator_path} must be a JSON object.")
+
+    base_rate_path = registry.base_rate_precision
+    if not base_rate_path.exists():
+        raise RuntimeError(
+            f"Base-rate precision artifact not found at {base_rate_path}. "
+            "Run stage 07 first.",
+        )
+    base_rate = json.loads(base_rate_path.read_text())
+    if not isinstance(base_rate, dict):
+        raise ValueError(f"{base_rate_path} must be a JSON object.")
+
+    try:
+        return {
+            "threshold": float(calibrator["threshold"]),
+            "threshold_maxf1": float(calibrator["max_f1_threshold"]),
+            "threshold_baserate": float(base_rate["threshold"]),
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Mission threshold artifacts must contain numeric threshold values.",
+        ) from exc
+
+
 def _score_variants(
     cfg: BinaryClassifierConfig,
     names: pd.DataFrame,
     selected: dict[str, Any],
     *,
+    thresholds: dict[str, float],
     predictor: Any | None,
     predictor_cache: dict[str, Any],
 ) -> pd.DataFrame:
@@ -101,7 +145,7 @@ def _score_variants(
     }
     timestamp = datetime.now(UTC).isoformat()
     config_hash = _config_hash(cfg)
-    model_id, checkpoint_sha256 = _provenance(selected, predictor)
+    model_id, checkpoint_sha256 = _extract_model_provenance(selected, predictor)
     frames: list[pd.DataFrame] = []
     for variant, texts in variants.items():
         frame = names[["EIN2", "population"]].copy()
@@ -117,6 +161,8 @@ def _score_variants(
         frame["lexicon_rule_label"] = texts.map(apply_rule_label)
         frame["calibration_status"] = "mission_calibration_invalid"
         frame["thresholds_transferable"] = False
+        for column, value in thresholds.items():
+            frame[column] = value
         frame["model_id"] = model_id
         frame["checkpoint_sha256"] = checkpoint_sha256
         frame["inference_date"] = timestamp
@@ -125,7 +171,7 @@ def _score_variants(
     return pd.concat(frames, ignore_index=True)[_OUTPUT_COLUMNS]
 
 
-def _provenance(
+def _extract_model_provenance(
     selected: dict[str, Any],
     predictor: Any | None,
 ) -> tuple[str, str]:

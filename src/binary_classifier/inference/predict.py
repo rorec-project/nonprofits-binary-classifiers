@@ -317,6 +317,22 @@ def load_selected_model(
     *,
     require_checkpoint: bool,
 ) -> dict[str, Any]:
+    """Load selected-model metadata and optionally verify its checkpoint bytes.
+
+    Args:
+        registry: Path registry exposing the reviewed selected-model artifact.
+        require_checkpoint: Whether the checkpoint path and SHA-256 must be present
+            and verified. Injected-predictor callers can load metadata only.
+
+    Returns:
+        Selected-model metadata, with ``checkpoint_path`` when verification is
+        required.
+
+    Raises:
+        RuntimeError: If required model metadata or checkpoint bytes are missing.
+        ValueError: If the selected-model artifact is malformed.
+
+    """
     path = registry.selected_model
     if not path.exists():
         if require_checkpoint:
