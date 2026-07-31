@@ -66,6 +66,7 @@ _CODING_TEMPLATE_COLUMNS = ["EIN2", "split", "text", "human_label"]
 _CONFLICT_CATEGORIES = frozenset({"saint_name", *_CONFLICT_PATTERNS})
 
 
+# ── Gold draw and human-label gate ────────────────────────────────────────────
 def draw_name_gold(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
     """Draw a seeded, stratified BMF-only names sample and coding template.
 
@@ -76,6 +77,7 @@ def draw_name_gold(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
     frame = pd.read_parquet(registry.names_bmf_only_frame)
     _require_columns(frame)
     quotas = _validate_quotas(cfg)
+    # Keep the draw on the target BMF-only population and outside mission manifests.
     eligible = frame.loc[
         frame["is_bmf_only"].astype(bool)
         & frame["population"].eq("bmf_only")
@@ -147,6 +149,7 @@ def require_name_gold_coding_complete(registry: PathRegistry) -> None:
         raise ValueError("Names gold coding instructions are missing or altered.")
 
 
+# ── Quota validation and seeded joint allocation ──────────────────────────────
 def _validate_quotas(cfg: BinaryClassifierConfig) -> dict[str, int]:
     quotas = cfg.names.gold_stratum_quotas
     if set(quotas) != _STRATA or any(count < 0 for count in quotas.values()):
@@ -243,6 +246,7 @@ def _seeded_priority(seed: int, value: str) -> float:
     return int.from_bytes(digest[:8], "big") / 2**64
 
 
+# ── Conflict enrichment diagnostics ───────────────────────────────────────────
 def _strata(frame: pd.DataFrame) -> pd.Series:
     ntee = frame["is_ntee_x"].astype(bool)
     church = frame["is_church_foundation"].astype(bool)
@@ -291,6 +295,7 @@ def _conflict_counts(draw: pd.DataFrame) -> dict[str, int]:
     }
 
 
+# ── Artifact validation and persistence ───────────────────────────────────────
 def _require_columns(frame: pd.DataFrame) -> None:
     missing = sorted(_REQUIRED_COLUMNS.difference(frame.columns))
     if missing:

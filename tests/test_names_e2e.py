@@ -13,10 +13,12 @@ from binary_classifier.config import NamesExpectedCounts
 from binary_classifier.names import (
     build_name_frame,
     draw_name_gold,
+    run_name_diagnostics,
     run_name_validation,
     score_names,
 )
 from binary_classifier.names.cleaner import clean_names
+from binary_classifier.names.probes import PROBES, PROBE_SET_VERSION
 
 
 def test_names_chain_writes_isolated_artifacts_and_preserves_missions(
@@ -24,7 +26,7 @@ def test_names_chain_writes_isolated_artifacts_and_preserves_missions(
     tiny_config,
     tiny_registry,
 ) -> None:
-    """Run N1, N2, N3, N6, and N4 without touching missions outputs."""
+    """Run N1-N6 names stages without touching missions outputs."""
     # ── Synthetic isolated fixture ──────────────────────────────────────────
     # Seed only the names inputs and the read-only mission artifacts N3/N4 need.
     _configure_tiny_name_gold(tiny_config)
@@ -75,6 +77,11 @@ def test_names_chain_writes_isolated_artifacts_and_preserves_missions(
         build_name_frame(tiny_config, tiny_registry)
         clean_names(tiny_config, tiny_registry)
         score_names(tiny_config, tiny_registry, predictor=_TextPredictor())
+        run_name_diagnostics(
+            tiny_config,
+            tiny_registry,
+            predictor=_TextPredictor(),
+        )
         draw_name_gold(tiny_config, tiny_registry)
 
         name_gold = pd.read_csv(tiny_registry.names_gold_coding_template)
@@ -135,20 +142,26 @@ def _write_name_inputs(registry) -> None:
             {
                 "EIN2": "P001",
                 "COMMON_LEVEL1": "501C3 CHARITY",
-                "F9_00_ORG_NAME_L1": "FIRST BAPTIST CHURCH, INC.",
-                "BEST_NAME_CASED": "First Baptist Church",
+                "F9_00_ORG_NAME_L1": "HERITAGE ACADEMY, INC.",
+                "BEST_NAME_CASED": "Heritage Academy",
+                "BEST_DBA_CASED": "Grace Bible Church",
+                "HAS_DBA": True,
             },
             {
                 "EIN2": "P002",
                 "COMMON_LEVEL1": "501C3 CHARITY",
-                "F9_00_ORG_NAME_L1": "COMMUNITY FOOD BANK LLC",
-                "BEST_NAME_CASED": "Community Food Bank",
+                "F9_00_ORG_NAME_L1": "COMMUNITY CHURCH FOOD BANK LLC",
+                "BEST_NAME_CASED": "Community Church Food Bank",
+                "BEST_DBA_CASED": "Community Food Bank",
+                "HAS_DBA": True,
             },
             {
                 "EIN2": "P003",
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "NAME ONLY OUTREACH INC.",
                 "BEST_NAME_CASED": "Name Only Outreach",
+                "BEST_DBA_CASED": None,
+                "HAS_DBA": False,
             },
         ]
     ).to_parquet(registry.panel_final_parquet, index=False)
@@ -156,8 +169,8 @@ def _write_name_inputs(registry) -> None:
         {
             "EIN2": ["P001", "P002", "P003"],
             "BEST_NAME_BARE_CASED": [
-                "First Baptist Church",
-                "Community Food Bank",
+                "Heritage Academy",
+                "Community Church Food Bank",
                 "Name Only Outreach",
             ],
         }
@@ -236,6 +249,9 @@ def _assert_name_artifacts(registry) -> None:
     gold_manifest = pd.read_csv(registry.names_gold_manifest)
     name_gold = pd.read_csv(registry.names_gold_coding_template)
     audit = json.loads(registry.names_divergence_audit.read_text())
+    probes = json.loads(registry.names_probe_diagnostics.read_text())
+    dba_cases = pd.read_parquet(registry.names_dba_case_study)
+    dba_report = json.loads(registry.names_dba_case_study_report.read_text())
     validation = json.loads(registry.names_validation.read_text())
 
     assert set(panel_frame["EIN2"]) == {"P001", "P002", "P003"}
@@ -265,6 +281,48 @@ def _assert_name_artifacts(registry) -> None:
     assert name_gold["human_label"].isin([0, 1]).all()
     assert audit["panel_rows_audited"] == len(panel_frame)
     assert {"blocking_divergences", "nonblocking_divergences"}.issubset(audit)
+    assert probes["diagnostic_only"] is True
+    assert probes["interpretation"] == "diagnosis_not_accuracy"
+    assert probes["probe_set_version"] == PROBE_SET_VERSION
+    assert len(probes["records"]) == len(PROBES)
+    required_probe_fields = {
+        "probe_id",
+        "category",
+        "pair_id",
+        "text_raw",
+        "text_cleaned",
+        "prob_raw",
+        "lexicon_rule_label",
+        "model_id",
+        "checkpoint_sha256",
+        "inference_date",
+        "config_hash",
+    }
+    assert all(required_probe_fields.issubset(record) for record in probes["records"])
+    assert {record["probe_id"] for record in probes["records"]} == {
+        probe[0] for probe in PROBES
+    }
+    assert set(dba_cases["EIN2"]) == {"P001", "P002"}
+    assert {
+        "EIN2",
+        "population",
+        "legal_name_cleaned",
+        "dba_name_cleaned",
+        "token_direction",
+        "legal_name_prob_raw",
+        "dba_name_prob_raw",
+        "diagnostic_only",
+        "production_input_variant",
+    }.issubset(dba_cases.columns)
+    assert set(dba_cases["token_direction"]) == {
+        "dba_adds_religious_token",
+        "legal_name_adds_religious_token",
+    }
+    assert dba_report["diagnostic_only"] is True
+    assert dba_report["production_input_variant"] is False
+    assert dba_report["dba_having_organizations"] == 2
+    assert dba_report["dba_adds_religious_token_count"] == 1
+    assert dba_report["legal_name_adds_religious_token_count"] == 1
     assert validation["comparison_population"]["n_evaluated"] == 2
     assert {"variants", "bmf_only_gold", "external_flag_validation"}.issubset(
         validation

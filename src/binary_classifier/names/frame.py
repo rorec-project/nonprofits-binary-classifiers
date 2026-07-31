@@ -54,6 +54,9 @@ _FRAME_COLUMNS = [
 ]
 
 
+# ── Stage orchestration ─────────────────────────────────────────────────────
+# Build separate panel and BMF-only populations so coverage and transfer checks
+# never conflate organizations absent from missions with those absent from panel.
 def build_name_frame(
     cfg: "BinaryClassifierConfig",
     registry: "PathRegistry",
@@ -91,6 +94,7 @@ def build_name_frame(
     bmf_only_frame.to_parquet(registry.names_bmf_only_frame, index=False)
 
 
+# ── Source loading and normalization ─────────────────────────────────────────
 def _load_panel(registry: "PathRegistry") -> pd.DataFrame:
     panel = pd.read_parquet(registry.panel_final_parquet)
     bare_names = pd.read_parquet(registry.panel_filled_gaps_parquet)
@@ -132,6 +136,7 @@ def _load_bmf(registry: "PathRegistry") -> pd.DataFrame:
     bmf = bmf.copy()
     bmf["EIN2"] = normalize_ein2(bmf["EIN2"])
     _assert_unique_ein2(bmf, "BMF")
+    # These flags measure IRS religious auspice, not the mission-purpose estimand.
     ntee_major_group = bmf["NTEE_IRS"].astype("string").str.strip().str.upper().str[0]
     bmf["ntee_major_group"] = ntee_major_group.where(
         ntee_major_group.str.fullmatch("[A-Z]"),
@@ -145,12 +150,14 @@ def _load_bmf(registry: "PathRegistry") -> pd.DataFrame:
     return bmf
 
 
+# ── Population construction ──────────────────────────────────────────────────
 def _build_panel_frame(
     panel: pd.DataFrame,
     missions: pd.DataFrame,
     bmf: pd.DataFrame,
     contaminated_ein2s: set[str],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
+    # Preserve the project's deliberate 501(c)(3) public-charity panel scope.
     scoped = panel.loc[panel["COMMON_LEVEL1"].eq("501C3 CHARITY")].copy()
     scoped = scoped.merge(missions, on="EIN2", how="left", validate="one_to_one")
     scoped = scoped.merge(
@@ -201,6 +208,7 @@ def _build_bmf_only_frame(
     ), counts
 
 
+# ── Artifact schema and boundary validation ───────────────────────────────────
 def _finalize_frame(
     frame: pd.DataFrame,
     *,

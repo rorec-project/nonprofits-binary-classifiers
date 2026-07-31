@@ -39,6 +39,7 @@ _OUTPUT_COLUMNS = [
 ]
 
 
+# ── Scoring orchestration ─────────────────────────────────────────────────────
 def score_names(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -76,6 +77,7 @@ def score_names(
     records.to_parquet(registry.names_scores, index=False)
 
 
+# ── Input validation and mission-score provenance ─────────────────────────────
 def _load_cleaned_frame(path: Path) -> pd.DataFrame:
     frame = pd.read_parquet(path)
     missing = sorted(_REQUIRED_COLUMNS.difference(frame.columns))
@@ -128,6 +130,7 @@ def _load_mission_thresholds(registry: PathRegistry) -> dict[str, float]:
         ) from exc
 
 
+# ── Input variants and raw-score persistence ──────────────────────────────────
 def _score_variants(
     cfg: BinaryClassifierConfig,
     names: pd.DataFrame,
@@ -171,6 +174,7 @@ def _score_variants(
     return pd.concat(frames, ignore_index=True)[_OUTPUT_COLUMNS]
 
 
+# ── Model and configuration provenance ────────────────────────────────────────
 def _extract_model_provenance(
     selected: dict[str, Any],
     predictor: Any | None,

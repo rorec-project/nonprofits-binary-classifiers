@@ -40,6 +40,7 @@ _TOKEN_PATTERN = re.compile(
 )
 
 
+# ── Diagnostic artifact orchestration ─────────────────────────────────────────
 def run_name_diagnostics(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -85,6 +86,7 @@ def run_name_diagnostics(
     )
 
 
+# ── Synthetic probe scoring ───────────────────────────────────────────────────
 def _score_probes(
     cfg: BinaryClassifierConfig,
     selected: dict[str, Any],
@@ -130,6 +132,7 @@ def _score_probes(
     }
 
 
+# ── DBA case-study construction ───────────────────────────────────────────────
 def _build_dba_case_study(
     path: Path,
     *,
@@ -148,6 +151,7 @@ def _build_dba_case_study(
         raise ValueError(
             f"{path} is missing required DBA columns: {', '.join(missing)}"
         )
+    # Compare legal and DBA names only for diagnosis; DBA is never a production input.
     candidates = panel.loc[panel["has_dba"].fillna(False).astype(bool)].copy()
     candidates["legal_name_cleaned"] = candidates["name_cased"].map(normalize_name)
     candidates["dba_name_cleaned"] = candidates["dba_cased"].map(normalize_name)
@@ -157,23 +161,34 @@ def _build_dba_case_study(
     candidates["dba_religious_tokens"] = candidates["dba_name_cleaned"].map(
         _religious_tokens
     )
-    candidates["dba_only_religious_tokens"] = candidates.apply(
-        lambda row: sorted(
-            set(row["dba_religious_tokens"]) - set(row["legal_name_religious_tokens"])
-        ),
-        axis=1,
-    )
-    candidates["legal_name_only_religious_tokens"] = candidates.apply(
-        lambda row: sorted(
-            set(row["legal_name_religious_tokens"]) - set(row["dba_religious_tokens"])
-        ),
-        axis=1,
-    )
+    candidates["dba_only_religious_tokens"] = [
+        sorted(set(dba_tokens) - set(legal_tokens))
+        for legal_tokens, dba_tokens in zip(
+            candidates["legal_name_religious_tokens"],
+            candidates["dba_religious_tokens"],
+            strict=True,
+        )
+    ]
+    candidates["legal_name_only_religious_tokens"] = [
+        sorted(set(legal_tokens) - set(dba_tokens))
+        for legal_tokens, dba_tokens in zip(
+            candidates["legal_name_religious_tokens"],
+            candidates["dba_religious_tokens"],
+            strict=True,
+        )
+    ]
     cases = candidates.loc[
         candidates["dba_only_religious_tokens"].map(bool)
         | candidates["legal_name_only_religious_tokens"].map(bool)
     ].copy()
-    cases["token_direction"] = cases.apply(_token_direction, axis=1)
+    cases["token_direction"] = [
+        _token_direction(dba_tokens, legal_tokens)
+        for dba_tokens, legal_tokens in zip(
+            cases["dba_only_religious_tokens"],
+            cases["legal_name_only_religious_tokens"],
+            strict=True,
+        )
+    ]
     cases["legal_name_prob_raw"] = score_texts(
         cfg,
         selected,
@@ -239,14 +254,17 @@ def _build_dba_case_study(
     return cases, report
 
 
+# ── Religious-token helpers ───────────────────────────────────────────────────
 def _religious_tokens(text: str) -> list[str]:
     """Return normalized shared-lexicon matches, including multi-word entries."""
     return sorted({match.group().lower() for match in _TOKEN_PATTERN.finditer(text)})
 
 
-def _token_direction(row: pd.Series) -> str:
-    if row["dba_only_religious_tokens"] and row["legal_name_only_religious_tokens"]:
+def _token_direction(
+    dba_only_tokens: list[str], legal_name_only_tokens: list[str]
+) -> str:
+    if dba_only_tokens and legal_name_only_tokens:
         return "both_names_add_religious_token"
-    if row["dba_only_religious_tokens"]:
+    if dba_only_tokens:
         return "dba_adds_religious_token"
     return "legal_name_adds_religious_token"

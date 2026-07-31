@@ -46,6 +46,7 @@ _LIMITATIONS = [
 ]
 
 
+# ── Validation report orchestration ───────────────────────────────────────────
 def run_name_validation(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -89,6 +90,7 @@ def run_name_validation(
     )
 
 
+# ── Completed BMF-only gold reporting ─────────────────────────────────────────
 def _bmf_only_gold_report(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -178,6 +180,7 @@ def _bmf_only_gold_report(
     }
 
 
+# ── Paired transfer comparison ────────────────────────────────────────────────
 def _load_paired_frame(registry: PathRegistry) -> tuple[pd.DataFrame, dict[str, int]]:
     panel = _read_parquet(registry.names_panel_cleaned, _PANEL_COLUMNS)
     scores = _read_parquet(registry.names_scores, _NAME_SCORE_COLUMNS)
@@ -207,6 +210,8 @@ def _load_paired_frame(registry: PathRegistry) -> tuple[pd.DataFrame, dict[str, 
     _assert_complete_variant_pair(paired)
 
     before_exclusion = int(paired["EIN2"].nunique())
+    # Exclude training/evaluation manifests so memorized mission text cannot
+    # inflate agreement.
     contaminated = paired["is_manifest_contaminated"].astype(bool)
     excluded_count = int(paired.loc[contaminated, "EIN2"].nunique())
     paired = paired.loc[~contaminated].copy()
@@ -290,6 +295,7 @@ def _variant_report(cfg: BinaryClassifierConfig, frame: pd.DataFrame) -> dict[st
     }
 
 
+# ── External-flag and base-rate-shift diagnostics ─────────────────────────────
 def _external_flag_report(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -482,6 +488,7 @@ def _rate_ratio(numerator: float, denominator: float) -> float | None:
     return numerator / denominator if denominator else None
 
 
+# ── Shared artifact validation helpers ────────────────────────────────────────
 def _validate_external_scores(frame: pd.DataFrame) -> None:
     """Validate external-label inputs before calculating diagnostic metrics."""
     populations = set(frame["population"].astype(str))
