@@ -1,6 +1,9 @@
 """Offline chain coverage for the isolated names transfer arm."""
 
+import builtins
+import io
 import json
+import os
 import runpy
 from pathlib import Path
 
@@ -22,20 +25,52 @@ def test_names_chain_writes_isolated_artifacts_and_preserves_missions(
     tiny_registry,
 ) -> None:
     """Run N1, N2, N3, N6, and N4 without touching missions outputs."""
+    # ── Synthetic isolated fixture ──────────────────────────────────────────
+    # Seed only the names inputs and the read-only mission artifacts N3/N4 need.
     _configure_tiny_name_gold(tiny_config)
     _write_name_inputs(tiny_registry)
     _write_mission_scoring_inputs(tiny_registry)
-    before = _mission_artifact_snapshot(tiny_registry)
+    mission_artifacts_before = _mission_artifact_snapshot(tiny_registry)
 
+    # ── Names transfer chain ────────────────────────────────────────────────
+    # Any Python-level frozen-test open is a hard failure, not merely unchanged
+    # output, because the report is governed by one-shot evaluation semantics.
     frozen_test = tiny_registry.test_evaluation.resolve()
+    original_builtin_open = builtins.open
+    original_io_open = io.open
+    original_os_open = os.open
     original_open = Path.open
 
-    def guard_frozen_test_open(path: Path, *args, **kwargs):
-        if path.resolve() == frozen_test:
+    def guard_frozen_test_path(path: object) -> None:
+        try:
+            path_value = os.fspath(path)
+        except TypeError:
+            return
+        if isinstance(path_value, bytes):
+            path_value = os.fsdecode(path_value)
+        if Path(path_value).resolve() == frozen_test:
             raise AssertionError("names chain accessed the frozen test artifact")
+
+    def guard_builtin_open(path, *args, **kwargs):
+        guard_frozen_test_path(path)
+        return original_builtin_open(path, *args, **kwargs)
+
+    def guard_io_open(path, *args, **kwargs):
+        guard_frozen_test_path(path)
+        return original_io_open(path, *args, **kwargs)
+
+    def guard_os_open(path, *args, **kwargs):
+        guard_frozen_test_path(path)
+        return original_os_open(path, *args, **kwargs)
+
+    def guard_frozen_test_open(path: Path, *args, **kwargs):
+        guard_frozen_test_path(path)
         return original_open(path, *args, **kwargs)
 
     with monkeypatch.context() as guard:
+        guard.setattr(builtins, "open", guard_builtin_open)
+        guard.setattr(io, "open", guard_io_open)
+        guard.setattr(os, "open", guard_os_open)
         guard.setattr(Path, "open", guard_frozen_test_open)
         build_name_frame(tiny_config, tiny_registry)
         clean_names(tiny_config, tiny_registry)
@@ -55,8 +90,10 @@ def test_names_chain_writes_isolated_artifacts_and_preserves_missions(
         run_name_validation(tiny_config, tiny_registry)
 
     _assert_name_artifacts(tiny_registry)
-    assert _mission_artifact_snapshot(tiny_registry) == before
+    assert _mission_artifact_snapshot(tiny_registry) == mission_artifacts_before
 
+    # ── Orchestrator boundary ───────────────────────────────────────────────
+    # Names stay independently runnable and must not enter the missions chain.
     orchestrator = runpy.run_path(
         str(Path(__file__).resolve().parents[1] / "scripts" / "run_pipeline.py"),
     )
@@ -196,21 +233,44 @@ def _assert_name_artifacts(registry) -> None:
     panel_cleaned = pd.read_parquet(registry.names_panel_cleaned)
     bmf_only_cleaned = pd.read_parquet(registry.names_bmf_only_cleaned)
     scores = pd.read_parquet(registry.names_scores)
+    gold_manifest = pd.read_csv(registry.names_gold_manifest)
     name_gold = pd.read_csv(registry.names_gold_coding_template)
     audit = json.loads(registry.names_divergence_audit.read_text())
     validation = json.loads(registry.names_validation.read_text())
 
     assert set(panel_frame["EIN2"]) == {"P001", "P002", "P003"}
+    assert panel_frame["EIN2"].is_unique
     assert set(panel_cleaned["EIN2"]) == set(panel_frame["EIN2"])
+    assert panel_cleaned["EIN2"].is_unique
+    assert {"EIN2", "name_raw", "name_cleaned"}.issubset(panel_cleaned.columns)
     assert set(bmf_only_frame["EIN2"]) == {"B001", "B002", "B003", "B004"}
+    assert bmf_only_frame["EIN2"].is_unique
     assert set(bmf_only_cleaned["EIN2"]) == set(bmf_only_frame["EIN2"])
+    assert bmf_only_cleaned["EIN2"].is_unique
+    assert {"EIN2", "name_raw", "name_cleaned"}.issubset(bmf_only_cleaned.columns)
     assert len(scores) == 14
     assert set(scores["EIN2"]) == set(panel_frame["EIN2"]) | set(bmf_only_frame["EIN2"])
     assert set(scores["input_variant"]) == {"suffix_stripped", "suffix_retaining"}
+    assert not scores.duplicated(["EIN2", "input_variant"]).any()
+    assert set(gold_manifest["EIN2"]) == set(bmf_only_frame["EIN2"])
+    assert gold_manifest["EIN2"].is_unique
+    assert {
+        "EIN2",
+        "population",
+        "name_raw",
+        "inclusion_probability",
+        "sampling_cell",
+    }.issubset(gold_manifest.columns)
     assert set(name_gold["EIN2"]) == set(bmf_only_frame["EIN2"])
     assert name_gold["human_label"].isin([0, 1]).all()
     assert audit["panel_rows_audited"] == len(panel_frame)
+    assert {"blocking_divergences", "nonblocking_divergences"}.issubset(audit)
     assert validation["comparison_population"]["n_evaluated"] == 2
+    assert {"variants", "bmf_only_gold", "external_flag_validation"}.issubset(
+        validation
+    )
+    assert set(validation["variants"]) == {"suffix_stripped", "suffix_retaining"}
+    assert validation["bmf_only_gold"]["n_gold"] == len(gold_manifest)
     assert registry.names_gold_manifest.exists()
     assert registry.names_gold_coding_instructions.exists()
 
