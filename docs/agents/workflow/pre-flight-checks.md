@@ -10,6 +10,7 @@
 
 - [ ] Run through `uv run` (never bare `python`/`ruff`/`ty`)?
 - [ ] `uv run ruff check .` and `uv run ty check` clean?
+- [ ] `uv run pytest` passes (no new failures)?
 
 ## Reproducibility
 
@@ -39,7 +40,8 @@
 
 ## Testing
 
-- [ ] Stage correctness expressed as inline assertions + logging; no `tests/` directory is created unless explicitly requested?
+- [ ] New logic covered by a pytest in `tests/`, run via `uv run pytest`?
+- [ ] Critical data-integrity checks still asserted inline (log failures, don't `print`)?
 
 ## Code Comments
 

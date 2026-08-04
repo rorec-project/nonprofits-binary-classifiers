@@ -29,5 +29,3 @@ This repository prefers heavy, scan-friendly comments so a reader can follow a s
 ## Language Notes
 
 - Python: add docstrings for reusable functions and classes when the surrounding file uses them.
-- R: use roxygen2 for all functions and keep script section headers. Use specific section delimiters using different levels such as `##`, `###`, `####`
-- TypeScript: add JSDoc where the surrounding module relies on it.

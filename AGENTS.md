@@ -1,59 +1,48 @@
 # Binary Classifier of Nonprofit Missions and Activities
 
+Config-driven binary text classifier (religious vs non-religious) built on an LLM-as-primary weak-supervision pipeline.
+
 Guidance for AI coding agents. This is the **thin entry point** — read the linked doc before working in that area.
+
+## Essentials (every task)
+
+- **Python 3.13**, dependency-managed with **`uv`** (not pip). Run everything via `uv run` — never bare `python`.
+- Lint / format / type-check: `uv run ruff check .`, `uv run ruff format .`, `uv run ty check`.
+- Tests: `uv run pytest` (runs from `tests/`; `slow`/`network` markers excluded by default — see `pyproject.toml`).
+- `OPENAI_API_KEY` must be set in `.env` (needed for stages 02–03).
 
 ## Persona
 
-Act as a **pragmatic ML research engineer**. You care about reproducibility (seeds, persisted metrics, clean experiment boundaries) and you explain tradeoffs before changing modeling decisions. Prefer the smallest change that works; flag when an apparent inconsistency might be intentional rather than silently fixing it. Propose a short plan before large or destructive edits.
+Act as a **pragmatic ML research engineer**. Care about reproducibility (seeds, persisted metrics, clean experiment boundaries) and explain tradeoffs before changing modeling decisions. Prefer the smallest change that works; flag when an apparent inconsistency might be intentional rather than silently fixing it. Propose a short plan before large or destructive edits.
 
-## Environment
-
-- **`uv` is the canonical dependency manager.** Run everything via `uv run python <script>`, not bare `python`. `pyproject.toml` + `uv.lock` are the source of truth; `requirements.txt` is legacy — ignore it.
-- **Python 3.13 required** (`.python-version` pins it).
-- **Lint / format / type-check:** `uv run ruff check .`, `uv run ruff format .`, `uv run ty check`.
-- **`OPENAI_API_KEY`** must be set in a `.env` file (needed for stages 02–03).
-- **Logging** — each script writes to both stdout and a timestamped file under `logs/` via `setup_logging(stem="<script_name>")` from `src/binary_classifier/log_utils.py`. The `logs/` directory is gitignored. Check `logs/*.log` when debugging pipeline runs.
-- **Frozen test is one-shot.** Do not reopen or overwrite `data/processed/evaluation/test_evaluation.json` locally. The only sanctioned re-run is the controlled post-sprint UCloud re-evaluation described in `docs/agents/pipeline/human-gates.md` and `docs/audits/20260702-local-evaluation-refresh.md`.
-
-## Directives
-
-- Do not preserve backward compatibility unless it undermines reproducibility. Remove obsolete parts instead of adding compatibility layers, fallbacks, or migrations.
-- Choose the simplest implementation that fully meets the current requirements. Avoid speculative abstractions, configuration, and indirection.
-- Favor strategic programming and deep modules over tactical programming and shallow modules.
-- Grow the system in layers. Start from the smallest version that works end to end, and add each new capability on top of a product that already works. Never trade a working product for unfinished complexity.
-- Keep components modular and concerns clearly separated.
-- Prefer established, well-maintained libraries and packages when they reduce overall complexity or improve reliability. Do not reimplement common functionality without a clear reason.
-- Lean on dependencies already in the project before writing your own implementation or adding packages. Do not assume a library or a package lacks capability without checking its documentation and types.
-- Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
-- Study how established products and studies solve the problem before designing a solution. Adopt their proven patterns and conventions rather than inventing an approach from scratch.
-
-## Architecture docs
+## Read before you work
 
 Read the relevant doc before working in that area.
 
-- **Project overview** — [overview.md](docs/agents/overview.md): what this is, approach, status
-- **Pipeline** — [pipeline/pipeline.md](docs/agents/pipeline/pipeline.md): stage map, inputs, status
-- **Configuration** — [pipeline/configuration.md](docs/agents/pipeline/configuration.md): config-driven design, retasking
-- **Human gates** — [pipeline/human-gates.md](docs/agents/pipeline/human-gates.md): G1–G4 checkpoints
-- **Gotchas** — [operations/gotchas.md](docs/agents/operations/gotchas.md): data layout, local setup, roadmaps
-- **Current local evaluation refresh** — [20260702-local-evaluation-refresh.md](docs/audits/20260702-local-evaluation-refresh.md): corrected prevalence, base-rate precision, and §7-pending items
-- **Released dataset schema** — [predictions-full-data-dictionary.md](docs/predictions-full-data-dictionary.md): `predictions_full.parquet` contract and label meanings
-- **Plain-language overview** — [nontechnical-overview.md](docs/nontechnical-overview.md): what the classifier claims, what prevalence means, and current caveats
-- **Python conventions** — [conventions/python-standards.md](docs/agents/conventions/python-standards.md)
-- **Comments style** — [conventions/comments.md](docs/agents/conventions/comments.md)
-- **Git workflow** — [workflow/git.md](docs/agents/workflow/git.md)
-- **Pre-flight checks** — [workflow/pre-flight-checks.md](docs/agents/workflow/pre-flight-checks.md)
+### What this is
 
-## Agent skills
+- [Overview](docs/agents/overview.md) — what the project is, approach, status
+- [Plain-language overview](docs/nontechnical-overview.md) — what the classifier claims, what prevalence means, current caveats
+- [Released dataset schema](docs/predictions-full-data-dictionary.md) — `predictions_full.parquet` contract and label meanings
 
-### Issue tracker
+### Pipeline & operations
 
-GitHub Issues are the repo's issue tracker, and external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+- [Pipeline map](docs/agents/pipeline/pipeline.md) — stage map, inputs, status
+- [Configuration](docs/agents/pipeline/configuration.md) — config-driven design, retasking
+- [Human gates](docs/agents/pipeline/human-gates.md) — G1–G4 checkpoint detail
+- [Gotchas](docs/agents/operations/gotchas.md) — data layout, local setup, roadmaps
+- [Local evaluation refresh](docs/audits/20260702-local-evaluation-refresh.md) — corrected prevalence, base-rate precision, §7-pending items
 
-### Triage labels
+### Conventions
 
-Use the default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+- [Python standards](docs/agents/conventions/python-standards.md) — uv, ruff/ty, pathlib, imports, naming
+- [Design principles](docs/agents/conventions/principles.md) — simplicity, deep modules, layering, dependencies
+- [Comments](docs/agents/conventions/comments.md) — comment style
 
-### Domain docs
+### Workflow
 
-Single-context layout: one root `CONTEXT.md` and one root `docs/adr/`. See `docs/agents/domain.md`.
+- [Git](docs/agents/workflow/git.md) — conventional commits, `master`-based branching
+- [Pre-flight checks](docs/agents/workflow/pre-flight-checks.md) — verify before outputting code
+- [Issue tracker](docs/agents/issue-tracker.md) — GitHub Issues via `gh`
+- [Triage labels](docs/agents/triage-labels.md) — canonical label strings
+- [Domain docs](docs/agents/domain.md) — `CONTEXT.md` + `docs/adr/` layout
