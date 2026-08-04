@@ -72,6 +72,7 @@ The default `uv sync` installs the lean runtime. Optional extras are:
 - `--extra serve` — vLLM for open-weight model serving
 - `--extra quant` — QuaPy for KDEy quantification cross-checks
 - `--extra diagnostics` — `crowd-kit` and `cleanlab` for stage-11 sensitivity diagnostics
+- `--extra cleaner` — `cleanco` and `ftfy` for the names arm
 
 Key dependency changes vs. the legacy stack: `pyarrow`, `python-dotenv`, `openai`, and `vllm` (via `--extra serve`).
 
@@ -422,6 +423,40 @@ Stage 11 is a script-only sensitivity diagnostic that compares multiple label-ag
 
 - **Outputs:** `data/interim/aggregation_compare.json`.
 - **Caveat:** script-only; diagnostic-only (`crowd-kit` and `cleanlab` behind `diagnostics` extra).
+
+### B12. Names arm — operator workflow (standalone)
+
+The names arm is a separate, completed six-script workflow. It applies the mission-trained model by **cross-field transfer** to organization names; it is not part of `run_pipeline.py` and must not change the missions artifacts or the
+one-shot frozen test. Install its required dependencies first:
+
+```bash
+uv sync --extra cleaner
+```
+
+Run from the repository root with the task config. The stages and dependency order are:
+
+1. **N1 — `scripts/names/N1_build_name_frame.py`** reads `data/raw/panel_final.parquet`, `data/raw/panel_filled_gaps.parquet`, `data/raw/missions_cross_section.parquet`, and `data/raw/bmf_unified_processed.parquet`. Existing mission manifests are used to mark contaminated `EIN2`s. It writes isolated panel and BMF-only frames as `panel_name_frame.parquet` and `bmf_only_name_frame.parquet` under `data/interim/names/`.
+2. **N2 — `scripts/names/N2_clean_names.py`** reads both N1 frames, writes `panel_cleaned_names.parquet`, `bmf_only_cleaned_names.parquet`, and `name_divergence_audit.json` under `data/interim/names/`, then stops if cleaning removes an upstream religious token or protected acronym. Do not continue until the audit has no `blocking_divergences`.
+3. **N3 — `scripts/names/N3_score_names.py`** requires the human-selected checkpoint (`data/processed/gold/selected_model.json`) and the mission stage-07 artifacts `data/processed/evaluation/calibrator.json` and `base_rate_precision.json`. It scores suffix-stripped and suffix-retaining variants and writes raw scores to `data/processed/names/name_scores.parquet`. Mission calibration and thresholds are retained as provenance only and are explicitly not applied to names.
+4. **N5 — `scripts/names/N5_name_diagnostics.py`** may run after N2 and a selected checkpoint. It writes diagnostic-only probe and legal-name/DBA artifacts (`name_probe_diagnostics.json`, `name_dba_case_study.parquet`, and `name_dba_case_study_report.json`) under `data/processed/names/`; DBA names are not a production input variant.
+5. **N6 — `scripts/names/N6_draw_name_gold.py`** may run after N1, independently of model outputs. It draws the configured seeded BMF-only sample, writes `data/interim/names/names_gold_manifest.csv`, and writes the coding template and unchanged mission-purpose instructions under `data/processed/names/gold/`. A human must complete every `human_label` as strict `0/1`; this is the N6 human-coding gate. Re-running the same draw preserves existing labels and rejects a changed manifest.
+6. **N4 — `scripts/names/N4_validate_names.py`** runs after N3, N6 coding, and mission stage-08 output `data/processed/predictions/predictions_full.parquet`. It writes `data/processed/names/name_validation.json`, comparing transfer with the lexicon baseline on paired organizations and reporting the external flag/base-rate-shift diagnostic. This is validation of transfer, not a new mission label or prevalence estimate.
+
+The executable form is, for example:
+
+```bash
+uv run python scripts/names/N1_build_name_frame.py --config config/religious_missions.yaml
+uv run python scripts/names/N2_clean_names.py --config config/religious_missions.yaml
+uv run python scripts/names/N3_score_names.py --config config/religious_missions.yaml
+uv run python scripts/names/N5_name_diagnostics.py --config config/religious_missions.yaml
+uv run python scripts/names/N6_draw_name_gold.py --config config/religious_missions.yaml
+# Complete data/processed/names/gold/names_gold_to_code.csv as instructed.
+uv run python scripts/names/N4_validate_names.py --config config/religious_missions.yaml
+```
+
+N5 and N6 can run independently once their stated prerequisites are ready; N4 is the final step after N6 human coding and stage-08 predictions.
+
+Each script writes console output and a timestamped log under `logs/` using its script stem (`N1_build_name_frame`, through `N6_draw_name_gold`). The names arm is isolated to `data/interim/names/` and `data/processed/names/`; it produces no prevalence output and no production labels. Do not interpret raw name scores or mission thresholds as calibrated name probabilities or deploy them as a production classifier. The names gold rubric remains the unchanged mission construct: observable religious purpose, not religious identity or auspice.
 
 ---
 
