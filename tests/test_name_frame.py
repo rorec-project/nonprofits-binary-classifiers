@@ -8,7 +8,11 @@ import pandas as pd
 import pytest
 
 from binary_classifier.config import NamesExpectedCounts, load_config
-from binary_classifier.names.frame import build_name_frame
+from binary_classifier.names.frame import (
+    _collapse_panel,
+    _read_collapsed_panel,
+    build_name_frame,
+)
 
 
 def _load_name_frame_cli():
@@ -129,6 +133,106 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
     assert bmf_only["is_ntee_x"].tolist() == [True]
     assert bmf_only["is_external_religious_flag"].notna().all()
     assert bmf_only["name_raw_source"].tolist() == ["ORG_NAME_CURRENT"]
+
+
+def test_collapse_panel_uses_longest_raw_name_with_tax_year_tie_break() -> None:
+    """Longitudinal raw names use the upstream best-name selection rule."""
+    panel = pd.DataFrame(
+        [
+            {
+                "EIN2": "EIN-01-0017496",
+                "TAX_YEAR": 2022,
+                "COMMON_LEVEL1": "501C3 CHARITY",
+                "BEST_NAME_CASED": "Agamenticus Yacht Club",
+                "F9_00_ORG_NAME_L1": "AGAMENTICUS YACHT CLUB OF MAINE",
+            },
+            {
+                "EIN2": "EIN-01-0017496",
+                "TAX_YEAR": 2023,
+                "COMMON_LEVEL1": "501C3 CHARITY",
+                "BEST_NAME_CASED": "Agamenticus Yacht Club",
+                "F9_00_ORG_NAME_L1": "AGAMENTICUS YACHT CLUB INC",
+            },
+            {
+                "EIN2": "EIN-01-0017496",
+                "TAX_YEAR": 2024,
+                "COMMON_LEVEL1": "501C3 CHARITY",
+                "BEST_NAME_CASED": "Agamenticus Yacht Club",
+                "F9_00_ORG_NAME_L1": "AGAMENTICUS YACHT CLUB OF MAINE",
+            },
+        ]
+    )
+
+    collapsed = _collapse_panel(panel, selection_column="F9_00_ORG_NAME_L1")
+
+    assert collapsed.to_dict("records") == [
+        {
+            "EIN2": "EIN-01-0017496",
+            "COMMON_LEVEL1": "501C3 CHARITY",
+            "BEST_NAME_CASED": "Agamenticus Yacht Club",
+            "F9_00_ORG_NAME_L1": "AGAMENTICUS YACHT CLUB OF MAINE",
+        }
+    ]
+
+
+def test_collapse_panel_uses_alphabetic_order_after_equal_length_and_tax_year() -> None:
+    """Equal length and year candidates use alphabetic order deterministically."""
+    panel = pd.DataFrame(
+        [
+            {"EIN2": "P001", "TAX_YEAR": 2023, "F9_00_ORG_NAME_L1": "ZEBRA"},
+            {"EIN2": "P001", "TAX_YEAR": 2023, "F9_00_ORG_NAME_L1": "ALPHA"},
+        ]
+    )
+
+    collapsed = _collapse_panel(panel, selection_column="F9_00_ORG_NAME_L1")
+
+    assert collapsed["F9_00_ORG_NAME_L1"].tolist() == ["ALPHA"]
+
+
+def test_read_collapsed_panel_requires_configured_tax_year(tmp_path) -> None:
+    """Raw-name selection cannot silently skip its required year tie-break."""
+    path = tmp_path / "panel.parquet"
+    pd.DataFrame(
+        [{"EIN2": "P001", "F9_00_ORG_NAME_L1": "Example Name"}]
+    ).to_parquet(path, index=False)
+
+    with pytest.raises(ValueError, match="missing required columns: TAX_YEAR"):
+        _read_collapsed_panel(
+            path,
+            ["EIN2", "F9_00_ORG_NAME_L1"],
+            selection_column="F9_00_ORG_NAME_L1",
+        )
+
+
+def test_read_collapsed_panel_selects_names_from_unordered_input(tmp_path) -> None:
+    """Batch reduction does not require the upstream parquet to sort EIN2 rows."""
+    path = tmp_path / "panel.parquet"
+    pd.DataFrame(
+        [
+            {"EIN2": "P002", "TAX_YEAR": 2022, "F9_00_ORG_NAME_L1": "Short"},
+            {
+                "EIN2": "P001",
+                "TAX_YEAR": 2023,
+                "F9_00_ORG_NAME_L1": "Only Name",
+            },
+            {
+                "EIN2": "P002",
+                "TAX_YEAR": 2023,
+                "F9_00_ORG_NAME_L1": "Longer Name",
+            },
+        ]
+    ).to_parquet(path, index=False)
+
+    collapsed = _read_collapsed_panel(
+        path,
+        ["EIN2", "F9_00_ORG_NAME_L1"],
+        selection_column="F9_00_ORG_NAME_L1",
+    )
+
+    assert collapsed.to_dict("records") == [
+        {"EIN2": "P001", "F9_00_ORG_NAME_L1": "Only Name"},
+        {"EIN2": "P002", "F9_00_ORG_NAME_L1": "Longer Name"},
+    ]
 
 
 def test_build_name_frame_flags_manifest_membership_and_excludes_missing_names(
@@ -252,6 +356,7 @@ def test_build_name_frame_rejects_panel_ein2_missing_from_bmf(tiny_registry) -> 
         [
             {
                 "EIN2": "P001",
+                "TAX_YEAR": 2023,
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "Missing BMF Charity",
                 "BEST_NAME_CASED": "Missing BMF Charity",
@@ -287,7 +392,13 @@ def test_build_name_frame_rejects_duplicate_bmf_ein2(tiny_registry) -> None:
     """The stage fails rather than silently deduplicating BMF organizations."""
     tiny_registry.panel_final_parquet.parent.mkdir(parents=True)
     pd.DataFrame(
-        columns=["EIN2", "COMMON_LEVEL1", "BEST_NAME_CASED"],
+        columns=[
+            "EIN2",
+            "TAX_YEAR",
+            "COMMON_LEVEL1",
+            "F9_00_ORG_NAME_L1",
+            "BEST_NAME_CASED",
+        ],
     ).to_parquet(tiny_registry.panel_final_parquet, index=False)
     pd.DataFrame(
         columns=["EIN2", "BEST_NAME_BARE_CASED"],
@@ -320,12 +431,17 @@ def test_build_name_frame_rejects_duplicate_bmf_ein2(tiny_registry) -> None:
 def test_build_name_frame_uses_name_cased_when_raw_f9_field_is_absent(
     tiny_registry,
 ) -> None:
-    """NAME_CASED is an explicit upstream raw-source alternative, not a canonical fallback."""
+    """N1 uses the configured fallback when the preferred raw field is absent."""
+    tiny_registry.cfg.names.panel_raw_name_columns = [
+        "F9_00_ORG_NAME_L1",
+        "NAME_CASED",
+    ]
     tiny_registry.panel_final_parquet.parent.mkdir(parents=True)
     pd.DataFrame(
         [
             {
                 "EIN2": "P001",
+                "TAX_YEAR": 2023,
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "NAME_CASED": "Raw Alternate Name",
                 "BEST_NAME_CASED": "Canonical Name",
@@ -393,3 +509,4 @@ def test_production_config_has_names_snapshot_counts() -> None:
         bmf_only=2_004_353,
         bmf_only_flagged=396_379,
     )
+    assert cfg.names.panel_raw_name_columns == ["F9_00_ORG_NAME_L1", "NAME_CASED"]

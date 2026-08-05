@@ -141,6 +141,7 @@ def _write_name_inputs(registry) -> None:
         [
             {
                 "EIN2": "P001",
+                "TAX_YEAR": 2023,
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "HERITAGE ACADEMY, INC.",
                 "BEST_NAME_CASED": "Heritage Academy",
@@ -149,6 +150,7 @@ def _write_name_inputs(registry) -> None:
             },
             {
                 "EIN2": "P002",
+                "TAX_YEAR": 2023,
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "COMMUNITY CHURCH FOOD BANK LLC",
                 "BEST_NAME_CASED": "Community Church Food Bank",
@@ -157,6 +159,7 @@ def _write_name_inputs(registry) -> None:
             },
             {
                 "EIN2": "P003",
+                "TAX_YEAR": 2023,
                 "COMMON_LEVEL1": "501C3 CHARITY",
                 "F9_00_ORG_NAME_L1": "NAME ONLY OUTREACH INC.",
                 "BEST_NAME_CASED": "Name Only Outreach",

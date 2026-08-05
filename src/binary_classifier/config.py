@@ -412,6 +412,16 @@ class NamesConfig(BaseModel):
 
     panel_final_filename: str = "panel_final.parquet"
     panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
+    panel_tax_year_column: str = "TAX_YEAR"
+    panel_scope_column: str = "COMMON_LEVEL1"
+    panel_raw_name_columns: list[str] = Field(
+        default_factory=lambda: ["F9_00_ORG_NAME_L1", "NAME_CASED"],
+        min_length=1,
+    )
+    panel_best_name_cased_column: str = "BEST_NAME_CASED"
+    panel_best_name_bare_column: str = "BEST_NAME_BARE_CASED"
+    panel_dba_cased_column: str = "BEST_DBA_CASED"
+    panel_has_dba_column: str = "HAS_DBA"
     panel_cleaned_filename: str = "panel_cleaned_names.parquet"
     bmf_only_cleaned_filename: str = "bmf_only_cleaned_names.parquet"
     divergence_audit_filename: str = "name_divergence_audit.json"

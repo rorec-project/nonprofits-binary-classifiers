@@ -90,6 +90,16 @@ data:
 names:
   panel_final_filename: panel_final.parquet
   panel_filled_gaps_filename: panel_filled_gaps.parquet
+  # Upstream panel fields used to construct one raw name per EIN2. The first
+  # available raw-name field is selected, then the longest name wins; TAX_YEAR
+  # breaks equal-length ties.
+  panel_tax_year_column: TAX_YEAR
+  panel_scope_column: COMMON_LEVEL1
+  panel_raw_name_columns: [F9_00_ORG_NAME_L1, NAME_CASED]
+  panel_best_name_cased_column: BEST_NAME_CASED
+  panel_best_name_bare_column: BEST_NAME_BARE_CASED
+  panel_dba_cased_column: BEST_DBA_CASED
+  panel_has_dba_column: HAS_DBA
   panel_cleaned_filename: panel_cleaned_names.parquet
   bmf_only_cleaned_filename: bmf_only_cleaned_names.parquet
   divergence_audit_filename: name_divergence_audit.json
