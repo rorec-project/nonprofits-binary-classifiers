@@ -89,6 +89,29 @@ def test_clean_names_does_not_block_religious_token_only_in_upstream_bare_name(
     assert audit["blocking_divergences"] == []
 
 
+def test_clean_names_excludes_rows_empty_after_suffix_stripping(tiny_registry) -> None:
+    _write_name_frames(
+        tiny_registry,
+        panel_name="FIRST AME ZION CHURCH, INC.",
+        bare_name="First AME Zion Church",
+    )
+    panel = pd.read_parquet(tiny_registry.names_panel_frame)
+    panel.loc[panel["EIN2"].eq("P002"), "name_raw"] = "INC"
+    panel.to_parquet(tiny_registry.names_panel_frame, index=False)
+    bmf_only = pd.read_parquet(tiny_registry.names_bmf_only_frame)
+    bmf_only.loc[:, "name_raw"] = "LLC"
+    bmf_only.to_parquet(tiny_registry.names_bmf_only_frame, index=False)
+
+    clean_names(tiny_registry.cfg, tiny_registry)
+
+    panel_cleaned = pd.read_parquet(tiny_registry.names_panel_cleaned)
+    bmf_only_cleaned = pd.read_parquet(tiny_registry.names_bmf_only_cleaned)
+    audit = json.loads(tiny_registry.names_divergence_audit.read_text())
+    assert panel_cleaned["EIN2"].tolist() == ["P001"]
+    assert bmf_only_cleaned.empty
+    assert audit["panel_rows_audited"] == 1
+
+
 def test_clean_names_blocks_religious_token_loss(tiny_registry, monkeypatch) -> None:
     _write_name_frames(
         tiny_registry,

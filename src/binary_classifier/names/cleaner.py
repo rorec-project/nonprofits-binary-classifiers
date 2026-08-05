@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,7 @@ _ACRONYMS = {
     "LDS",
 }
 _WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
+logger = logging.getLogger(__name__)
 
 
 def normalize_name(raw: object, *, strip_suffix: bool = True) -> str:
@@ -65,6 +67,8 @@ def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None
     bmf_only = pd.read_parquet(registry.names_bmf_only_frame).copy()
     panel["name_cleaned"] = panel["name_raw"].map(normalize_name)
     bmf_only["name_cleaned"] = bmf_only["name_raw"].map(normalize_name)
+    panel = _exclude_empty_cleaned_names(panel, "panel_scoped")
+    bmf_only = _exclude_empty_cleaned_names(bmf_only, "bmf_only")
 
     # Persist the audit before failing so a dangerous divergence is diagnosable.
     audit = _audit_panel(panel)
@@ -83,6 +87,17 @@ def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None
         raise ValueError(
             "Name cleaning divergence audit failed: " + "; ".join(blocking[:5]),
         )
+
+
+def _exclude_empty_cleaned_names(frame: pd.DataFrame, population: str) -> pd.DataFrame:
+    """Exclude names reduced to nothing by legal-suffix removal."""
+    usable = frame["name_cleaned"].str.strip().ne("")
+    excluded = int((~usable).sum())
+    if excluded:
+        logger.info(
+            "Excluded %d %s rows empty after suffix stripping.", excluded, population
+        )
+    return frame.loc[usable].copy()
 
 
 def _audit_panel(panel: pd.DataFrame) -> dict[str, object]:
