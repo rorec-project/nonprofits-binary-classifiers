@@ -39,6 +39,7 @@ _BMF_REQUIRED_COLUMNS = {
 _FRAME_COLUMNS = [
     "EIN2",
     "population",
+    "panel_scope",
     "name_raw",
     "name_raw_source",
     "name_cased",
@@ -68,17 +69,18 @@ def build_name_frame(
     """Build isolated panel and BMF-only name frames keyed by ``EIN2``.
 
     The BMF anti-join deliberately uses the full panel universe. The emitted panel
-    frame then applies the project's narrower 501(c)(3) charity scope.
+    frame then applies the configured panel scope.
     """
     panel = _load_panel(cfg.names, registry)
     missions = _load_missions(registry)
     bmf = _load_bmf(registry)
     contaminated_ein2s = _load_manifest_ein2s(registry)
 
-    _assert_panel_bmf_coverage(panel, bmf)
+    scoped_panel = _select_scoped_panel(panel, cfg.names.panel_scope_values)
+    _assert_panel_bmf_coverage(scoped_panel, bmf)
     panel_ein2s = set(panel["EIN2"])
     panel_frame, panel_counts = _build_panel_frame(
-        panel,
+        scoped_panel,
         missions,
         bmf,
         contaminated_ein2s,
@@ -137,7 +139,7 @@ def _load_panel(names: "NamesConfig", registry: "PathRegistry") -> pd.DataFrame:
     )
     panel = panel.rename(
         columns={
-            names.panel_scope_column: "COMMON_LEVEL1",
+            names.panel_scope_column: "panel_scope",
             names.panel_best_name_cased_column: "BEST_NAME_CASED",
             names.panel_dba_cased_column: "BEST_DBA_CASED",
             names.panel_has_dba_column: "HAS_DBA",
@@ -187,8 +189,7 @@ def _build_panel_frame(
     contaminated_ein2s: set[str],
     raw_name_columns: list[str],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    # Preserve the project's deliberate 501(c)(3) public-charity panel scope.
-    scoped = panel.loc[panel["COMMON_LEVEL1"].eq("501C3 CHARITY")].copy()
+    scoped = panel.copy()
     scoped = scoped.merge(missions, on="EIN2", how="left", validate="one_to_one")
     scoped = scoped.merge(
         _bmf_frame_columns(bmf), on="EIN2", how="left", validate="one_to_one"
@@ -210,7 +211,7 @@ def _build_panel_frame(
         name_raw_column=name_raw_column,
         name_raw_source=name_raw_column,
         name_cased_column="BEST_NAME_CASED",
-        population="panel_501c3",
+        population="panel_scoped",
         contaminated_ein2s=contaminated_ein2s,
         is_bmf_only=False,
     ), counts
@@ -255,6 +256,10 @@ def _finalize_frame(
     result = frame.loc[has_name].copy()
     result["name_raw"] = result[name_raw_column]
     result["name_raw_source"] = name_raw_source
+    result["panel_scope"] = result.get(
+        "panel_scope",
+        pd.Series(pd.NA, index=result.index, dtype="string"),
+    )
     result["name_cased"] = (
         result[name_cased_column] if name_cased_column is not None else pd.NA
     )
@@ -281,6 +286,17 @@ def _bmf_frame_columns(bmf: pd.DataFrame) -> pd.DataFrame:
             "is_external_religious_flag",
         ]
     ]
+
+
+def _select_scoped_panel(panel: pd.DataFrame, scope_values: list[str]) -> pd.DataFrame:
+    """Select panel organizations whose scope classification matches config."""
+    normalized = panel["panel_scope"].astype("string").str.strip()
+    normalized_values = [value.strip() for value in scope_values]
+    scoped = panel.loc[normalized.isin(normalized_values)].copy()
+    if scoped.empty:
+        values = ", ".join(normalized_values)
+        raise ValueError(f"N1 panel scope values [{values}] matched zero panel EIN2s")
+    return scoped
 
 
 def _panel_raw_name_column(

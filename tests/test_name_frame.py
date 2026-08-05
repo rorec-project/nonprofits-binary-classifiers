@@ -7,7 +7,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from binary_classifier.config import NamesExpectedCounts, load_config
+from pydantic import ValidationError
+
+from binary_classifier.config import NamesConfig, NamesExpectedCounts, load_config
 from binary_classifier.names.frame import (
     _collapse_panel,
     _read_collapsed_panel,
@@ -30,9 +32,13 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
     tiny_registry,
 ) -> None:
     """The public stage seam writes the two distinct name populations."""
+    tiny_registry.cfg.names.panel_scope_values = [
+        " 501C3 CHARITY ",
+        "501CX NONPROFIT",
+    ]
     tiny_registry.cfg.names.expected_counts = NamesExpectedCounts(
         panel_has_mission=1,
-        panel_name_only=1,
+        panel_name_only=2,
         panel_no_name_no_mission=0,
         panel_name_only_flagged=1,
         bmf_only=1,
@@ -114,25 +120,62 @@ def test_build_name_frame_derives_disjoint_panel_and_bmf_only_frames(
     panel = pd.read_parquet(tiny_registry.names_panel_frame)
     bmf_only = pd.read_parquet(tiny_registry.names_bmf_only_frame)
 
-    assert panel["EIN2"].tolist() == ["P001", "P002"]
-    assert panel["has_mission"].tolist() == [True, False]
-    assert panel["is_name_only"].tolist() == [False, True]
-    assert panel["is_bmf_only"].tolist() == [False, False]
-    assert panel["name_bare"].tolist() == ["Mission Charity", "Name Only Charity"]
-    assert panel["name_raw"].tolist() == ["Mission Charity Inc", "Name Only Charity Inc"]
-    assert panel["name_cased"].tolist() == ["Mission Charity", "Name Only Charity"]
+    assert panel["EIN2"].tolist() == ["P001", "P002", "P003"]
+    assert panel["has_mission"].tolist() == [True, False, False]
+    assert panel["is_name_only"].tolist() == [False, True, True]
+    assert panel["is_bmf_only"].tolist() == [False, False, False]
+    assert panel["panel_scope"].tolist() == [
+        "501C3 CHARITY",
+        "501C3 CHARITY",
+        "501CX NONPROFIT",
+    ]
+    assert panel["name_bare"].tolist() == [
+        "Mission Charity",
+        "Name Only Charity",
+        "Out of Scope",
+    ]
+    assert panel["name_raw"].tolist() == [
+        "Mission Charity Inc",
+        "Name Only Charity Inc",
+        "Out of Scope",
+    ]
+    assert panel["name_cased"].tolist() == [
+        "Mission Charity",
+        "Name Only Charity",
+        "Out of Scope",
+    ]
     assert panel["dba_cased"].iloc[0] == "Grace Church"
     assert pd.isna(panel["dba_cased"].iloc[1])
-    assert panel["has_dba"].tolist() == [True, False]
-    assert panel["is_external_religious_flag"].tolist() == [False, True]
+    assert panel["has_dba"].tolist() == [True, False, True]
+    assert panel["is_external_religious_flag"].tolist() == [False, True, False]
     assert panel["is_external_religious_flag"].notna().all()
-    assert panel["ntee_major_group"].tolist() == ["?", "X"]
+    assert panel["ntee_major_group"].tolist() == ["?", "X", "P"]
     assert bmf_only["EIN2"].tolist() == ["B001"]
     assert bmf_only["is_bmf_only"].tolist() == [True]
     assert bmf_only["is_name_only"].tolist() == [False]
     assert bmf_only["is_ntee_x"].tolist() == [True]
     assert bmf_only["is_external_religious_flag"].notna().all()
     assert bmf_only["name_raw_source"].tolist() == ["ORG_NAME_CURRENT"]
+    assert bmf_only["panel_scope"].isna().all()
+
+
+@pytest.mark.parametrize(
+    "values, message",
+    [
+        (["A", " A "], "unique"),
+        (["A", "   "], "non-empty"),
+        ([], "at least 1|non-empty"),
+    ],
+)
+def test_names_config_validates_scope_values(values, message) -> None:
+    with pytest.raises(ValidationError, match=message):
+        NamesConfig(panel_scope_values=values)
+
+
+def test_names_config_trims_scope_values() -> None:
+    config = NamesConfig(panel_scope_values=[" A ", "B"])
+
+    assert config.panel_scope_values == ["A", "B"]
 
 
 def test_collapse_panel_uses_longest_raw_name_with_tax_year_tie_break() -> None:
@@ -327,7 +370,7 @@ def test_build_name_frame_flags_manifest_membership_and_excludes_missing_names(
     assert panel["is_manifest_contaminated"].tolist() == [True]
     assert bmf_only["EIN2"].tolist() == ["B001"]
     assert bmf_only["is_manifest_contaminated"].tolist() == [True]
-    assert any("Excluded 2 panel_501c3 rows" in record.message for record in caplog.records)
+    assert any("Excluded 2 panel_scoped rows" in record.message for record in caplog.records)
     assert any(
         "panel_has_mission=0 panel_name_only=1 panel_no_name_no_mission=2 "
         "panel_name_only_flagged=0 bmf_only=1 bmf_only_flagged=0." in record.message
@@ -382,6 +425,47 @@ def test_build_name_frame_rejects_panel_ein2_missing_from_bmf(tiny_registry) -> 
     ).to_parquet(tiny_registry.bmf_parquet, index=False)
 
     with pytest.raises(ValueError, match="Panel EIN2 values missing from BMF: P001"):
+        build_name_frame(tiny_registry.cfg, tiny_registry)
+
+    assert not tiny_registry.names_panel_frame.exists()
+    assert not tiny_registry.names_bmf_only_frame.exists()
+
+
+def test_build_name_frame_rejects_when_scope_matches_no_panel_ein2(
+    tiny_registry,
+) -> None:
+    """BMF coverage is only required for the scoped panel frame using its flags."""
+    tiny_registry.panel_final_parquet.parent.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "EIN2": "P001",
+                "TAX_YEAR": 2023,
+                "COMMON_LEVEL1": "501CX NONPROFIT",
+                "F9_00_ORG_NAME_L1": "Out Of Scope Organization",
+                "BEST_NAME_CASED": "Out Of Scope Organization",
+            },
+        ]
+    ).to_parquet(tiny_registry.panel_final_parquet, index=False)
+    pd.DataFrame(
+        [{"EIN2": "P001", "BEST_NAME_BARE_CASED": "Out Of Scope Organization"}],
+    ).to_parquet(tiny_registry.panel_filled_gaps_parquet, index=False)
+    pd.DataFrame(columns=["EIN2", "LONGEST_MISSION"]).to_parquet(
+        tiny_registry.missions_parquet,
+        index=False,
+    )
+    pd.DataFrame(
+        [
+            {
+                "EIN2": "B001",
+                "ORG_NAME_CURRENT": "BMF ONLY",
+                "NTEE_IRS": "P20",
+                "BMF_FOUNDATION_CODE": 0,
+            },
+        ]
+    ).to_parquet(tiny_registry.bmf_parquet, index=False)
+
+    with pytest.raises(ValueError, match="panel scope values .* matched zero panel EIN2s"):
         build_name_frame(tiny_registry.cfg, tiny_registry)
 
     assert not tiny_registry.names_panel_frame.exists()
@@ -509,4 +593,5 @@ def test_production_config_has_names_snapshot_counts() -> None:
         bmf_only=2_004_353,
         bmf_only_flagged=396_379,
     )
+    assert cfg.names.panel_scope_values == ["501C3 CHARITY"]
     assert cfg.names.panel_raw_name_columns == ["F9_00_ORG_NAME_L1", "NAME_CASED"]

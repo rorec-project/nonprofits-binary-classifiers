@@ -97,7 +97,7 @@ def test_run_name_validation_reports_external_flags_and_gold_offset(
 
     report = json.loads(tiny_registry.names_validation.read_text())
     external = report["external_flag_validation"]
-    panel = external["populations"]["panel_501c3"]["suffix_stripped"]
+    panel = external["populations"]["panel_scoped"]["suffix_stripped"]
     bmf_only = external["populations"]["bmf_only"]["suffix_stripped"]
     assert panel["flag_base_rate"] == 0.25
     assert panel["model_positive_rate"] == 0.25
@@ -174,7 +174,7 @@ def _write_validation_inputs(registry) -> None:
             scores.append(
                 {
                     "EIN2": ein2,
-                    "population": "panel_501c3",
+                    "population": "panel_scoped",
                     "input_variant": variant,
                     "prob_raw": probability,
                     "lexicon_rule_label": lexicon_label,
@@ -187,7 +187,7 @@ def _write_validation_inputs(registry) -> None:
 def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> None:
     _write_completed_name_gold_template(registry)
     ein2s = ["A", "B", "C", "D", "E", "F", "G", "H"]
-    populations = ["panel_501c3"] * 4 + ["bmf_only"] * 4
+    populations = ["panel_scoped"] * 4 + ["bmf_only"] * 4
     flags = [True, False, False, False, True, True, False, False]
     has_mission = [True] * 4 + [False] * 4
     pd.DataFrame(

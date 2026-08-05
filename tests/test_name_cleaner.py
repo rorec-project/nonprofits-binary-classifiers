@@ -42,13 +42,13 @@ def _write_name_frames(registry, *, panel_name: str, bare_name: str) -> None:
                 "EIN2": "P001",
                 "name_raw": panel_name,
                 "name_bare": bare_name,
-                "population": "panel_501c3",
+                "population": "panel_scoped",
             },
             {
                 "EIN2": "P002",
                 "name_raw": "FOO BAR INC.",
                 "name_bare": "Foo Baz",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
             },
         ],
     ).to_parquet(registry.names_panel_frame, index=False)

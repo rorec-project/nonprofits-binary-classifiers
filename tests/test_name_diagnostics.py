@@ -19,7 +19,7 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
         [
             {
                 "EIN2": "P001",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
                 "name_cased": "Heritage Academy",
                 "dba_cased": "Grace Bible Church",
                 "has_dba": True,
@@ -27,7 +27,7 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
             },
             {
                 "EIN2": "P002",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
                 "name_cased": "First Baptist Church",
                 "dba_cased": "Community Center",
                 "has_dba": True,
@@ -35,7 +35,7 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
             },
             {
                 "EIN2": "P003",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
                 "name_cased": "No DBA Organization",
                 "dba_cased": None,
                 "has_dba": False,
@@ -43,7 +43,7 @@ def test_run_name_diagnostics_writes_probe_scores_and_dba_token_cases(
             },
             {
                 "EIN2": "P004",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
                 "name_cased": "First Baptist Church",
                 "dba_cased": "Grace Bible Church",
                 "has_dba": True,

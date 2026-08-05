@@ -95,6 +95,7 @@ names:
   # breaks equal-length ties.
   panel_tax_year_column: TAX_YEAR
   panel_scope_column: COMMON_LEVEL1
+  panel_scope_values: [501C3 CHARITY]
   panel_raw_name_columns: [F9_00_ORG_NAME_L1, NAME_CASED]
   panel_best_name_cased_column: BEST_NAME_CASED
   panel_best_name_bare_column: BEST_NAME_BARE_CASED

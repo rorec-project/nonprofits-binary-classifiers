@@ -317,7 +317,7 @@ def _external_flag_report(
     )
     flags = pd.concat(
         [
-            panel.assign(population="panel_501c3"),
+            panel.assign(population="panel_scoped"),
             bmf_only.assign(population="bmf_only"),
         ],
         ignore_index=True,
@@ -366,7 +366,7 @@ def _external_flag_report(
     gold_offset = _gold_construct_offset(cfg, registry, flags, paired)
     shift = _base_rate_shift(
         cfg,
-        populations["panel_501c3"]["suffix_stripped"],
+        populations["panel_scoped"]["suffix_stripped"],
         populations["bmf_only"]["suffix_stripped"],
     )
     if gold_offset is not None:
@@ -407,7 +407,7 @@ def _gold_construct_offset(
     gold["EIN2"] = _normalize_ein2(gold["EIN2"])
     gold["human_label"] = pd.to_numeric(gold["human_label"], errors="coerce")
     overlap = gold.merge(
-        flags.loc[flags["population"].eq("panel_501c3")],
+        flags.loc[flags["population"].eq("panel_scoped")],
         on="EIN2",
         how="inner",
         validate="one_to_one",
@@ -492,10 +492,10 @@ def _rate_ratio(numerator: float, denominator: float) -> float | None:
 def _validate_external_scores(frame: pd.DataFrame) -> None:
     """Validate external-label inputs before calculating diagnostic metrics."""
     populations = set(frame["population"].astype(str))
-    required_populations = {"panel_501c3", "bmf_only"}
+    required_populations = {"panel_scoped", "bmf_only"}
     if populations != required_populations:
         raise ValueError(
-            "External-flag validation requires scores for panel_501c3 and bmf_only."
+            "External-flag validation requires scores for panel_scoped and bmf_only."
         )
     variants_by_population = {
         population: set(group["input_variant"].astype(str))

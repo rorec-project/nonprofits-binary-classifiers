@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ── Sub-configs ──────────────────────────────────────────────────────────────
 
@@ -414,6 +414,10 @@ class NamesConfig(BaseModel):
     panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
     panel_tax_year_column: str = "TAX_YEAR"
     panel_scope_column: str = "COMMON_LEVEL1"
+    panel_scope_values: list[str] = Field(
+        default_factory=lambda: ["501C3 CHARITY"],
+        min_length=1,
+    )
     panel_raw_name_columns: list[str] = Field(
         default_factory=lambda: ["F9_00_ORG_NAME_L1", "NAME_CASED"],
         min_length=1,
@@ -451,6 +455,17 @@ class NamesConfig(BaseModel):
     diagnostic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     base_rate_shift_ratio_tolerance: float = Field(default=0.25, ge=0.0)
     expected_counts: NamesExpectedCounts | None = None
+
+    @field_validator("panel_scope_values")
+    @classmethod
+    def validate_panel_scope_values(cls, values: list[str]) -> list[str]:
+        """Normalize configured scope values and reject ambiguous scopes."""
+        trimmed = [value.strip() for value in values]
+        if any(not value for value in trimmed):
+            raise ValueError("panel_scope_values must contain non-empty values")
+        if len(trimmed) != len(set(trimmed)):
+            raise ValueError("panel_scope_values must contain unique values")
+        return trimmed
 
 
 class QCConfig(BaseModel):

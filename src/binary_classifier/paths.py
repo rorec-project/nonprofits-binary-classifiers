@@ -101,7 +101,7 @@ class PathRegistry:
 
     @property
     def names_panel_frame(self) -> Path:
-        """501(c)(3) panel name frame."""
+        """Configured-scope panel name frame."""
         return self.names_interim_dir / "panel_name_frame.parquet"
 
     @property

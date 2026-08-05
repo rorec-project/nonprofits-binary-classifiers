@@ -237,7 +237,7 @@ def _build_dba_case_study(
     report: dict[str, object] = {
         "diagnostic_only": True,
         "production_input_variant": False,
-        "population": "panel_501c3",
+        "population": "panel_scoped",
         "grain": "EIN2 using BEST_NAME_CASED and BEST_DBA_CASED",
         "dba_having_organizations": len(candidates),
         "dba_adds_religious_token_count": int(

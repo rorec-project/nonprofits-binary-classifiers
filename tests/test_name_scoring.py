@@ -111,7 +111,7 @@ def _write_cleaned_frames(registry) -> None:
         [
             {
                 "EIN2": "P001",
-                "population": "panel_501c3",
+                "population": "panel_scoped",
                 "name_raw": "FIRST BAPTIST CHURCH, INC.",
                 "name_cleaned": "First Baptist Church",
             },

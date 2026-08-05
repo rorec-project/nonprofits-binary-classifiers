@@ -44,6 +44,12 @@ The pipeline is **config-driven**: a YAML in `config/` is the source of truth fo
 - `f1_ci_floor` — Minimum lower bound on the bootstrap confidence interval for minority-class F1 required to freeze silver labels.
 - `abstain_on_fabricated_positive` — When `true`, any positive label that carries a fabricated evidence span is treated as an abstain (`None`) before aggregation.
 
+### `names`
+- `panel_scope_values` — Trimmed, non-empty, unique panel classification values
+  selected for the names arm. The shipped configuration selects `501C3 CHARITY`.
+  The emitted panel population is `panel_scoped`; `bmf_only` remains the full BMF
+  minus the full panel universe.
+
 ### `aggregation`
 - `method` — Production Stage 04 aggregation method. This is intentionally majority-only.
 - `comparison_arms` — Optional Dawid-Skene/CROWDLAB arms for Stage 11 sensitivity diagnostics only; they are not production continuation methods. These require the `diagnostics` optional extra (`crowd-kit`, `cleanlab`).

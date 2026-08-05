@@ -259,11 +259,15 @@ def _assert_name_artifacts(registry) -> None:
 
     assert set(panel_frame["EIN2"]) == {"P001", "P002", "P003"}
     assert panel_frame["EIN2"].is_unique
+    assert panel_frame["population"].eq("panel_scoped").all()
+    assert panel_frame["panel_scope"].notna().all()
     assert set(panel_cleaned["EIN2"]) == set(panel_frame["EIN2"])
     assert panel_cleaned["EIN2"].is_unique
     assert {"EIN2", "name_raw", "name_cleaned"}.issubset(panel_cleaned.columns)
     assert set(bmf_only_frame["EIN2"]) == {"B001", "B002", "B003", "B004"}
     assert bmf_only_frame["EIN2"].is_unique
+    assert bmf_only_frame["population"].eq("bmf_only").all()
+    assert bmf_only_frame["panel_scope"].isna().all()
     assert set(bmf_only_cleaned["EIN2"]) == set(bmf_only_frame["EIN2"])
     assert bmf_only_cleaned["EIN2"].is_unique
     assert {"EIN2", "name_raw", "name_cleaned"}.issubset(bmf_only_cleaned.columns)
