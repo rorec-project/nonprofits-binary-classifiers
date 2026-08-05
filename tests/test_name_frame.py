@@ -392,8 +392,8 @@ def test_build_name_frame_flags_manifest_membership_and_excludes_missing_names(
         build_name_frame(tiny_registry.cfg, tiny_registry)
 
 
-def test_build_name_frame_rejects_panel_ein2_missing_from_bmf(tiny_registry) -> None:
-    """Panel rows must have BMF metadata before external flags are emitted."""
+def test_build_name_frame_retains_panel_ein2_missing_from_bmf(tiny_registry) -> None:
+    """BMF enrichment is optional for scoped panel organizations."""
     tiny_registry.panel_final_parquet.parent.mkdir(parents=True)
     pd.DataFrame(
         [
@@ -424,11 +424,14 @@ def test_build_name_frame_rejects_panel_ein2_missing_from_bmf(tiny_registry) -> 
         ],
     ).to_parquet(tiny_registry.bmf_parquet, index=False)
 
-    with pytest.raises(ValueError, match="Panel EIN2 values missing from BMF: P001"):
-        build_name_frame(tiny_registry.cfg, tiny_registry)
+    build_name_frame(tiny_registry.cfg, tiny_registry)
 
-    assert not tiny_registry.names_panel_frame.exists()
-    assert not tiny_registry.names_bmf_only_frame.exists()
+    panel = pd.read_parquet(tiny_registry.names_panel_frame)
+    assert panel["EIN2"].tolist() == ["P001"]
+    assert panel["has_bmf"].tolist() == [False]
+    assert panel[
+        ["NTEE_IRS", "BMF_FOUNDATION_CODE", "is_external_religious_flag"]
+    ].isna().all().all()
 
 
 def test_build_name_frame_rejects_when_scope_matches_no_panel_ein2(

@@ -49,6 +49,7 @@ _FRAME_COLUMNS = [
     "has_mission",
     "is_name_only",
     "is_bmf_only",
+    "has_bmf",
     "is_manifest_contaminated",
     "NTEE_IRS",
     "BMF_FOUNDATION_CODE",
@@ -77,7 +78,6 @@ def build_name_frame(
     contaminated_ein2s = _load_manifest_ein2s(registry)
 
     scoped_panel = _select_scoped_panel(panel, cfg.names.panel_scope_values)
-    _assert_panel_bmf_coverage(scoped_panel, bmf)
     panel_ein2s = set(panel["EIN2"])
     panel_frame, panel_counts = _build_panel_frame(
         scoped_panel,
@@ -178,6 +178,7 @@ def _load_bmf(registry: "PathRegistry") -> pd.DataFrame:
         bmf["BMF_FOUNDATION_CODE"], errors="coerce"
     ).eq(10)
     bmf["is_external_religious_flag"] = bmf["is_ntee_x"] | bmf["is_church_foundation"]
+    bmf["has_bmf"] = True
     return bmf
 
 
@@ -194,6 +195,7 @@ def _build_panel_frame(
     scoped = scoped.merge(
         _bmf_frame_columns(bmf), on="EIN2", how="left", validate="one_to_one"
     )
+    scoped["has_bmf"] = scoped["has_bmf"].fillna(False).astype(bool)
     scoped["has_mission"] = scoped["has_mission"].fillna(False).astype(bool)
     name_raw_column = _panel_raw_name_column(scoped, raw_name_columns)
     has_name = _has_text(scoped[name_raw_column])
@@ -278,6 +280,7 @@ def _bmf_frame_columns(bmf: pd.DataFrame) -> pd.DataFrame:
     return bmf[
         [
             "EIN2",
+            "has_bmf",
             "NTEE_IRS",
             "BMF_FOUNDATION_CODE",
             "ntee_major_group",
@@ -409,14 +412,6 @@ def _assert_disjoint_frames(panel: pd.DataFrame, bmf_only: pd.DataFrame) -> None
     overlap = set(panel["EIN2"]).intersection(bmf_only["EIN2"])
     if overlap:
         raise ValueError(f"Panel and BMF-only frames overlap: {sorted(overlap)[:5]}")
-
-
-def _assert_panel_bmf_coverage(panel: pd.DataFrame, bmf: pd.DataFrame) -> None:
-    missing = sorted(set(panel["EIN2"]).difference(bmf["EIN2"]))
-    if missing:
-        raise ValueError(
-            f"Panel EIN2 values missing from BMF: {', '.join(missing[:5])}"
-        )
 
 
 def _assert_unique_ein2(frame: pd.DataFrame, source: str) -> None:

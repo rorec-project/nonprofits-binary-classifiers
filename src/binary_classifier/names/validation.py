@@ -309,11 +309,11 @@ def _external_flag_report(
         raise ValueError("External-flag validation requires the BMF-only name frame.")
     panel = _read_parquet(
         registry.names_panel_cleaned,
-        {"EIN2", _FLAG_COLUMN},
+        {"EIN2", "has_bmf", _FLAG_COLUMN},
     )
     bmf_only = _read_parquet(
         registry.names_bmf_only_cleaned,
-        {"EIN2", _FLAG_COLUMN},
+        {"EIN2", "has_bmf", _FLAG_COLUMN},
     )
     flags = pd.concat(
         [
@@ -321,9 +321,24 @@ def _external_flag_report(
             bmf_only.assign(population="bmf_only"),
         ],
         ignore_index=True,
-    )[["EIN2", "population", _FLAG_COLUMN]]
+    )[["EIN2", "population", "has_bmf", _FLAG_COLUMN]]
     flags["EIN2"] = _normalize_ein2(flags["EIN2"])
     _assert_unique(flags, ["EIN2"], "external flag frame")
+    coverage = {
+        population: {
+            "total_rows": len(frame),
+            "bmf_covered_rows": int(frame["has_bmf"].sum()),
+            "bmf_coverage_rate": float(frame["has_bmf"].mean()),
+        }
+        for population, frame in flags.groupby("population", sort=True)
+    }
+    if not flags.loc[flags["population"].eq("panel_scoped"), "has_bmf"].any():
+        return {
+            "status": "unavailable",
+            "reason": "No panel_scoped rows have BMF enrichment for external flags.",
+            "populations": coverage,
+        }
+    flags = flags.loc[flags["has_bmf"]].copy()
     scores = _read_parquet(
         registry.names_scores,
         {"EIN2", "input_variant", "prob_raw", "population"},
@@ -363,6 +378,9 @@ def _external_flag_report(
             ),
         }
 
+    for population, details in populations.items():
+        details.update(coverage[population])
+
     gold_offset = _gold_construct_offset(cfg, registry, flags, paired)
     shift = _base_rate_shift(
         cfg,
@@ -375,6 +393,7 @@ def _external_flag_report(
             "correction_applied": False,
         }
     return {
+        "status": "available",
         "populations": populations,
         "construct_offset": gold_offset,
         "base_rate_shift": shift,

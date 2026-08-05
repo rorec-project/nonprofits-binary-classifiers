@@ -99,6 +99,10 @@ def test_run_name_validation_reports_external_flags_and_gold_offset(
     external = report["external_flag_validation"]
     panel = external["populations"]["panel_scoped"]["suffix_stripped"]
     bmf_only = external["populations"]["bmf_only"]["suffix_stripped"]
+    assert external["status"] == "available"
+    assert external["populations"]["panel_scoped"]["total_rows"] == 4
+    assert external["populations"]["panel_scoped"]["bmf_covered_rows"] == 4
+    assert external["populations"]["panel_scoped"]["bmf_coverage_rate"] == 1.0
     assert panel["flag_base_rate"] == 0.25
     assert panel["model_positive_rate"] == 0.25
     assert bmf_only["flag_base_rate"] == 0.5
@@ -142,6 +146,62 @@ def test_run_name_validation_fails_flat_external_flag_shift(
     assert shift["model_positive_rate_ratio"] == 1.0
     assert shift["verdict"] == "FAIL"
     assert "input shape rather than measuring religion" in shift["interpretation"]
+
+
+def test_run_name_validation_reports_unavailable_external_flags_without_bmf_panel_rows(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """Missing BMF enrichment does not block independent names validation."""
+    _write_external_validation_inputs(tiny_registry, flat_model_rate=False)
+    panel = pd.read_parquet(tiny_registry.names_panel_cleaned)
+    panel["has_bmf"] = False
+    panel["is_external_religious_flag"] = pd.NA
+    panel.to_parquet(tiny_registry.names_panel_cleaned, index=False)
+
+    run_name_validation(tiny_config, tiny_registry)
+
+    external = json.loads(tiny_registry.names_validation.read_text())["external_flag_validation"]
+    assert external == {
+        "status": "unavailable",
+        "reason": "No panel_scoped rows have BMF enrichment for external flags.",
+        "populations": {
+            "bmf_only": {
+                "total_rows": 4,
+                "bmf_covered_rows": 4,
+                "bmf_coverage_rate": 1.0,
+            },
+            "panel_scoped": {
+                "total_rows": 4,
+                "bmf_covered_rows": 0,
+                "bmf_coverage_rate": 0.0,
+            },
+        },
+    }
+
+
+def test_run_name_validation_excludes_bmf_uncovered_panel_rows_from_flag_rates(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """External flags use only panel rows enriched from the BMF."""
+    _write_external_validation_inputs(tiny_registry, flat_model_rate=False)
+    panel = pd.read_parquet(tiny_registry.names_panel_cleaned)
+    panel.loc[3, "has_bmf"] = False
+    panel["is_external_religious_flag"] = panel["is_external_religious_flag"].astype(
+        "boolean"
+    )
+    panel.loc[3, "is_external_religious_flag"] = pd.NA
+    panel.to_parquet(tiny_registry.names_panel_cleaned, index=False)
+
+    run_name_validation(tiny_config, tiny_registry)
+
+    external = json.loads(tiny_registry.names_validation.read_text())["external_flag_validation"]
+    panel_report = external["populations"]["panel_scoped"]
+    assert panel_report["total_rows"] == 4
+    assert panel_report["bmf_covered_rows"] == 3
+    assert panel_report["bmf_coverage_rate"] == 0.75
+    assert panel_report["suffix_stripped"]["n"] == 3
 
 
 def _write_validation_inputs(registry) -> None:
@@ -195,6 +255,7 @@ def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> Non
             "EIN2": ein2s[:4],
             "has_mission": has_mission[:4],
             "is_manifest_contaminated": [False] * 4,
+            "has_bmf": [True] * 4,
             "is_external_religious_flag": flags[:4],
         },
     ).to_parquet(registry.names_panel_cleaned, index=False)
@@ -202,6 +263,7 @@ def _write_external_validation_inputs(registry, *, flat_model_rate: bool) -> Non
         {
             "EIN2": ein2s[4:],
             "population": ["bmf_only"] * 4,
+            "has_bmf": [True] * 4,
             "is_external_religious_flag": flags[4:],
         },
     ).to_parquet(registry.names_bmf_only_cleaned, index=False)
