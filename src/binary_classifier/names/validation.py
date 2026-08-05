@@ -184,7 +184,9 @@ def _bmf_only_gold_report(
 def _load_paired_frame(registry: PathRegistry) -> tuple[pd.DataFrame, dict[str, int]]:
     panel = _read_parquet(registry.names_panel_cleaned, _PANEL_COLUMNS)
     scores = _read_parquet(registry.names_scores, _NAME_SCORE_COLUMNS)
-    missions = _read_parquet(registry.predictions_full_parquet, _MISSION_SCORE_COLUMNS)
+    missions = _read_parquet(registry.predictions_full_parquet, _MISSION_SCORE_COLUMNS)[
+        list(_MISSION_SCORE_COLUMNS)
+    ]
     _assert_unique(panel, ["EIN2"], "panel name frame")
     _assert_unique(scores, ["EIN2", "input_variant"], "name scores")
     _assert_unique(missions, ["EIN2"], "mission predictions")

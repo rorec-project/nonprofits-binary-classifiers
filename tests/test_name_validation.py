@@ -217,6 +217,7 @@ def _write_validation_inputs(registry) -> None:
         {
             "EIN2": ["A", "B", "C", "D", "X", "R"],
             "pred_label": [1, 1, 0, 0, 1, 0],
+            "prob_raw": [0.9, 0.8, 0.2, 0.1, 0.9, 0.2],
             "prob_calibrated": [0.9, 0.8, 0.2, 0.1, 0.9, None],
         },
     ).to_parquet(registry.predictions_full_parquet, index=False)
