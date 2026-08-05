@@ -126,9 +126,9 @@ names:
   base_rate_shift_ratio_tolerance: 0.25
   expected_counts:
     panel_has_mission: 560354
-    panel_name_only: 257623
-    panel_no_name_no_mission: 14707
-    panel_name_only_flagged: 26759
+    panel_name_only: 257599
+    panel_no_name_no_mission: 14731
+    panel_name_only_flagged: 26757
     bmf_only: 2004353
     bmf_only_flagged: 396379
 

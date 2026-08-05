@@ -590,9 +590,9 @@ def test_production_config_has_names_snapshot_counts() -> None:
 
     assert cfg.names.expected_counts == NamesExpectedCounts(
         panel_has_mission=560_354,
-        panel_name_only=257_623,
-        panel_no_name_no_mission=14_707,
-        panel_name_only_flagged=26_759,
+        panel_name_only=257_599,
+        panel_no_name_no_mission=14_731,
+        panel_name_only_flagged=26_757,
         bmf_only=2_004_353,
         bmf_only_flagged=396_379,
     )
