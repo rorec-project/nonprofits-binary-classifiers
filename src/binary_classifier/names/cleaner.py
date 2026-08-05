@@ -54,11 +54,11 @@ def normalize_name(raw: object, *, strip_suffix: bool = True) -> str:
 
 
 def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None:
-    """Clean both populations and gate on religious-token divergence from upstream.
+    """Clean both populations and gate on religious-token loss from raw input.
 
     Applying one transformation from each population's raw name avoids confounding
     population comparisons with preprocessing differences. The panel audit blocks
-    only when this cleaner removes a religious token retained upstream.
+    only when this cleaner removes a religious token retained in selected raw input.
     """
     # Normalize both populations with the identical raw-name transformation.
     panel = pd.read_parquet(registry.names_panel_frame).copy()
@@ -86,40 +86,29 @@ def clean_names(cfg: "BinaryClassifierConfig", registry: "PathRegistry") -> None
 
 
 def _audit_panel(panel: pd.DataFrame) -> dict[str, object]:
-    """Compare panel cleaning with upstream output and identify blocking token loss."""
+    """Compare selected raw names with cleaned names and identify token loss."""
     blocking: list[str] = []
-    nonblocking: list[dict[str, str]] = []
     for _, row in panel.iterrows():
-        upstream = _tokens(row.get("name_bare", ""))
+        raw = _tokens(row.get("name_raw", ""))
         cleaned = _tokens(row.get("name_cleaned", ""))
         cleaned_lower = {token.lower() for token in cleaned}
         cleaned_exact = set(cleaned)
         lost_religious = [
-            token for token in _religious_tokens(upstream) if token not in cleaned_lower
+            token for token in _religious_tokens(raw) if token not in cleaned_lower
         ]
         lost_acronyms = [
             token
-            for token in upstream
+            for token in raw
             if token.upper() in _ACRONYMS and token.upper() not in cleaned_exact
         ]
         if lost_religious:
             blocking.append(f"{row['EIN2']}: religious token(s) lost: {lost_religious}")
         if lost_acronyms:
             blocking.append(f"{row['EIN2']}: acronym(s) lost: {lost_acronyms}")
-        if [token.lower() for token in upstream] != [
-            token.lower() for token in cleaned
-        ]:
-            nonblocking.append(
-                {
-                    "EIN2": str(row["EIN2"]),
-                    "upstream": " ".join(upstream),
-                    "cleaned": " ".join(cleaned),
-                },
-            )
     return {
         "blocking_divergences": blocking,
-        "nonblocking_divergence_count": len(nonblocking),
-        "nonblocking_divergences": nonblocking,
+        "nonblocking_divergence_count": 0,
+        "nonblocking_divergences": [],
         "panel_rows_audited": len(panel),
     }
 

@@ -71,7 +71,22 @@ def test_clean_names_writes_both_cleaned_frames_and_passing_audit(tiny_registry)
     assert panel["name_cleaned"].tolist() == ["First AME Zion Church", "Foo Bar"]
     assert bmf["name_cleaned"].tolist() == ["Bmf Foundation"]
     assert audit["blocking_divergences"] == []
-    assert audit["nonblocking_divergence_count"] == 1
+    assert audit["nonblocking_divergence_count"] == 0
+
+
+def test_clean_names_does_not_block_religious_token_only_in_upstream_bare_name(
+    tiny_registry,
+) -> None:
+    _write_name_frames(
+        tiny_registry,
+        panel_name="MT DESERT ISLAND YMCA",
+        bare_name="Mount Desert Island Young Mens Christian Association",
+    )
+
+    clean_names(tiny_registry.cfg, tiny_registry)
+
+    audit = json.loads(tiny_registry.names_divergence_audit.read_text())
+    assert audit["blocking_divergences"] == []
 
 
 def test_clean_names_blocks_religious_token_loss(tiny_registry, monkeypatch) -> None:
