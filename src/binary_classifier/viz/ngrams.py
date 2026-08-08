@@ -32,6 +32,7 @@ def ngram_log_odds(
     ax: Axes,
     *,
     top_k: int = 30,
+    stopwords: set[str] | list[str] | None = None,
 ) -> None:
     """Plot signed religious-vs-nonreligious n-gram log odds.
 
@@ -45,6 +46,7 @@ def ngram_log_odds(
             labels where ``1`` is religious and ``0`` is nonreligious.
         ax: Matplotlib axes to draw into.
         top_k: Maximum number of n-grams to display.
+        stopwords: Optional tokens dropped before n-gram assembly.
 
     Raises:
         ValueError: If required columns are missing, labels are malformed, both
@@ -64,6 +66,7 @@ def ngram_log_odds(
         ngram_range=(1, 2),
         method="naive",
         min_df=5,
+        stopwords=stopwords,
     )
 
     order = _top_absolute_order(log_odds, top_k)
@@ -85,8 +88,19 @@ def ngram_weighted_log_odds(
     *,
     ngram_range: tuple[int, int],
     top_k: int = 30,
+    stopwords: set[str] | list[str] | None = None,
 ) -> None:
-    """Plot Monroe-style weighted n-gram log-odds z-scores."""
+    """Plot Monroe-style weighted n-gram log-odds z-scores.
+
+    Args:
+        silver_df_with_text: DataFrame containing mission text and binary silver
+            labels where ``1`` is religious and ``0`` is nonreligious.
+        ax: Matplotlib axes to draw into.
+        ngram_range: CountVectorizer n-gram range.
+        top_k: Maximum number of n-grams to display.
+        stopwords: Optional tokens dropped before n-gram assembly.
+
+    """
     if top_k <= 0:
         raise ValueError("top_k must be positive.")
     text_col = _detect_column(silver_df_with_text, _TEXT_COLUMNS, "text")
@@ -98,6 +112,7 @@ def ngram_weighted_log_odds(
         ngram_range=ngram_range,
         method="weighted",
         min_df=5,
+        stopwords=stopwords,
     )
 
     order = _top_absolute_order(z_scores, top_k)

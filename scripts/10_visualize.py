@@ -84,8 +84,34 @@ _POPULATION_NGRAM_RANGES = (
     ("trigram", (3, 3)),
 )
 
+# Decoding residue. `nbsp` is what is left of an undecoded `&nbsp;` entity in the
+# upstream mission text; it is a defect artifact, not a word. It reaches the
+# encoder and is baked into the trained and inferred artifacts, so it is stripped
+# here at the visualization stage only — `mission_text` itself is deliberately
+# left untouched because it also feeds training, inference, evaluation, and
+# prevalence, none of which would be worth re-running for a 0.13% defect.
+_DECODING_RESIDUE_STOPWORDS = frozenset({"nbsp"})
 
-def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
+# IRS/filing boilerplate. A documented analyst choice, not a defect: these tokens
+# describe the filing instrument ("internal revenue code section 501") rather
+# than the mission being classified.
+_FILING_BOILERPLATE_STOPWORDS = frozenset(
+    {"internal", "revenue", "code", "section", "501"}
+)
+
+# Applied to every language figure: silver-pool and population, keyness frames
+# and wordclouds alike.
+_LANGUAGE_STOPWORDS: set[str] = set(
+    _DECODING_RESIDUE_STOPWORDS | _FILING_BOILERPLATE_STOPWORDS
+)
+
+
+def run_visualization(
+    cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+    *,
+    only: Sequence[str] | None = None,
+) -> None:
     """Render every available stage-10 visualization artifact.
 
     Missing or schema-incompatible inputs are logged as skips so the script can
@@ -94,6 +120,10 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
     Args:
         cfg: Validated task configuration.
         registry: Path registry rooted at the selected config.
+        only: Optional substrings selecting a subset of renderers by name. When
+            omitted, every renderer runs. Partial runs leave untouched figures
+            byte-identical, which matters because re-rendering a figure rewrites
+            its embedded PDF/SVG timestamp even when the content is unchanged.
 
     Returns:
         None.
@@ -137,6 +167,10 @@ def run_visualization(cfg: BinaryClassifierConfig, registry: PathRegistry) -> No
         _maybe_render_population_keyness_sensitivity,
         _maybe_render_population_wordclouds,
     ):
+        if only is not None and not any(
+            pattern in render_step.__name__ for pattern in only
+        ):
+            continue
         if render_step(cfg, registry):
             rendered += 1
 
@@ -627,7 +661,12 @@ def _maybe_render_ngram_log_odds(
         _save_plot(
             registry,
             "ngram_log_odds",
-            lambda ax: ngram_log_odds(silver_with_text, ax, top_k=30),
+            lambda ax: ngram_log_odds(
+                silver_with_text,
+                ax,
+                top_k=30,
+                stopwords=_LANGUAGE_STOPWORDS,
+            ),
             figsize=(8.0, 7.0),
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
@@ -651,6 +690,7 @@ def _maybe_render_ngram_weighted_log_odds_unigram(
             ax,
             ngram_range=(1, 1),
             top_k=30,
+            stopwords=_LANGUAGE_STOPWORDS,
         ),
         figsize=(8.0, 7.0),
     )
@@ -671,6 +711,7 @@ def _maybe_render_ngram_weighted_log_odds_bigram(
             ax,
             ngram_range=(2, 2),
             top_k=30,
+            stopwords=_LANGUAGE_STOPWORDS,
         ),
         figsize=(8.0, 7.0),
     )
@@ -691,6 +732,7 @@ def _maybe_render_ngram_weighted_log_odds_trigram(
             ax,
             ngram_range=(3, 3),
             top_k=30,
+            stopwords=_LANGUAGE_STOPWORDS,
         ),
         figsize=(8.0, 7.0),
     )
@@ -911,6 +953,7 @@ def _maybe_render_wordcloud(
             ngram_range=ngram_range,
             weighting=weighting,
             class_label=class_label,
+            stopwords=_LANGUAGE_STOPWORDS,
         )
         _save_wordcloud_outputs(
             registry,
@@ -1097,6 +1140,7 @@ def _maybe_render_population_wordclouds(
                         weighting=weighting,
                         class_label=class_label,
                         min_df=min_df,
+                        stopwords=_LANGUAGE_STOPWORDS,
                     )
                     _save_wordcloud_outputs(
                         registry,
@@ -1350,6 +1394,7 @@ def _population_keyness_frame(
         labels=frame["label"],
         ngram_range=ngram_range,
         min_df=_population_min_df(frame),
+        stopwords=_LANGUAGE_STOPWORDS,
     )
 
 
@@ -1371,6 +1416,7 @@ def _population_probability_keyness_frame(
         probabilities=frame["prob_calibrated"],
         ngram_range=ngram_range,
         min_df=_population_min_df(frame),
+        stopwords=_LANGUAGE_STOPWORDS,
     )
 
 
@@ -1634,6 +1680,16 @@ def _parse_args() -> argparse.Namespace:
         default=_DEFAULT_CONFIG,
         help="Path to the task configuration YAML file.",
     )
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="SUBSTRING",
+        help=(
+            "Render only renderers whose name contains this substring "
+            "(repeatable, e.g. --only ngram --only wordcloud). "
+            "Defaults to rendering everything."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1644,7 +1700,7 @@ def main() -> None:
     args = _parse_args()
     cfg = load_config(args.config)
     registry = PathRegistry(args.config)
-    run_visualization(cfg, registry)
+    run_visualization(cfg, registry, only=args.only)
 
 
 if __name__ == "__main__":
