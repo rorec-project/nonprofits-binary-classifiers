@@ -197,7 +197,9 @@ def compute_keyness_frame(
         frame = frame.dropna(subset=["label"])
         label_arr = _validate_binary_labels(frame["label"])
         if not ({0, 1} <= set(label_arr.tolist())):
-            raise ValueError("Both religious (1) and nonreligious (0) rows are required.")
+            raise ValueError(
+                "Both religious (1) and nonreligious (0) rows are required."
+            )
         pos_weight_arr = (label_arr == 1).astype(float)
         neg_weight_arr = (label_arr == 0).astype(float)
 
@@ -332,8 +334,15 @@ def keyness_sensitivity_heatmap(
     matrix = matrix.fillna(0.0)
     max_abs = float(np.nanmax(np.abs(matrix.to_numpy())))
     limit = max(1.0, max_abs)
-    image = ax.imshow(matrix.to_numpy(), cmap="RdBu", vmin=-limit, vmax=limit, aspect="auto")
-    ax.set_xticks(np.arange(matrix.shape[1]), labels=matrix.columns.to_list(), rotation=35, ha="right")
+    image = ax.imshow(
+        matrix.to_numpy(), cmap="RdBu", vmin=-limit, vmax=limit, aspect="auto"
+    )
+    ax.set_xticks(
+        np.arange(matrix.shape[1]),
+        labels=matrix.columns.to_list(),
+        rotation=35,
+        ha="right",
+    )
     ax.set_yticks(np.arange(matrix.shape[0]), labels=matrix.index.to_list())
     ax.set_title(title)
     ax.set_xlabel("Population label definition")
@@ -369,7 +378,11 @@ def _label_extreme_terms(
     selected = _top_signed_terms(frame, top_k=max(1, top_k // 2))
     for _, row in selected.iterrows():
         x = np.log10(row[x_col]) if x_col.endswith("rate") else row[x_col]
-        y = np.log10(row[y_col]) if y_col.endswith("rate") else np.log10(row[y_col] + 1.0)
+        y = (
+            np.log10(row[y_col])
+            if y_col.endswith("rate")
+            else np.log10(row[y_col] + 1.0)
+        )
         ax.annotate(
             str(row["term"]),
             (x, y),
@@ -411,8 +424,12 @@ def _weighted_log_odds_z_scores(
     alpha_total = float(alpha.sum())
     pos_total = float(pos_counts.sum())
     neg_total = float(neg_counts.sum())
-    pos_odds = np.log((pos_counts + alpha) / (pos_total + alpha_total - pos_counts - alpha))
-    neg_odds = np.log((neg_counts + alpha) / (neg_total + alpha_total - neg_counts - alpha))
+    pos_odds = np.log(
+        (pos_counts + alpha) / (pos_total + alpha_total - pos_counts - alpha)
+    )
+    neg_odds = np.log(
+        (neg_counts + alpha) / (neg_total + alpha_total - neg_counts - alpha)
+    )
     variance = (1.0 / (pos_counts + alpha)) + (1.0 / (neg_counts + alpha))
     return (pos_odds - neg_odds) / np.sqrt(variance)
 

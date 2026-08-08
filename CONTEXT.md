@@ -11,7 +11,7 @@ This repo classifies nonprofit mission text as religious or non-religious.
 - **Per-organization estimand**: prevalence is defined over raw `EIN2` organizations in the **501C3-charity mission frame**, not just deduplicated mission texts. The qualifier matters: three wider `EIN2` universes exist (see **Panel frame**, **BMF registry**, **BMF-only population**) and prevalence is not defined over them.
 - **Panel frame**: the 1.54M `EIN2` organizations in the upstream panel, spanning 501c3 charities, private foundations, and 501CX nonprofits.
 - **BMF registry**: the 3.44M `EIN2` organizations in the unified Business Master File — the widest universe, and the only one carrying a name for every organization.
-- **Name-only stratum**: panel organizations that have a name but no mission text.
+- **Name-only stratum**: organizations in the configured names-arm panel scope that have a name but no mission text. The shipped scope is `501C3 CHARITY`; `names.panel_scope_values` can select other panel classifications in a separate run.
 - **BMF-only population**: organizations in the BMF registry that never enter the panel. Distinct from the **name-only stratum**, and the two must not be conflated — they differ sharply in composition.
 - **Cross-field transfer**: scoring an existing fine-tuned checkpoint on a different text field of the same organization, with no target-field adaptation. Deliberately **not** called *zero-shot*: the label space is unchanged and the model was task-trained.
 - **Names arm**: the cross-field transfer extension classifying organizations from their name. Secondary to the missions pipeline by construction — where the two conflict, missions are the first-class evidence.

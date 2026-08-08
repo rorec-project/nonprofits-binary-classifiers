@@ -34,9 +34,7 @@ logger = logging.getLogger(__name__)
 _TEXT_COLUMNS = ("mission_text", "text")
 _LABEL_COLUMNS = ("silver_label", "label", "hard_label")
 _VALID_WEIGHTINGS = {"frequency", "distinctive"}
-_RGB_RE = re.compile(
-    r"rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)"
-)
+_RGB_RE = re.compile(r"rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)")
 _SVG_NS = "http://www.w3.org/2000/svg"
 
 CURATED_FREQUENCY_STOPWORDS = {
@@ -358,7 +356,9 @@ def write_wordcloud_pdf(cloud: WordCloud, path: Path) -> None:
             plt.close(fig)
 
 
-def write_wordcloud_svg(cloud: WordCloud, path: Path, *, embed_font: bool = True) -> None:
+def write_wordcloud_svg(
+    cloud: WordCloud, path: Path, *, embed_font: bool = True
+) -> None:
     """Write a renderer-stable SVG with visible paths and invisible text.
 
     Args:
@@ -584,7 +584,9 @@ def _transparent_wordcloud(
     )
     cloud.generate_from_frequencies(frequencies)
     if not _has_transparent_background(cloud):
-        raise RuntimeError("WordCloud rendered an opaque background after RGBA fallback.")
+        raise RuntimeError(
+            "WordCloud rendered an opaque background after RGBA fallback."
+        )
     return cloud
 
 
@@ -611,7 +613,9 @@ def _make_wordcloud(
 
 def _has_transparent_background(cloud: WordCloud) -> bool:
     image = np.asarray(cloud.to_image())
-    return image.ndim == 3 and image.shape[2] == 4 and bool(np.min(image[:, :, 3]) < 255)
+    return (
+        image.ndim == 3 and image.shape[2] == 4 and bool(np.min(image[:, :, 3]) < 255)
+    )
 
 
 def _color_ramp(base_color: str) -> Callable[..., str]:

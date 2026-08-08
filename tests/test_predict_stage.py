@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 
 from binary_classifier.inference import predict as predict_mod
+from binary_classifier.inference import score_texts
 from binary_classifier.inference.predict import run_inference
 
 
@@ -50,6 +52,24 @@ def test_resolve_device_precision_encoder_override(tiny_config) -> None:
     finally:
         torch.cuda.is_available = original_cuda_available
         torch.cuda.is_bf16_supported = original_bf16_supported
+
+
+def test_score_texts_returns_ordered_positive_probabilities(tiny_config) -> None:
+    tiny_config.inference.device = "cpu"
+    tiny_config.inference.batch_size = 2
+    texts = ["first", "second", "third"]
+
+    scores = score_texts(
+        tiny_config,
+        {"encoder_id": "stub-model"},
+        texts,
+        predictor=_TextScorePredictor({"first": 0.1, "second": 0.8, "third": 0.3}),
+    )
+
+    assert len(scores) == len(texts)
+    np.testing.assert_allclose(scores, [0.1, 0.8, 0.3])
+    assert np.isfinite(scores).all()
+    assert ((scores >= 0.0) & (scores <= 1.0)).all()
 
 
 def test_run_inference_writes_schema_rules_monitor_and_metadata(
@@ -124,9 +144,6 @@ def test_predict_shard_release_labels_use_thresholds_for_classifier_rows(
         predictor=_FixedPredictor([0.65, 0.85]),
         calibrator=_calibrator_payload(),
         metadata=_metadata_payload(tiny_config),
-        batch_size=2,
-        device="cpu",
-        precision="fp32",
     )
 
     assert predictions["pred_label"].tolist() == [1, 1]
@@ -150,9 +167,6 @@ def test_predict_shard_release_labels_equal_pred_label_for_rule_rows(
         predictor=_FixedPredictor([]),
         calibrator=_calibrator_payload(),
         metadata=_metadata_payload(tiny_config),
-        batch_size=2,
-        device="cpu",
-        precision="fp32",
     )
 
     assert predictions["pred_label"].tolist() == [1, 0, 0]
@@ -197,6 +211,44 @@ def test_stale_shards_removed_matching_shards_resumed(
 
     assert not stale_path.exists()
     assert predictor.n_scored == 2
+
+
+def test_run_inference_loads_checkpoint_once_through_score_texts(
+    tiny_config,
+    tiny_registry,
+    monkeypatch,
+) -> None:
+    tiny_config.inference.shard_size = 2
+    missions = _classifier_only_missions()
+    predictor = _CountingPredictor()
+    loaded: list[object] = []
+    score_predictors: list[object | None] = []
+    score_texts = predict_mod.score_texts
+    monkeypatch.setattr(predict_mod, "load_missions", lambda cfg, **kwargs: missions)
+    monkeypatch.setattr(
+        predict_mod,
+        "load_selected_model",
+        lambda registry, **kwargs: {"encoder_id": "stub-model"},
+    )
+    monkeypatch.setattr(
+        predict_mod,
+        "_load_checkpoint_predictor",
+        lambda selected, **kwargs: loaded.append(selected) or predictor,
+    )
+
+    def record_score(*args, **kwargs):
+        score_predictors.append(kwargs.get("predictor"))
+        return score_texts(*args, **kwargs)
+
+    monkeypatch.setattr(predict_mod, "score_texts", record_score)
+    _write_calibrator(tiny_registry)
+    _write_monitor(tiny_registry, missions["EIN2"].tolist())
+
+    run_inference(tiny_config, tiny_registry)
+
+    assert loaded == [{"encoder_id": "stub-model"}]
+    assert predictor.n_scored == len(missions)
+    assert score_predictors == [None, None]
 
 
 def test_limited_run_does_not_delete_stale_shards(
@@ -583,6 +635,17 @@ class _FixedPredictor:
     def predict_proba(self, texts):
         assert len(texts) == len(self.scores)
         return [[1.0 - score, score] for score in self.scores]
+
+
+class _TextScorePredictor:
+    def __init__(self, scores_by_text) -> None:
+        self.scores_by_text = scores_by_text
+
+    def predict_proba(self, texts):
+        return [
+            [1.0 - self.scores_by_text[text], self.scores_by_text[text]]
+            for text in texts
+        ]
 
 
 def _classifier_row(ein2: str, text: str) -> dict:

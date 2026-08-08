@@ -131,9 +131,6 @@ git reset --soft HEAD~1
 git reset --hard HEAD~1
 ```
 
-## Tips
+## No debug code
 
-1. **Small and focused** — One logical change per commit
-2. **Atomic** — Each commit should work independently
-3. **Descriptive** — Read commit in 6 months, understand why
-4. **No debug code** — Don't commit `print()`/`breakpoint()`; use `logging` instead
+Do not commit `print()`/`breakpoint()`; use `logging` instead.

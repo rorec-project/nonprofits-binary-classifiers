@@ -86,6 +86,52 @@ annotation:
 data:
   allow_synthetic: false
 
+# The names arm keeps its artifacts under interim/names and processed/names.
+names:
+  panel_final_filename: panel_final.parquet
+  panel_filled_gaps_filename: panel_filled_gaps.parquet
+  # Upstream panel fields used to construct one raw name per EIN2. The first
+  # available raw-name field is selected, then the longest name wins; TAX_YEAR
+  # breaks equal-length ties.
+  panel_tax_year_column: TAX_YEAR
+  panel_scope_column: COMMON_LEVEL1
+  panel_scope_values: [501C3 CHARITY]
+  panel_raw_name_columns: [F9_00_ORG_NAME_L1, NAME_CASED]
+  panel_best_name_cased_column: BEST_NAME_CASED
+  panel_best_name_bare_column: BEST_NAME_BARE_CASED
+  panel_dba_cased_column: BEST_DBA_CASED
+  panel_has_dba_column: HAS_DBA
+  panel_cleaned_filename: panel_cleaned_names.parquet
+  bmf_only_cleaned_filename: bmf_only_cleaned_names.parquet
+  divergence_audit_filename: name_divergence_audit.json
+  scores_filename: name_scores.parquet
+  validation_filename: name_validation.json
+  probe_diagnostics_filename: name_probe_diagnostics.json
+  dba_case_study_filename: name_dba_case_study.parquet
+  dba_case_study_report_filename: name_dba_case_study_report.json
+  gold_sample_size: 400
+  # Defaults to the top-level SEED when omitted.
+  gold_seed: null
+  gold_stratum_quotas:
+    ntee_x_only: 100
+    church_foundation_only: 100
+    both_external_flags: 100
+    neither_external_flag: 100
+  gold_conflict_quotas:
+    saint_name: 20
+    faith_heritage: 20
+    non_christian_tradition: 20
+    non_english_name: 20
+  diagnostic_threshold: 0.5
+  base_rate_shift_ratio_tolerance: 0.25
+  expected_counts:
+    panel_has_mission: 560354
+    panel_name_only: 257599
+    panel_no_name_no_mission: 14731
+    panel_name_only_flagged: 26757
+    bmf_only: 2004353
+    bmf_only_flagged: 396379
+
 # Raw LLM-vs-human validation agreement is logged for continuity, but the
 # freeze gate now uses chance-corrected κ plus the minority-F1 CI floor.
 # κ≈0.70 reproduces the old 0.85 raw-agreement operating point on the roughly

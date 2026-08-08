@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ── Sub-configs ──────────────────────────────────────────────────────────────
 
@@ -392,6 +392,82 @@ class DataConfig(BaseModel):
     allow_synthetic: bool = False
 
 
+class NamesExpectedCounts(BaseModel):
+    """Snapshot counts that reconcile the names-arm input populations."""
+
+    panel_has_mission: int
+    panel_name_only: int
+    panel_no_name_no_mission: int
+    panel_name_only_flagged: int
+    bmf_only: int
+    bmf_only_flagged: int
+
+
+class NamesConfig(BaseModel):
+    """Names-arm filenames, diagnostics, and optional snapshot reconciliation.
+
+    ``diagnostic_threshold`` is deliberately not a transferable operating point;
+    it only turns raw name scores into labels for the external-flag diagnostic.
+    """
+
+    panel_final_filename: str = "panel_final.parquet"
+    panel_filled_gaps_filename: str = "panel_filled_gaps.parquet"
+    panel_tax_year_column: str = "TAX_YEAR"
+    panel_scope_column: str = "COMMON_LEVEL1"
+    panel_scope_values: list[str] = Field(
+        default_factory=lambda: ["501C3 CHARITY"],
+        min_length=1,
+    )
+    panel_raw_name_columns: list[str] = Field(
+        default_factory=lambda: ["F9_00_ORG_NAME_L1", "NAME_CASED"],
+        min_length=1,
+    )
+    panel_best_name_cased_column: str = "BEST_NAME_CASED"
+    panel_best_name_bare_column: str = "BEST_NAME_BARE_CASED"
+    panel_dba_cased_column: str = "BEST_DBA_CASED"
+    panel_has_dba_column: str = "HAS_DBA"
+    panel_cleaned_filename: str = "panel_cleaned_names.parquet"
+    bmf_only_cleaned_filename: str = "bmf_only_cleaned_names.parquet"
+    divergence_audit_filename: str = "name_divergence_audit.json"
+    scores_filename: str = "name_scores.parquet"
+    validation_filename: str = "name_validation.json"
+    probe_diagnostics_filename: str = "name_probe_diagnostics.json"
+    dba_case_study_filename: str = "name_dba_case_study.parquet"
+    dba_case_study_report_filename: str = "name_dba_case_study_report.json"
+    gold_sample_size: int = Field(default=400, gt=0)
+    gold_seed: int | None = None
+    gold_stratum_quotas: dict[str, int] = Field(
+        default_factory=lambda: {
+            "ntee_x_only": 100,
+            "church_foundation_only": 100,
+            "both_external_flags": 100,
+            "neither_external_flag": 100,
+        }
+    )
+    gold_conflict_quotas: dict[str, int] = Field(
+        default_factory=lambda: {
+            "saint_name": 20,
+            "faith_heritage": 20,
+            "non_christian_tradition": 20,
+            "non_english_name": 20,
+        }
+    )
+    diagnostic_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    base_rate_shift_ratio_tolerance: float = Field(default=0.25, ge=0.0)
+    expected_counts: NamesExpectedCounts | None = None
+
+    @field_validator("panel_scope_values")
+    @classmethod
+    def validate_panel_scope_values(cls, values: list[str]) -> list[str]:
+        """Normalize configured scope values and reject ambiguous scopes."""
+        trimmed = [value.strip() for value in values]
+        if any(not value for value in trimmed):
+            raise ValueError("panel_scope_values must contain non-empty values")
+        if len(trimmed) != len(set(trimmed)):
+            raise ValueError("panel_scope_values must contain unique values")
+        return trimmed
+
+
 class QCConfig(BaseModel):
     """Quality-control gate thresholds.
 
@@ -569,6 +645,7 @@ class BinaryClassifierConfig(BaseModel):
         evaluation: Evaluation, calibration, and test-unlock settings.
         inference: Batch inference and LOW-tier routing settings.
         prevalence: Population-prevalence estimation settings.
+        names: Names-arm upstream filename settings.
 
     """
 
@@ -585,6 +662,7 @@ class BinaryClassifierConfig(BaseModel):
     anchor: AnchorConfig = Field(default_factory=AnchorConfig)
     annotation: AnnotationConfig = Field(default_factory=AnnotationConfig)
     data: DataConfig = Field(default_factory=DataConfig)
+    names: NamesConfig = Field(default_factory=NamesConfig)
     qc: QCConfig = Field(default_factory=QCConfig)
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)

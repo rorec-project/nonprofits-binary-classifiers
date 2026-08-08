@@ -101,7 +101,7 @@ def run_inference(
     """
     registry.ensure_dirs()
     shard_size = _positive_int(cfg.inference.shard_size, "inference.shard_size")
-    batch_size = _positive_int(cfg.inference.batch_size, "inference.batch_size")
+    _positive_int(cfg.inference.batch_size, "inference.batch_size")
 
     logger.info("Loading full mission corpus for inference...")
     missions = _prepare_inference_frame(cfg, load_missions(cfg), limit=limit)
@@ -111,29 +111,17 @@ def run_inference(
         registry.calibrator_path,
         registry.base_rate_precision,
     )
-    selected = _load_selected_model(registry, require_checkpoint=predictor is None)
+    selected = load_selected_model(registry, require_checkpoint=predictor is None)
     encoder_id = selected.get("encoder_id")
-    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
-
-    max_length = 512
-    if encoder_id:
-        for enc in cfg.training.encoders:
-            if enc.id == encoder_id:
-                max_length = enc.max_length
-                break
-
-    scorer = (
-        predictor
-        if predictor is not None
-        else _load_checkpoint_predictor(selected, device=device, max_length=max_length)
-    )
+    max_length = _max_length_for_encoder(cfg, encoder_id)
     metadata = _prediction_metadata(
         cfg,
         selected=selected,
-        predictor=scorer,
+        predictor=predictor,
         calibrator=calibrator,
         max_length=max_length,
     )
+    predictor_cache: dict[str, Any] = {}
 
     _delete_stale_shards(
         registry,
@@ -146,13 +134,12 @@ def run_inference(
         cfg,
         registry,
         missions,
-        predictor=scorer,
+        predictor=predictor,
+        predictor_cache=predictor_cache,
         calibrator=calibrator,
         metadata=metadata,
         shard_size=shard_size,
-        batch_size=batch_size,
-        device=device,
-        precision=precision,
+        selected_model=selected,
     )
     merged = _merge_shards(shard_paths)
     _validate_ein2_completeness(missions["EIN2"], merged["EIN2"])
@@ -163,6 +150,7 @@ def run_inference(
     else:
         logger.info("Skipping predictions_full.parquet for limited inference run")
 
+    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
     _write_monitor_scores(
         registry,
         merged,
@@ -324,11 +312,27 @@ def _delete_stale_shards(
             logger.info("Deleted stale inference shard %s", shard_path)
 
 
-def _load_selected_model(
+def load_selected_model(
     registry: PathRegistry,
     *,
     require_checkpoint: bool,
 ) -> dict[str, Any]:
+    """Load selected-model metadata and optionally verify its checkpoint bytes.
+
+    Args:
+        registry: Path registry exposing the reviewed selected-model artifact.
+        require_checkpoint: Whether the checkpoint path and SHA-256 must be present
+            and verified. Injected-predictor callers can load metadata only.
+
+    Returns:
+        Selected-model metadata, with ``checkpoint_path`` when verification is
+        required.
+
+    Raises:
+        RuntimeError: If required model metadata or checkpoint bytes are missing.
+        ValueError: If the selected-model artifact is malformed.
+
+    """
     path = registry.selected_model
     if not path.exists():
         if require_checkpoint:
@@ -408,18 +412,25 @@ def _load_checkpoint_predictor(
     return _HFPredictor()
 
 
+def _max_length_for_encoder(cfg: BinaryClassifierConfig, encoder_id: str | None) -> int:
+    if encoder_id:
+        for enc in cfg.training.encoders:
+            if enc.id == encoder_id:
+                return enc.max_length
+    return 512
+
+
 def _process_shards(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
     frame: pd.DataFrame,
     *,
-    predictor: Any,
+    predictor: Any | None,
+    predictor_cache: dict[str, Any],
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
     shard_size: int,
-    batch_size: int,
-    device: Device,
-    precision: Precision,
+    selected_model: Mapping[str, Any],
 ) -> list[Path]:
     paths: list[Path] = []
     shards_dir = registry.predictions_dir / "shards"
@@ -439,11 +450,10 @@ def _process_shards(
             cfg,
             shard,
             predictor=predictor,
+            predictor_cache=predictor_cache,
             calibrator=calibrator,
             metadata=metadata,
-            batch_size=batch_size,
-            device=device,
-            precision=precision,
+            selected_model=selected_model,
         )
         predictions.to_parquet(shard_path, index=False)
         logger.info("Wrote inference shard %s (%d rows)", shard_path, len(predictions))
@@ -496,14 +506,12 @@ def _predict_shard(
     cfg: BinaryClassifierConfig,
     shard: pd.DataFrame,
     *,
-    predictor: Any,
+    predictor: Any | None,
+    predictor_cache: dict[str, Any] | None = None,
     calibrator: Mapping[str, Any],
     metadata: Mapping[str, Any],
-    batch_size: int,
-    device: Device,
-    precision: Precision,
+    selected_model: Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
-    del cfg
     output = shard[["EIN2", "decision_source", "tier", "Q", "ntee_major_group"]].copy()
     output["prob_raw"] = np.nan
     output["prob_calibrated"] = np.nan
@@ -522,12 +530,12 @@ def _predict_shard(
     classifier_mask = ~rule_mask & ~abstain_mask
     if classifier_mask.any():
         texts = shard.loc[classifier_mask, "mission_text"].astype(str).tolist()
-        raw = _batched_positive_probabilities(
-            predictor,
+        raw = score_texts(
+            cfg,
+            selected_model or {},
             texts,
-            batch_size=batch_size,
-            device=device,
-            precision=precision,
+            predictor=predictor,
+            predictor_cache=predictor_cache,
         )
         method = cast(CalibrationMethod, calibrator["method"])
         params = cast(Mapping[str, float], calibrator["params"])
@@ -567,6 +575,43 @@ def _predict_shard(
     for key, value in metadata.items():
         output[key] = value
     return output[_PREDICTION_COLUMNS].copy()
+
+
+def score_texts(
+    cfg: BinaryClassifierConfig,
+    selected_model: Mapping[str, Any],
+    texts: Sequence[str],
+    *,
+    predictor: Any | None = None,
+    predictor_cache: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Score texts with the selected production checkpoint.
+
+    Resolves the configured runtime policy, loads the checkpoint unless a cached
+    predictor is provided, and returns validated positive-class probabilities in
+    the same order as ``texts``.
+    """
+    batch_size = _positive_int(cfg.inference.batch_size, "inference.batch_size")
+    encoder_id = str(selected_model.get("encoder_id") or "") or None
+    device, precision = resolve_device_precision(cfg, encoder_id=encoder_id)
+    scorer = predictor
+    if scorer is None and predictor_cache is not None:
+        scorer = predictor_cache.get("predictor")
+    if scorer is None:
+        scorer = _load_checkpoint_predictor(
+            selected_model,
+            device=device,
+            max_length=_max_length_for_encoder(cfg, encoder_id),
+        )
+        if predictor_cache is not None:
+            predictor_cache["predictor"] = scorer
+    return _batched_positive_probabilities(
+        scorer,
+        texts,
+        batch_size=batch_size,
+        device=device,
+        precision=precision,
+    )
 
 
 def _batched_positive_probabilities(

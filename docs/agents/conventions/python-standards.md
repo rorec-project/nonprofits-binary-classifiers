@@ -23,6 +23,10 @@ Ruff and ty are split deliberately so the two tools never double-report the same
 - **Scope:** ty checks `src/**`, `scripts/**`, and top-level `*.py`. Both ruff and ty exclude `.agents/`, the archived legacy code, `tests/`, and notebooks; ty respects `.gitignore`. The exact patterns live in `[tool.ruff]` and `[tool.ty.src]` — treat `pyproject.toml` as the source of truth (keep the two legacy-path excludes in sync with where the legacy code actually lives).
 - **Stale-venv first:** if an installed package reports `unresolved-import`, run `uv sync` before touching config — the venv, not the type checker, is usually stale.
 
+## Logging
+
+Pipeline scripts write to both stdout and a timestamped file under `logs/` via `setup_logging(stem="<script_name>")` from `src/binary_classifier/log_utils.py`. The `logs/` directory is gitignored — check `logs/*.log` when debugging pipeline runs. Use `logging`, not `print()`/`breakpoint()`.
+
 ## Path Handling
 
 **Use `pathlib.Path` exclusively.** Never string concatenation.

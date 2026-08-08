@@ -65,7 +65,7 @@ RELIGIOUS_LEXICON = [
     "faith-based",
 ]
 
-_STRONG_TRADITION_WORDS = [
+STRONG_TRADITION_LEXICON = [
     "christ",
     "christian",
     "jesus",
@@ -377,7 +377,7 @@ _RE_RELIGIOUS = re.compile(
 )
 
 _RE_STRONG_TRADITION = re.compile(
-    "|".join(_word_boundary_pattern(w) for w in _STRONG_TRADITION_WORDS),
+    "|".join(_word_boundary_pattern(w) for w in STRONG_TRADITION_LEXICON),
     re.IGNORECASE,
 )
 

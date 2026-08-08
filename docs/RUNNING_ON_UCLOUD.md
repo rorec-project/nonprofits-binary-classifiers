@@ -152,6 +152,15 @@ Run the cheap/deterministic front of the pipeline **locally**, commit the small 
 - The gold/slate files are **git-committed** (under `data/processed/gold/`), so they travel to UCloud via `git pull` — no manual label upload.
 - **But the interim manifests are NOT git-tracked** (`data/interim` is gitignored). Stage 03 reads `silver_manifest.csv` as input, so the locally produced `data/interim/manifests/*.csv` **must be uploaded once** to `/work/<PROJECT_DRIVE>/data/interim/manifests/` (step 2.3). **Do not re-run stage 01 on UCloud to regenerate them** — `01_build_sample` can clobber an existing `gold_to_code.csv` (pass `--force` to overwrite), which would destroy human labels. Upload the manifests instead.
 
+**Names arm:** before running `scripts/names/N1_build_name_frame.py` through
+`N6_draw_name_gold.py`, run `uv sync --extra cleaner`. Upload the four names
+inputs (`panel_final.parquet`, `panel_filled_gaps.parquet`,
+`missions_cross_section.parquet`, and `bmf_unified_processed.parquet`) to the
+shared raw drive. Run the names scripts in the README's B12 order; N2's
+divergence audit and N6's completed human-coding template are blocking gates.
+Names outputs stay under `data/interim/names/` and `data/processed/names/` and
+are not part of the missions, prevalence, or frozen-test workflow.
+
 ---
 
 ## 6. Scripts (`utils/`)

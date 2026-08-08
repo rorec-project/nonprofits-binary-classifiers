@@ -63,6 +63,20 @@ class PathRegistry:
         """BMF unified processed parquet (for NTEE major-group join)."""
         return self._root / self.cfg.paths.raw_dir / "bmf_unified_processed.parquet"
 
+    @property
+    def panel_final_parquet(self) -> Path:
+        """Upstream longitudinal panel artifact used by the names arm."""
+        return self._root / self.cfg.paths.raw_dir / self.cfg.names.panel_final_filename
+
+    @property
+    def panel_filled_gaps_parquet(self) -> Path:
+        """Upstream panel artifact retaining suffix-stripped organization names."""
+        return (
+            self._root
+            / self.cfg.paths.raw_dir
+            / self.cfg.names.panel_filled_gaps_filename
+        )
+
     # ── Downstream directories ───────────────────────────────────────────────
 
     @property
@@ -74,6 +88,81 @@ class PathRegistry:
     def processed_dir(self) -> Path:
         """Directory for final, ready-to-train datasets."""
         return self._root / self.cfg.paths.processed_dir
+
+    @property
+    def names_interim_dir(self) -> Path:
+        """Isolated interim directory for names-arm artifacts."""
+        return self.interim_dir / "names"
+
+    @property
+    def names_processed_dir(self) -> Path:
+        """Isolated processed directory for names-arm artifacts."""
+        return self.processed_dir / "names"
+
+    @property
+    def names_panel_frame(self) -> Path:
+        """Configured-scope panel name frame."""
+        return self.names_interim_dir / "panel_name_frame.parquet"
+
+    @property
+    def names_bmf_only_frame(self) -> Path:
+        """BMF-only name frame."""
+        return self.names_interim_dir / "bmf_only_name_frame.parquet"
+
+    @property
+    def names_panel_cleaned(self) -> Path:
+        """Panel frame with the shared name cleaner applied."""
+        return self.names_interim_dir / self.cfg.names.panel_cleaned_filename
+
+    @property
+    def names_bmf_only_cleaned(self) -> Path:
+        """BMF-only frame with the shared name cleaner applied."""
+        return self.names_interim_dir / self.cfg.names.bmf_only_cleaned_filename
+
+    @property
+    def names_divergence_audit(self) -> Path:
+        """Divergence audit produced by the names cleaner stage."""
+        return self.names_interim_dir / self.cfg.names.divergence_audit_filename
+
+    @property
+    def names_scores(self) -> Path:
+        """Cross-field transfer scores for both name-input variants."""
+        return self.names_processed_dir / self.cfg.names.scores_filename
+
+    @property
+    def names_validation(self) -> Path:
+        """Paired transfer-validation report for the names arm."""
+        return self.names_processed_dir / self.cfg.names.validation_filename
+
+    @property
+    def names_probe_diagnostics(self) -> Path:
+        """Synthetic-probe diagnostic report for cross-field transfer."""
+        return self.names_processed_dir / self.cfg.names.probe_diagnostics_filename
+
+    @property
+    def names_dba_case_study(self) -> Path:
+        """Reviewable EIN2-level legal-name and DBA comparison cases."""
+        return self.names_processed_dir / self.cfg.names.dba_case_study_filename
+
+    @property
+    def names_dba_case_study_report(self) -> Path:
+        """Summary report for the DBA case study."""
+        return self.names_processed_dir / self.cfg.names.dba_case_study_report_filename
+
+    @property
+    def names_gold_manifest(self) -> Path:
+        """Seeded BMF-only name-gold draw with stratum provenance."""
+        return self.names_interim_dir / "names_gold_manifest.csv"
+
+    @property
+    def names_gold_coding_template(self) -> Path:
+        """Human-coding template for the BMF-only names gold sample."""
+        return self.names_processed_dir / "gold" / "names_gold_to_code.csv"
+
+    @property
+    def names_gold_coding_instructions(self) -> Path:
+        """Unchanged mission-construct rubric accompanying the names template."""
+        return self.names_processed_dir / "gold" / "names_gold_coding_instructions.md"
 
     @property
     def gold_dir(self) -> Path:
@@ -320,5 +409,7 @@ class PathRegistry:
             self.predictions_dir / "shards",
             self.prevalence_dir,
             self.figures_dir,
+            self.names_interim_dir,
+            self.names_processed_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
