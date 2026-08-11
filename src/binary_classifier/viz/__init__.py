@@ -26,6 +26,10 @@ from binary_classifier.viz.ngrams import (
     top_terms_lollipop_plot,
 )
 from binary_classifier.viz.prevalence_plots import (
+    ntee_classified_count_by_group,
+    ntee_classified_share_by_group,
+    ntee_classified_share_vs_corrected_estimate,
+    ntee_mean_score_by_group,
     prevalence_decomposition,
     prevalence_forest,
     quantification_sensitivity,
@@ -55,6 +59,10 @@ __all__ = [
     "ngram_weighted_log_odds",
     "keyness_sensitivity_heatmap",
     "keyness_volcano_plot",
+    "ntee_classified_count_by_group",
+    "ntee_classified_share_by_group",
+    "ntee_classified_share_vs_corrected_estimate",
+    "ntee_mean_score_by_group",
     "prevalence_decomposition",
     "pr_curve",
     "prevalence_forest",

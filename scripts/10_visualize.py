@@ -34,6 +34,10 @@ from binary_classifier.viz import (
     threshold_sweep_plot,
     ngram_log_odds,
     ngram_weighted_log_odds,
+    ntee_classified_count_by_group,
+    ntee_classified_share_by_group,
+    ntee_classified_share_vs_corrected_estimate,
+    ntee_mean_score_by_group,
     prevalence_decomposition,
     prevalence_forest,
     production_annotation_summary,
@@ -145,6 +149,10 @@ def run_visualization(
         _maybe_render_prevalence_decomposition,
         _maybe_render_rule_validation_intervals,
         _maybe_render_quantification_sensitivity,
+        _maybe_render_ntee_mean_score,
+        _maybe_render_ntee_classified_share,
+        _maybe_render_ntee_classified_count,
+        _maybe_render_ntee_classified_share_vs_corrected,
         _maybe_render_subgroup_performance,
         _maybe_render_ngram_log_odds,
         _maybe_render_ngram_weighted_log_odds_unigram,
@@ -472,6 +480,117 @@ def _maybe_render_prevalence_forest(
         )
     except (OSError, ValueError) as exc:
         logger.warning("Skipping prevalence forest from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_ntee_mean_score(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render mean classifier score by NTEE if the descriptives CSV exists."""
+    path = registry.ntee_descriptives
+    if not path.exists():
+        logger.warning("Skipping NTEE mean score; missing input: %s", path)
+        return False
+    try:
+        frame = pd.read_csv(path)
+        _save_plot(
+            registry,
+            "ntee_mean_score_by_group",
+            lambda ax: ntee_mean_score_by_group(frame, ax),
+            figsize=(PAGE_WIDTH, max(4.0, 0.3 * len(frame) + 1.5)),
+        )
+    except (OSError, ValueError) as exc:
+        logger.warning("Skipping NTEE mean score from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_ntee_classified_share(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render classified share by NTEE if the descriptives CSV exists."""
+    path = registry.ntee_descriptives
+    if not path.exists():
+        logger.warning("Skipping NTEE classified share; missing input: %s", path)
+        return False
+    try:
+        frame = pd.read_csv(path)
+        _save_plot(
+            registry,
+            "ntee_classified_share_by_group",
+            lambda ax: ntee_classified_share_by_group(frame, ax),
+            figsize=(8.0, max(4.0, 0.3 * len(frame) + 1.5)),
+        )
+    except (OSError, ValueError) as exc:
+        logger.warning("Skipping NTEE classified share from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_ntee_classified_count(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render count of organizations classified religious by NTEE."""
+    path = registry.ntee_descriptives
+    if not path.exists():
+        logger.warning("Skipping NTEE classified count; missing input: %s", path)
+        return False
+    try:
+        frame = pd.read_csv(path)
+        _save_plot(
+            registry,
+            "ntee_classified_count_by_group",
+            lambda ax: ntee_classified_count_by_group(frame, ax),
+            figsize=(8.0, max(4.0, 0.3 * len(frame) + 1.5)),
+        )
+    except (OSError, ValueError) as exc:
+        logger.warning("Skipping NTEE classified count from %s: %s", path, exc)
+        return False
+    return True
+
+
+def _maybe_render_ntee_classified_share_vs_corrected(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render classified share against the corrected prevalence estimate.
+
+    Skips cleanly when either the descriptives or the corrected-estimate
+    artifact is absent; the figure requires both.
+    """
+    descriptives_path = registry.ntee_descriptives
+    prevalence_path = registry.prevalence_by_ntee
+    missing = [p for p in (descriptives_path, prevalence_path) if not p.exists()]
+    if missing:
+        logger.warning(
+            "Skipping NTEE classified share vs corrected estimate; missing input(s): %s",
+            ", ".join(str(p) for p in missing),
+        )
+        return False
+    try:
+        descriptives = pd.read_csv(descriptives_path)
+        prevalence = pd.read_csv(prevalence_path)
+        _save_plot(
+            registry,
+            "ntee_classified_share_vs_corrected_estimate",
+            lambda ax: ntee_classified_share_vs_corrected_estimate(
+                descriptives,
+                prevalence,
+                ax,
+            ),
+            figsize=(8.0, max(4.0, 0.3 * len(descriptives) + 1.5)),
+        )
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "Skipping NTEE classified share vs corrected estimate from %s, %s: %s",
+            descriptives_path,
+            prevalence_path,
+            exc,
+        )
         return False
     return True
 

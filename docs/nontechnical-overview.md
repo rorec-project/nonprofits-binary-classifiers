@@ -22,6 +22,8 @@ The classifier is strongest as a **screening and measurement tool**. It is not a
 
 That matters because the hand-labeled test set was intentionally enriched with harder and more positive-looking cases. Its precision and F1 are useful for judging model behavior, but they are **not** the same thing as the population share.
 
+The classifier's raw output by NTEE group (industry category) is *not* the same thing as prevalence either, and the two can disagree substantially in the same group. See [Why the Religious Share for Arts Organizations Is 5.33% in One Figure and 0.59% in Another](memos/classified-share-vs-corrected-prevalence.md) for a walk-through of why, using real numbers.
+
 ## Why there are three yes/no labels now
 
 The released dataset includes three binary labels because different users need different operating points:
@@ -41,6 +43,10 @@ The current base-rate label uses threshold `0.09368807964553742`, and the target
 - **Prevalence decomposition**: how the final prevalence estimate combines higher-quality rows and LOW-quality rows.
 - **Rule-validation intervals**: how certain we are about the deterministic LOW-tier rule layer.
 - **Subgroup performance**: whether performance looks different across NTEE groups or text-length bands.
+- **Mean score by NTEE major group**: the classifier's average calibrated and raw score for each of the 26 NTEE groups, covering only the classifier-scored subset of organizations (rows a rule router did not already decide).
+- **Classified share by NTEE major group**: the raw share of each NTEE group's organizations the classifier labeled religious, at three operating thresholds — raw classifier output, not a prevalence estimate.
+- **Count classified religious by NTEE major group**: the raw number of organizations the classifier labeled religious in each NTEE group, shown against each group's size.
+- **Classified share against corrected prevalence estimate**: the raw classified share and the corrected prevalence estimate plotted together per NTEE group, so the gap between them — over-calling in low-prevalence groups, under-calling in high-prevalence ones — is visible directly. See the memo linked above for why.
 
 Two frozen-test visual sections are still intentionally blank in the current real report:
 

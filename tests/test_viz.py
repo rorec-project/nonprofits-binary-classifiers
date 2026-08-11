@@ -38,6 +38,10 @@ from binary_classifier.viz import (
     threshold_sweep_plot,
     ngram_log_odds,
     ngram_weighted_log_odds as exported_ngram_weighted_log_odds,
+    ntee_classified_count_by_group,
+    ntee_classified_share_by_group,
+    ntee_classified_share_vs_corrected_estimate,
+    ntee_mean_score_by_group,
     pr_curve,
     prevalence_decomposition,
     prevalence_forest,
@@ -618,6 +622,203 @@ def test_prevalence_forest_renders_tmp_png(tmp_path):
         plt.close(fig)
 
 
+def _ntee_descriptives_frame():
+    return pd.DataFrame(
+        [
+            {
+                "ntee_major_group": "X",
+                "n": 100,
+                "n_scored": 70,
+                "mean_prob_raw": 0.80,
+                "mean_prob_calibrated": 0.78,
+                "n_pred_label": 77,
+                "share_pred_label": 0.77,
+                "n_pred_label_maxf1": 70,
+                "share_pred_label_maxf1": 0.70,
+                "n_pred_label_baserate": 60,
+                "share_pred_label_baserate": 0.60,
+            },
+            {
+                "ntee_major_group": "P",
+                "n": 500,
+                "n_scored": 480,
+                "mean_prob_raw": 0.20,
+                "mean_prob_calibrated": 0.18,
+                "n_pred_label": 75,
+                "share_pred_label": 0.15,
+                "n_pred_label_maxf1": 60,
+                "share_pred_label_maxf1": 0.12,
+                "n_pred_label_baserate": 40,
+                "share_pred_label_baserate": 0.08,
+            },
+            {
+                "ntee_major_group": "A",
+                "n": 200,
+                "n_scored": 190,
+                "mean_prob_raw": 0.06,
+                "mean_prob_calibrated": 0.05,
+                "n_pred_label": 11,
+                "share_pred_label": 0.0533,
+                "n_pred_label_maxf1": 8,
+                "share_pred_label_maxf1": 0.04,
+                "n_pred_label_baserate": 4,
+                "share_pred_label_baserate": 0.02,
+            },
+            {
+                "ntee_major_group": "Z",
+                "n": 50,
+                "n_scored": 45,
+                "mean_prob_raw": 0.03,
+                "mean_prob_calibrated": 0.02,
+                "n_pred_label": 1,
+                "share_pred_label": 0.02,
+                "n_pred_label_maxf1": 1,
+                "share_pred_label_maxf1": 0.02,
+                "n_pred_label_baserate": 0,
+                "share_pred_label_baserate": 0.0,
+            },
+        ]
+    )
+
+
+def _prevalence_by_ntee_frame():
+    return pd.DataFrame(
+        [
+            {
+                "ntee_major_group": "X",
+                "n_anchor": 200,
+                "estimator": "ppi_rg_composite",
+                "estimate": 0.82,
+                "ci_lower": 0.77,
+                "ci_upper": 0.87,
+                "suppressed": False,
+            },
+            {
+                "ntee_major_group": "P",
+                "n_anchor": 60,
+                "estimator": "ppi_rg_composite",
+                "estimate": 0.19,
+                "ci_lower": 0.13,
+                "ci_upper": 0.26,
+                "suppressed": False,
+            },
+            {
+                "ntee_major_group": "A",
+                "n_anchor": 47,
+                "estimator": "ppi_rg_composite",
+                "estimate": 0.0059,
+                "ci_lower": 0.0009,
+                "ci_upper": 0.0109,
+                "suppressed": False,
+            },
+            {
+                "ntee_major_group": "Z",
+                "n_anchor": 2,
+                "estimator": "not estimated",
+                "estimate": float("nan"),
+                "ci_lower": float("nan"),
+                "ci_upper": float("nan"),
+                "suppressed": True,
+            },
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "plotter",
+    [ntee_mean_score_by_group, ntee_classified_share_by_group, ntee_classified_count_by_group],
+)
+def test_ntee_descriptives_plots_render_tmp_png(tmp_path, plotter):
+    frame = _ntee_descriptives_frame()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        plotter(frame, ax)
+        out = tmp_path / f"{plotter.__name__}.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    ("plotter", "column"),
+    [
+        (ntee_mean_score_by_group, "n_scored"),
+        (ntee_classified_share_by_group, "share_pred_label_maxf1"),
+        (ntee_classified_count_by_group, "n_pred_label_baserate"),
+    ],
+)
+def test_ntee_descriptives_plots_raise_on_missing_column(plotter, column):
+    frame = _ntee_descriptives_frame().drop(columns=[column])
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        with pytest.raises(ValueError, match="missing columns"):
+            plotter(frame, ax)
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    "plotter",
+    [ntee_mean_score_by_group, ntee_classified_share_by_group, ntee_classified_count_by_group],
+)
+def test_ntee_descriptives_plots_raise_on_empty_frame(plotter):
+    frame = _ntee_descriptives_frame().iloc[0:0]
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        with pytest.raises(ValueError, match="at least one row"):
+            plotter(frame, ax)
+    finally:
+        plt.close(fig)
+
+
+def test_ntee_classified_share_vs_corrected_estimate_renders_tmp_png(tmp_path):
+    descriptives = _ntee_descriptives_frame()
+    prevalence = _prevalence_by_ntee_frame()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        ntee_classified_share_vs_corrected_estimate(descriptives, prevalence, ax)
+        out = tmp_path / "ntee_classified_share_vs_corrected_estimate.png"
+        fig.savefig(out)
+        assert out.stat().st_size > 0
+    finally:
+        plt.close(fig)
+
+
+def test_ntee_classified_share_vs_corrected_estimate_raises_on_missing_column():
+    descriptives = _ntee_descriptives_frame()
+    prevalence = _prevalence_by_ntee_frame().drop(columns=["estimate"])
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        with pytest.raises(ValueError, match="missing columns"):
+            ntee_classified_share_vs_corrected_estimate(descriptives, prevalence, ax)
+    finally:
+        plt.close(fig)
+
+
+def test_ntee_classified_share_vs_corrected_estimate_raises_on_empty_frame():
+    descriptives = _ntee_descriptives_frame().iloc[0:0]
+    prevalence = _prevalence_by_ntee_frame()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        with pytest.raises(ValueError, match="at least one row"):
+            ntee_classified_share_vs_corrected_estimate(descriptives, prevalence, ax)
+    finally:
+        plt.close(fig)
+
+
+def test_ntee_classified_share_vs_corrected_estimate_marks_suppressed_groups():
+    descriptives = _ntee_descriptives_frame()
+    prevalence = _prevalence_by_ntee_frame()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    try:
+        ntee_classified_share_vs_corrected_estimate(descriptives, prevalence, ax)
+        texts = [t.get_text() for t in ax.texts]
+        assert any("suppressed" in text for text in texts)
+    finally:
+        plt.close(fig)
+
+
 def test_prevalence_wave4_helpers_render_tmp_png(tmp_path):
     prevalence = _prevalence_report_payload()
     rule_validation = _rule_validation_payload()
@@ -831,6 +1032,65 @@ def test_visualize_wave4_wrappers_render_and_skip(tmp_path, caplog):
     with caplog.at_level("WARNING"):
         assert not visualize._maybe_render_pr_curve(None, registry)
     assert "lacks frozen-test test_scores" in caplog.text
+
+
+def test_visualize_ntee_wrappers_render_and_skip(tmp_path, caplog):
+    visualize = _load_visualize_module()
+    figures_dir = tmp_path / "figures"
+    ntee_descriptives = tmp_path / "ntee_descriptives.csv"
+    prevalence_by_ntee = tmp_path / "prevalence_by_ntee.csv"
+    registry = SimpleNamespace(
+        figures_dir=figures_dir,
+        ntee_descriptives=ntee_descriptives,
+        prevalence_by_ntee=prevalence_by_ntee,
+    )
+
+    with caplog.at_level("WARNING"):
+        assert not visualize._maybe_render_ntee_mean_score(None, registry)
+        assert not visualize._maybe_render_ntee_classified_share(None, registry)
+        assert not visualize._maybe_render_ntee_classified_count(None, registry)
+        assert not visualize._maybe_render_ntee_classified_share_vs_corrected(
+            None, registry
+        )
+    assert "Skipping NTEE mean score; missing input" in caplog.text
+    assert (
+        "Skipping NTEE classified share vs corrected estimate; missing input(s)"
+        in caplog.text
+    )
+
+    _ntee_descriptives_frame().to_csv(ntee_descriptives, index=False)
+    assert visualize._maybe_render_ntee_mean_score(None, registry)
+    assert visualize._maybe_render_ntee_classified_share(None, registry)
+    assert visualize._maybe_render_ntee_classified_count(None, registry)
+    assert not visualize._maybe_render_ntee_classified_share_vs_corrected(
+        None, registry
+    )
+
+    _prevalence_by_ntee_frame().to_csv(prevalence_by_ntee, index=False)
+    assert visualize._maybe_render_ntee_classified_share_vs_corrected(None, registry)
+
+    for name in (
+        "ntee_mean_score_by_group",
+        "ntee_classified_share_by_group",
+        "ntee_classified_count_by_group",
+        "ntee_classified_share_vs_corrected_estimate",
+    ):
+        for suffix in (".pdf", ".svg", ".png"):
+            assert (figures_dir / f"{name}{suffix}").exists()
+
+
+def test_ntee_viz_helpers_exported_from_viz_package():
+    from binary_classifier.viz import (
+        ntee_classified_count_by_group as exported_count,
+        ntee_classified_share_by_group as exported_share,
+        ntee_classified_share_vs_corrected_estimate as exported_vs_corrected,
+        ntee_mean_score_by_group as exported_mean_score,
+    )
+
+    assert exported_count is ntee_classified_count_by_group
+    assert exported_share is ntee_classified_share_by_group
+    assert exported_vs_corrected is ntee_classified_share_vs_corrected_estimate
+    assert exported_mean_score is ntee_mean_score_by_group
 
 
 def test_visualize_text_diagnostic_wrappers_render_with_joined_text(
