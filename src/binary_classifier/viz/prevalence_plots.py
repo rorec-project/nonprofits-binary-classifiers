@@ -468,7 +468,9 @@ def ntee_mean_score_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes) -> No
     logger.info("Rendered NTEE mean-score plot with %d groups", len(frame))
 
 
-def ntee_classified_share_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes) -> None:
+def ntee_classified_share_by_group(
+    ntee_descriptives_df: pd.DataFrame, ax: Axes
+) -> None:
     """Plot classified share by NTEE major group at three operating thresholds.
 
     One row per NTEE letter, three dots per row (recall-first, max-F1,
@@ -485,7 +487,9 @@ def ntee_classified_share_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes)
             contains no rows.
 
     """
-    missing = sorted(_NTEE_CLASSIFIED_SHARE_REQUIRED - set(ntee_descriptives_df.columns))
+    missing = sorted(
+        _NTEE_CLASSIFIED_SHARE_REQUIRED - set(ntee_descriptives_df.columns)
+    )
     if missing:
         raise ValueError(f"ntee_descriptives_df missing columns: {missing}.")
     if ntee_descriptives_df.empty:
@@ -495,8 +499,10 @@ def ntee_classified_share_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes)
     y = np.arange(len(frame), dtype=float)[::-1]
 
     thresholds = _threshold_columns("share")
-    row_max = frame[[column for column, _, _, _ in thresholds]].max(axis=1).to_numpy(
-        dtype=float
+    row_max = (
+        frame[[column for column, _, _, _ in thresholds]]
+        .max(axis=1)
+        .to_numpy(dtype=float)
     )
     _guide_lines(ax, y, row_max)
     for column, label, color, marker in thresholds:
@@ -520,7 +526,9 @@ def ntee_classified_share_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes)
     logger.info("Rendered NTEE classified-share plot with %d groups", len(frame))
 
 
-def ntee_classified_count_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes) -> None:
+def ntee_classified_count_by_group(
+    ntee_descriptives_df: pd.DataFrame, ax: Axes
+) -> None:
     """Plot the count of organizations classified religious, by NTEE group.
 
     One row per NTEE letter, three dots per row at the same three operating
@@ -538,7 +546,9 @@ def ntee_classified_count_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes)
             contains no rows.
 
     """
-    missing = sorted(_NTEE_CLASSIFIED_COUNT_REQUIRED - set(ntee_descriptives_df.columns))
+    missing = sorted(
+        _NTEE_CLASSIFIED_COUNT_REQUIRED - set(ntee_descriptives_df.columns)
+    )
     if missing:
         raise ValueError(f"ntee_descriptives_df missing columns: {missing}.")
     if ntee_descriptives_df.empty:
@@ -552,8 +562,10 @@ def ntee_classified_count_by_group(ntee_descriptives_df: pd.DataFrame, ax: Axes)
     ]
 
     thresholds = _threshold_columns("n")
-    row_max = frame[[column for column, _, _, _ in thresholds]].max(axis=1).to_numpy(
-        dtype=float
+    row_max = (
+        frame[[column for column, _, _, _ in thresholds]]
+        .max(axis=1)
+        .to_numpy(dtype=float)
     )
     _guide_lines(ax, y, row_max)
     for column, label, color, marker in thresholds:
@@ -625,7 +637,9 @@ def ntee_classified_share_vs_corrected_estimate(
     prevalence["ntee_major_group"] = prevalence["ntee_major_group"].astype(str)
 
     merged = descriptives.merge(
-        prevalence[["ntee_major_group", "estimate", "ci_lower", "ci_upper", "suppressed"]],
+        prevalence[
+            ["ntee_major_group", "estimate", "ci_lower", "ci_upper", "suppressed"]
+        ],
         on="ntee_major_group",
         how="left",
     )
