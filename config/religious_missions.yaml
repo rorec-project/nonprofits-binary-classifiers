@@ -213,3 +213,4 @@ prevalence:
   per_ntee: true
   ntee_min_n: 10
   low_tier_sensitivity: true
+  ntee_descriptives: true

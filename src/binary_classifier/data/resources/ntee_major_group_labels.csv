@@ -1,0 +1,34 @@
+# Source: Nonprofit Open Data Collective, mission-taxonomies, all-ntee-original.csv,
+# single-letter rows only, commit d665291c6ab4c1a1cfcc1841c416ad664296d80a
+# (https://github.com/Nonprofit-Open-Data-Collective/mission-taxonomies).
+# Content originates from NCCS / Urban Institute.
+# One deliberate divergence from upstream: the source labels Z "Unknown". Because
+# this pipeline folds missing-NTEE rows (originally "?") into Z at stage-09
+# grouping time, the shipped label is "Unknown or missing NTEE" instead.
+ntee_major_group,label
+A,"Arts, Culture & Humanities"
+B,Education
+C,Environment
+D,Animal-Related
+E,Health Care
+F,Mental Health & Crisis Intervention
+G,Voluntary Health Associations & Medical Disciplines
+H,Medical Research
+I,Crime & Legal-Related
+J,Employment
+K,"Food, Agriculture & Nutrition"
+L,Housing & Shelter
+M,"Public Safety, Disaster Preparedness & Relief"
+N,Recreation & Sports
+O,Youth Development
+P,Human Services
+Q,"International, Foreign Affairs & National Security"
+R,"Civil Rights, Social Action & Advocacy"
+S,Community Improvement & Capacity Building
+T,"Philanthropy, Voluntarism & Grantmaking Foundations"
+U,Science & Technology
+V,Social Science
+W,Public & Societal Benefit
+X,Religion-Related
+Y,Mutual & Membership Benefit
+Z,Unknown or missing NTEE
