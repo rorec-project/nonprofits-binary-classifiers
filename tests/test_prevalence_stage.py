@@ -11,11 +11,13 @@ from binary_classifier.prevalence.composite import (
     rogan_gladen,
     rogan_gladen_variance,
 )
+from binary_classifier.data.ntee_labels import load_ntee_labels
 from binary_classifier.prevalence.estimate import (
     _RAW_MULTIPLICITY_COLUMN,
     _estimate_hm,
     _estimate_low,
     _estimate_low_rules,
+    _ntee_descriptives,
     _z_value,
     run_prevalence,
 )
@@ -165,6 +167,8 @@ def _predictions_frame() -> pd.DataFrame:
             {
                 "EIN2": f"E{i:04d}",
                 "pred_label": label,
+                "pred_label_maxf1": label,
+                "pred_label_baserate": label,
                 "prob_raw": probability,
                 "prob_calibrated": probability,
                 "decision_source": (
@@ -358,3 +362,184 @@ def test_run_prevalence_uses_predictions_full_raw_tier_shares(
     assert report["n"]["HIGH_MEDIUM_raw_ein2"] == 81
     assert report["tier_shares"]["HIGH_MEDIUM"] == pytest.approx(81 / 101)
     assert sum(report["tier_shares"].values()) == pytest.approx(1.0)
+
+
+def _ntee_descriptives_fixture() -> pd.DataFrame:
+    """A small predictions frame covering scored, rule, and missing-NTEE rows."""
+    rows = [
+        # Group A: 3 classifier-scored rows (2 positive) + 1 rule-routed row.
+        {
+            "EIN2": "A0",
+            "ntee_major_group": "A",
+            "decision_source": "classifier",
+            "prob_raw": 0.8,
+            "prob_calibrated": 0.9,
+            "pred_label": 1,
+            "pred_label_maxf1": 1,
+            "pred_label_baserate": 0,
+        },
+        {
+            "EIN2": "A1",
+            "ntee_major_group": "A",
+            "decision_source": "classifier",
+            "prob_raw": 0.2,
+            "prob_calibrated": 0.1,
+            "pred_label": 0,
+            "pred_label_maxf1": 0,
+            "pred_label_baserate": 0,
+        },
+        {
+            "EIN2": "A2",
+            "ntee_major_group": "A",
+            "decision_source": "low_via_classifier",
+            "prob_raw": 0.7,
+            "prob_calibrated": 0.8,
+            "pred_label": 1,
+            "pred_label_maxf1": 1,
+            "pred_label_baserate": 1,
+        },
+        {
+            "EIN2": "A3",
+            "ntee_major_group": "A",
+            "decision_source": "rule_strong_positive",
+            "prob_raw": math.nan,
+            "prob_calibrated": math.nan,
+            "pred_label": 1,
+            "pred_label_maxf1": 1,
+            "pred_label_baserate": 1,
+        },
+        # Missing-NTEE ("?") rows: must fold into Z.
+        {
+            "EIN2": "Q0",
+            "ntee_major_group": "?",
+            "decision_source": "rule_short_negative",
+            "prob_raw": math.nan,
+            "prob_calibrated": math.nan,
+            "pred_label": 0,
+            "pred_label_maxf1": 0,
+            "pred_label_baserate": 0,
+        },
+        {
+            "EIN2": "Q1",
+            "ntee_major_group": "?",
+            "decision_source": "rule_short_negative",
+            "prob_raw": math.nan,
+            "prob_calibrated": math.nan,
+            "pred_label": 0,
+            "pred_label_maxf1": 0,
+            "pred_label_baserate": 0,
+        },
+        # Native Z row.
+        {
+            "EIN2": "Z0",
+            "ntee_major_group": "Z",
+            "decision_source": "classifier",
+            "prob_raw": 0.5,
+            "prob_calibrated": 0.6,
+            "pred_label": 1,
+            "pred_label_maxf1": 0,
+            "pred_label_baserate": 0,
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_ntee_descriptives_covers_all_26_letters_with_no_missing_marker() -> None:
+    """The descriptives frame has 26 A-Z rows and no '?' row."""
+    out = _ntee_descriptives(_ntee_descriptives_fixture())
+
+    assert list(out.columns) == [
+        "ntee_major_group",
+        "label",
+        "n",
+        "n_scored",
+        "mean_prob_raw",
+        "mean_prob_calibrated",
+        "n_pred_label",
+        "share_pred_label",
+        "n_pred_label_maxf1",
+        "share_pred_label_maxf1",
+        "n_pred_label_baserate",
+        "share_pred_label_baserate",
+    ]
+    assert sorted(out["ntee_major_group"]) == [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+    assert "?" not in set(out["ntee_major_group"])
+
+
+def test_ntee_descriptives_folds_missing_ntee_into_z() -> None:
+    """'?' and native 'Z' rows combine into a single Z group."""
+    out = _ntee_descriptives(_ntee_descriptives_fixture())
+    z_row = out.loc[out["ntee_major_group"] == "Z"].iloc[0]
+
+    # 2 folded "?" rows (unscored) + 1 native Z row (scored).
+    assert int(z_row["n"]) == 3
+    assert int(z_row["n_scored"]) == 1
+    assert z_row["mean_prob_calibrated"] == pytest.approx(0.6)
+
+
+def test_ntee_descriptives_n_scored_matches_decision_source_identity() -> None:
+    """n_scored equals n minus that group's rule-routed rows, per group."""
+    fixture = _ntee_descriptives_fixture()
+    out = _ntee_descriptives(fixture)
+
+    fixture_folded = fixture.copy()
+    fixture_folded["ntee_major_group"] = fixture_folded["ntee_major_group"].replace(
+        "?", "Z"
+    )
+    is_rule_routed = fixture_folded["decision_source"].str.startswith("rule_")
+    expected_scored = (
+        fixture_folded.assign(_scored=~is_rule_routed)
+        .groupby("ntee_major_group")["_scored"]
+        .sum()
+    )
+
+    for ntee, expected in expected_scored.items():
+        actual = out.loc[out["ntee_major_group"] == ntee, "n_scored"].iloc[0]
+        assert actual == expected, ntee
+
+
+def test_ntee_descriptives_shares_use_full_group_as_denominator() -> None:
+    """Label shares divide by n (all rows), not n_scored."""
+    out = _ntee_descriptives(_ntee_descriptives_fixture())
+    a_row = out.loc[out["ntee_major_group"] == "A"].iloc[0]
+
+    assert int(a_row["n"]) == 4
+    assert int(a_row["n_pred_label"]) == 3
+    assert a_row["share_pred_label"] == pytest.approx(3 / 4)
+
+
+def test_ntee_label_table_covers_every_group_present_in_fixture() -> None:
+    """The packaged label table has an entry for every NTEE letter used."""
+    labels = load_ntee_labels()
+    present = set(_ntee_descriptives_fixture()["ntee_major_group"]) - {"?"}
+
+    assert present <= set(labels["ntee_major_group"])
+    assert labels.loc[labels["ntee_major_group"] == "Z", "label"].iloc[0] == (
+        "Unknown or missing NTEE"
+    )
+
+
+def test_run_prevalence_ntee_descriptives_flag_independent_of_per_ntee(
+    tiny_config,
+    tiny_registry,
+) -> None:
+    """The ntee_descriptives flag gates its artifact without affecting per_ntee."""
+    _write_prevalence_inputs(tiny_registry)
+    tiny_config.prevalence.per_ntee = False
+    tiny_config.prevalence.ntee_descriptives = True
+
+    run_prevalence(tiny_config, tiny_registry)
+
+    assert tiny_registry.ntee_descriptives.exists()
+    by_ntee = pd.read_csv(tiny_registry.prevalence_by_ntee)
+    assert by_ntee.empty
+
+    tiny_config.prevalence.per_ntee = True
+    tiny_config.prevalence.ntee_descriptives = False
+    tiny_registry.ntee_descriptives.unlink()
+
+    run_prevalence(tiny_config, tiny_registry)
+
+    assert not tiny_registry.ntee_descriptives.exists()
+    by_ntee = pd.read_csv(tiny_registry.prevalence_by_ntee)
+    assert not by_ntee.empty

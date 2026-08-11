@@ -377,6 +377,11 @@ class PathRegistry:
         return self.prevalence_dir / "prevalence_by_ntee.csv"
 
     @property
+    def ntee_descriptives(self) -> Path:
+        """Uncorrected per-NTEE classifier-output descriptives."""
+        return self.prevalence_dir / "ntee_descriptives.csv"
+
+    @property
     def figures_dir(self) -> Path:
         """Directory for generated figures."""
         return self.processed_dir / "figures"

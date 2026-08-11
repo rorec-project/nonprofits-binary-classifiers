@@ -23,6 +23,9 @@ This repo classifies nonprofit mission text as religious or non-religious.
 - **G2**: confirmation of `production_slate.json`.
 - **G3**: confirmation of `test_unlock.json`.
 - **G4**: human coding of `anchor_to_code.csv`.
+- **Classified share**: within a group of `EIN2`, the share of organizations whose label is 1. It counts classifier decisions, not organizations that are religious. It is **not** a prevalence estimate: the classifier over-calls in low-prevalence NTEE groups and under-calls in high-prevalence ones.
+- **Mean score**: within a group of `EIN2`, the mean of `prob_calibrated` (or `prob_raw`) over the rows the classifier scored. Rule-routed rows have no score and are excluded, so the denominator is smaller than for **classified share**.
+- **Corrected estimate**: the stage-09 output for a group — the **per-organization estimand**, produced by measuring the classifier's error rate on the **Anchor** and removing it. The `prevalence_by_ntee.csv` artifact holds these. Only this quantity may be called **prevalence**.
 
 ## Naming rules
 
@@ -31,3 +34,4 @@ This repo classifies nonprofit mission text as religious or non-religious.
 - Keep `EIN2` as the stable record identifier in pipeline artifacts.
 - Never describe **cross-field transfer** as *zero-shot*; reserve *zero-shot* for prompted models with no task-specific training.
 - Name an `EIN2` universe explicitly whenever coverage or prevalence is discussed — "the sample" is ambiguous across four of them.
+- Never call **classified share** or **mean score** *prevalence*. They are raw classifier output; only the **corrected estimate** is prevalence.

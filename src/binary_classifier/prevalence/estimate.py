@@ -120,6 +120,7 @@ import numpy as np
 import pandas as pd
 
 from binary_classifier.data.load import load_missions
+from binary_classifier.data.ntee_labels import load_ntee_labels
 from binary_classifier.prevalence.composite import (
     composite,
     rogan_gladen,
@@ -163,6 +164,22 @@ _ANCHOR_OOF_COLUMNS = {
 _ANCHOR_MANIFEST_COLUMNS = {"EIN2", "tier", "ntee_major_group", "sample_prob"}
 _MISSING = object()
 _RAW_MULTIPLICITY_COLUMN = "_raw_ein2_multiplicity"
+_MISSING_NTEE_MARKER = "?"
+_MISSING_NTEE_FOLD_TARGET = "Z"
+_NTEE_DESCRIPTIVES_COLUMNS = [
+    "ntee_major_group",
+    "label",
+    "n",
+    "n_scored",
+    "mean_prob_raw",
+    "mean_prob_calibrated",
+    "n_pred_label",
+    "share_pred_label",
+    "n_pred_label_maxf1",
+    "share_pred_label_maxf1",
+    "n_pred_label_baserate",
+    "share_pred_label_baserate",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +348,14 @@ def run_prevalence(cfg: BinaryClassifierConfig, registry: PathRegistry) -> None:
     )
     by_ntee.to_csv(registry.prevalence_by_ntee, index=False)
     logger.info("Wrote NTEE prevalence estimates to %s", registry.prevalence_by_ntee)
+
+    if cfg.prevalence.ntee_descriptives:
+        descriptives = _ntee_descriptives(predictions)
+        descriptives.to_csv(registry.ntee_descriptives, index=False)
+        logger.info(
+            "Wrote NTEE classifier-output descriptives to %s",
+            registry.ntee_descriptives,
+        )
 
     report = _report(
         cfg,
@@ -846,6 +871,8 @@ def _prevalence_by_ntee(
     if not cfg.prevalence.per_ntee:
         return pd.DataFrame(columns=columns)
 
+    predictions = _fold_missing_ntee(predictions)
+    anchor = _fold_missing_ntee(anchor)
     rows: list[dict[str, Any]] = []
     ntee_values = sorted(predictions["ntee_major_group"].astype(str).unique().tolist())
     for ntee in ntee_values:
@@ -961,6 +988,56 @@ def _group_composite_estimate(
         },
     )
     return _estimate_from_variance(point, variance, z_value)
+
+
+# ---------------------------------------------------------------------------
+# Uncorrected per-NTEE classifier-output descriptives
+# ---------------------------------------------------------------------------
+# Unlike _prevalence_by_ntee (which corrects for classifier error using the
+# Anchor), this reports raw classifier output: classified share and mean
+# score. See CONTEXT.md -- these are NOT prevalence. Label columns use all
+# raw EIN2 rows; mean-score columns use only the classifier-scored subset
+# (non-null prob_calibrated), with no imputation.
+# ---------------------------------------------------------------------------
+
+
+def _ntee_descriptives(predictions: pd.DataFrame) -> pd.DataFrame:
+    frame = _fold_missing_ntee(predictions)
+    labels = load_ntee_labels().set_index("ntee_major_group")
+
+    unknown_groups = set(frame["ntee_major_group"].unique()) - set(labels.index)
+    if unknown_groups:
+        raise ValueError(
+            f"predictions contain NTEE major groups outside A-Z: {sorted(unknown_groups)}",
+        )
+
+    grouped = frame.groupby("ntee_major_group", sort=False)
+    n = grouped.size()
+
+    scored = frame.loc[frame["prob_calibrated"].notna()]
+    scored_grouped = scored.groupby("ntee_major_group", sort=False)
+    n_scored = scored_grouped.size()
+    mean_prob_raw = scored_grouped["prob_raw"].mean()
+    mean_prob_calibrated = scored_grouped["prob_calibrated"].mean()
+
+    out = labels.copy()
+    out["n"] = n.reindex(out.index, fill_value=0).astype(int)
+    out["n_scored"] = n_scored.reindex(out.index, fill_value=0).astype(int)
+    out["mean_prob_raw"] = mean_prob_raw.reindex(out.index)
+    out["mean_prob_calibrated"] = mean_prob_calibrated.reindex(out.index)
+
+    n_safe = out["n"].replace(0, np.nan)
+    for label_column in ("pred_label", "pred_label_maxf1", "pred_label_baserate"):
+        flags = pd.to_numeric(frame[label_column], errors="coerce").eq(1)
+        counts = (
+            frame.assign(_flag=flags)
+            .groupby("ntee_major_group", sort=False)["_flag"]
+            .sum()
+        )
+        out[f"n_{label_column}"] = counts.reindex(out.index, fill_value=0).astype(int)
+        out[f"share_{label_column}"] = out[f"n_{label_column}"] / n_safe
+
+    return out.reset_index()[_NTEE_DESCRIPTIVES_COLUMNS]
 
 
 # ---------------------------------------------------------------------------
@@ -1326,6 +1403,23 @@ def _posterior_matrix(probabilities: Iterable[Any]) -> list[list[float]]:
 # ---------------------------------------------------------------------------
 # Tier filtering
 # ---------------------------------------------------------------------------
+
+
+def _fold_missing_ntee(frame: pd.DataFrame) -> pd.DataFrame:
+    """Fold the missing-NTEE marker ``"?"`` into the ``"Z"`` group.
+
+    ``data/load.py`` maps any ``NTEE_IRS`` value that does not match a single
+    uppercase letter to ``"?"``. Both mean "we do not know the NTEE", so stage
+    09 merges them for reporting -- but only here, at grouping time, never
+    upstream in ``data/load.py`` (that would change the silver pool and the
+    trained model; see CONTEXT.md).
+    """
+    folded = frame.copy()
+    folded["ntee_major_group"] = folded["ntee_major_group"].replace(
+        _MISSING_NTEE_MARKER,
+        _MISSING_NTEE_FOLD_TARGET,
+    )
+    return folded
 
 
 def _high_medium(frame: pd.DataFrame) -> pd.DataFrame:

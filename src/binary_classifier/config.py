@@ -257,6 +257,10 @@ class PrevalenceConfig(BaseModel):
             estimate.
         low_tier_sensitivity: Whether to report sensitivity bounds for
             LOW-quality missions routed through the rule layer.
+        ntee_descriptives: Whether uncorrected per-NTEE classifier-output
+            descriptives (classified share, mean score) are also written.
+            Independent of ``per_ntee``: it is computed from predictions only,
+            not the Anchor, and answers a different question.
 
     """
 
@@ -268,6 +272,7 @@ class PrevalenceConfig(BaseModel):
     per_ntee: bool = True
     ntee_min_n: int = 10
     low_tier_sensitivity: bool = True
+    ntee_descriptives: bool = True
 
 
 class AggregationConfig(BaseModel):
