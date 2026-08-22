@@ -153,4 +153,4 @@ The pre-refactor `master` is preserved immutably as tag **`archive/master-2026-0
 - Finalized frozen-test detail — [20260702-local-evaluation-refresh.md](20260702-local-evaluation-refresh.md)
 - Released-dataset contract — [../predictions-full-data-dictionary.md](../predictions-full-data-dictionary.md)
 - Plain-language overview — [../nontechnical-overview.md](../nontechnical-overview.md)
-- Academic write-up — [../../paper/paper.md](../../paper/paper.md)
+- Academic write-up — [../../paper/techreport/paper.md](../../paper/techreport/paper.md)

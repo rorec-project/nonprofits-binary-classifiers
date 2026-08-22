@@ -29,7 +29,7 @@ eliminate edge-clipping across all stage-10 figures, with transparency verified.
 ## Decisions (confirmed with user)
 
 - **Log-odds:** *add* Monroe et al. weighted log-odds as new variants; keep the existing
-  naive `ngram_log_odds.*` (may be cited in `paper/paper.md`). Fix its palette regardless.
+  naive `ngram_log_odds.*` (may be cited in `paper/techreport/paper.md`). Fix its palette regardless.
 - **Wordclouds:** produce *both* raw-frequency and class-distinctiveness variants.
 - **Stopwords:** no blanket removal; remove only generic tokens with no class signal.
 
