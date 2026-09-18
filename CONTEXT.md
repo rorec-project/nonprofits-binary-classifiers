@@ -35,3 +35,51 @@ This repo classifies nonprofit mission text as religious or non-religious.
 - Never describe **cross-field transfer** as *zero-shot*; reserve *zero-shot* for prompted models with no task-specific training.
 - Name an `EIN2` universe explicitly whenever coverage or prevalence is discussed — "the sample" is ambiguous across four of them.
 - Never call **classified share** or **mean score** *prevalence*. They are raw classifier output; only the **corrected estimate** is prevalence.
+
+## Paper-facing vocabulary
+
+The manuscript (`paper/draft/mainNN.tex` — always the latest version) is written for applied economists, not for
+computational social scientists. None of this repo's internal vocabulary appears in it. The
+mapping is:
+
+| Repo term | Paper wording |
+| --- | --- |
+| **Silver** | the training labels; a sample of missions labeled by a language model |
+| **Gold** | missions we coded ourselves; hand-coded records |
+| **Anchor** | a separate sample drawn from across the frame and coded by hand |
+| **Frozen test** | missions set aside before any model was fit and scored once |
+| **Tier** HIGH/MEDIUM/LOW | substantive-text and sparse-text strata |
+| **Bake-off** | the comparison among candidate language models |
+| **Cross-field transfer** | the names arm; scoring organization names with the mission classifier |
+| **PPI** | correcting the classifier's counts for the errors it makes |
+
+*Weak supervision* is the one technical term the paper names and defines, because it is the
+label a reader would search for. *Fine-tuning*, *precision*, *recall*, and *calibration* are
+used and glossed in place. Everything else is described in plain language, with the
+machinery in Appendix `sec:appendix_measurement`.
+
+## Shared academic-writing terms
+
+**The manuscript**:
+The shared Overleaf document co-written with collaborators; current title *Written in the Taxes* (may change).
+_Avoid_: the draft, the paper, the summary paper
+
+**The Overleaf project**:
+The Dropbox directory that `paper/draft` points to, containing the manuscript's LaTeX project.
+_Avoid_: the draft folder, the Dropbox folder
+
+**paper/draft**:
+The symlink to the Overleaf project, present in each of the three repos. It is a path, never the target.
+_Avoid_: the draft, the manuscript directory
+
+**Draft artifact**:
+A pipeline-generated file (figure, table, or stats block) that is manually copied into the Overleaf project.
+_Avoid_: output, exported figure
+
+**Voice profile**:
+The canonical author voice at `../voice-profile/profile.md`.
+_Avoid_: `docs/research/voice-profile/…` (the skill default, unused here)
+
+**The repos**:
+The three sibling repositories — `NonProfitData`, `nonprofits-binary-classifiers`, `nonprofits-topic-modelling`.
+_Avoid_: project, workspace

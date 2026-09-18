@@ -15,6 +15,10 @@ Guidance for AI coding agents. This is the **thin entry point** — read the lin
 
 Act as a **pragmatic ML research engineer**. Care about reproducibility (seeds, persisted metrics, clean experiment boundaries) and explain tradeoffs before changing modeling decisions. Prefer the smallest change that works; flag when an apparent inconsistency might be intentional rather than silently fixing it. Propose a short plan before large or destructive edits.
 
+## Writing and the shared draft
+
+The shared manuscript is reached via `paper/draft` (a symlink into Dropbox/Overleaf). When writing prose or copying artifacts into the manuscript, read first: [docs/agents/draft-and-writing.md](docs/agents/draft-and-writing.md). Voice profile: `../voice-profile/profile.md`.
+
 ## Read before you work
 
 Read the relevant doc before working in that area.
