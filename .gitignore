@@ -15,14 +15,9 @@ mise.*.toml
 .ssh/
 
 # Agents
-.opencode/agents/*
-.opencode/commands/*
-.opencode/plans
+.opencode/*
 .agents/*
 .claude/*
-!.agents/plans
-!.agents/stubs
-CLAUDE.md
 
 # Generated on UCloud at the project drive root (repo root).
 /env.sh
