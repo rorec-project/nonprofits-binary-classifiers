@@ -90,6 +90,9 @@ _POPULATION_NGRAM_RANGES = (
 # Label rules the population wordclouds are rendered under: the operating
 # threshold, and the base-rate rule the manuscript's headline counts use.
 _POPULATION_WORDCLOUD_LABEL_COLUMNS = ("pred_label", "pred_label_baserate")
+# NTEE major groups that do not place an organization outside religion: `X` is
+# the religion-related group itself, `?` and `Z` are missing/unknown codes.
+_OFFNTEE_EXCLUDED_GROUPS = frozenset({"X", "?", "Z"})
 
 # Decoding residue. `nbsp` is what is left of an undecoded `&nbsp;` entity in the
 # upstream mission text; it is a defect artifact, not a word. It reaches the
@@ -177,6 +180,7 @@ def run_visualization(
         _maybe_render_population_probability_weighted_keyness,
         _maybe_render_population_keyness_sensitivity,
         _maybe_render_population_wordclouds,
+        _maybe_render_population_offntee_wordclouds,
     ):
         if only is not None and not any(
             pattern in render_step.__name__ for pattern in only
@@ -1288,6 +1292,78 @@ def _maybe_render_population_wordclouds(
     return rendered
 
 
+def _maybe_render_population_offntee_wordclouds(
+    _cfg: BinaryClassifierConfig,
+    registry: PathRegistry,
+) -> bool:
+    """Render wordclouds for religious-classified organizations coded outside X.
+
+    The off-NTEE subset is organizations the label rule classifies religious
+    whose NTEE major group is coded and not religion-related (not ``X``, ``?``
+    or ``Z``). Its frequency cloud shows what those missions say; the
+    distinctive clouds contrast it against religious-classified ``X``
+    organizations, one cloud per side.
+    """
+    try:
+        predictions = _load_population_predictions(registry)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        logger.warning("Skipping off-NTEE population wordclouds: %s", exc)
+        return False
+
+    rendered = False
+    for label_col in _POPULATION_WORDCLOUD_LABEL_COLUMNS:
+        try:
+            frame = _offntee_religious_frame(predictions, label_col=label_col)
+        except ValueError as exc:
+            logger.warning(
+                "Skipping off-NTEE population wordclouds for %s: %s", label_col, exc
+            )
+            continue
+        logger.info(
+            "Off-NTEE wordclouds for %s: %d religious outside X/?/Z, %d religious in X",
+            label_col,
+            int((frame["label"] == 1).sum()),
+            int((frame["label"] == 0).sum()),
+        )
+        label_suffix = "" if label_col == "pred_label" else f"_{label_col}"
+        min_df = _population_min_df(frame)
+        # Frequency weights for class 1 are its own term counts, so the X side
+        # only matters for the distinctive contrast.
+        clouds = (
+            ("frequency", 1, "offntee_religious"),
+            ("distinctive", 1, "offntee_religious"),
+            ("distinctive", 0, "offntee_xreligious"),
+        )
+        for ngram_name, ngram_range in _POPULATION_NGRAM_RANGES:
+            for weighting, class_label, side in clouds:
+                try:
+                    cloud = build_class_wordcloud(
+                        frame,
+                        ngram_range=ngram_range,
+                        weighting=weighting,
+                        class_label=class_label,
+                        min_df=min_df,
+                        stopwords=_LANGUAGE_STOPWORDS,
+                    )
+                    _save_wordcloud_outputs(
+                        registry,
+                        f"population_wordcloud_{weighting}_{ngram_name}"
+                        f"{label_suffix}_{side}",
+                        cloud,
+                    )
+                    rendered = True
+                except ValueError as exc:
+                    logger.warning(
+                        "Skipping off-NTEE %s %s %s %s wordcloud: %s",
+                        label_col,
+                        weighting,
+                        ngram_name,
+                        side,
+                        exc,
+                    )
+    return rendered
+
+
 def _maybe_render_silver_text_diagnostic(
     cfg: BinaryClassifierConfig,
     registry: PathRegistry,
@@ -1508,6 +1584,41 @@ def _population_language_frame(
         raise ValueError(f"{label_col} must contain only 0/1 labels.")
     if not ({0, 1} <= set(frame["label"].tolist())):
         raise ValueError(f"{label_col} must contain both predicted classes.")
+    return frame
+
+
+def _offntee_religious_frame(
+    predictions: pd.DataFrame,
+    *,
+    label_col: str,
+) -> pd.DataFrame:
+    """Return religious-classified text split by NTEE religion coding.
+
+    Rows are organizations with ``label_col == 1``. ``label`` is 1 when the NTEE
+    major group is coded and not religion-related (the off-NTEE subset) and 0
+    when it is ``X``; religious rows with missing, ``?`` or ``Z`` groups are
+    dropped from both sides.
+    """
+    text_col = _detect_text_column(predictions)
+    required = {text_col, label_col, "ntee_major_group"}
+    missing = required - set(predictions.columns)
+    if missing:
+        raise ValueError(f"predictions_full is missing columns: {sorted(missing)}.")
+    labels = pd.to_numeric(predictions[label_col], errors="coerce")
+    religious = predictions.loc[labels == 1, [text_col, "ntee_major_group"]]
+    religious = religious.dropna()
+    group = religious["ntee_major_group"].astype(str)
+    frame = pd.DataFrame(
+        {
+            "mission_text": religious[text_col],
+            "label": (~group.isin(_OFFNTEE_EXCLUDED_GROUPS)).astype(int),
+        }
+    )
+    frame = frame.loc[(frame["label"] == 1) | (group == "X")]
+    if not ({0, 1} <= set(frame["label"].tolist())):
+        raise ValueError(
+            f"{label_col} needs religious rows both inside and outside NTEE X."
+        )
     return frame
 
 

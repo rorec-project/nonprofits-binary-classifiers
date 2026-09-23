@@ -1253,6 +1253,78 @@ def test_visualize_population_language_wrappers_render_full_predictions(tmp_path
     assert "<image" not in svg_text
 
 
+def test_visualize_population_offntee_wordclouds_render_full_predictions(tmp_path):
+    visualize = _load_visualize_module()
+    figures_dir = tmp_path / "figures"
+    predictions_full = tmp_path / "predictions" / "predictions_full.parquet"
+    predictions_full.parent.mkdir(parents=True)
+
+    # Religious rows outside X carry `outsider`, religious X rows `insider`,
+    # religious ?/Z/missing rows `unknowncode`; non-religious rows never count.
+    groups_and_texts = (
+        ("B", 1, "school chapel tutoring outsider youth program"),
+        ("P", 1, "food pantry chapel outsider youth shelter"),
+        ("X", 1, "church worship parish gospel insider ministry"),
+        ("?", 1, "unknowncode worship church gospel"),
+        ("Z", 1, "unknowncode worship church gospel"),
+        (None, 1, "unknowncode worship church gospel"),
+        ("B", 0, "clinic health nonreligiousonly research aid"),
+    )
+    rows = []
+    for idx in range(6):
+        for group, label, text in groups_and_texts:
+            rows.append(
+                {
+                    "EIN2": f"{group}{label}{idx}",
+                    "mission_text": text,
+                    "pred_label": label,
+                    "pred_label_baserate": label,
+                    "ntee_major_group": group,
+                }
+            )
+    predictions = pd.DataFrame(rows)
+    predictions.to_parquet(predictions_full)
+    registry = SimpleNamespace(
+        figures_dir=figures_dir,
+        predictions_full_parquet=predictions_full,
+    )
+
+    frame = visualize._offntee_religious_frame(predictions, label_col="pred_label")
+    assert (frame["label"] == 1).sum() == 12
+    assert (frame["label"] == 0).sum() == 6
+    assert not frame["mission_text"].str.contains("unknowncode").any()
+    assert not frame["mission_text"].str.contains("nonreligiousonly").any()
+
+    assert visualize._maybe_render_population_offntee_wordclouds(None, registry)
+
+    for label_suffix in ("", "_pred_label_baserate"):
+        for ngram_name in ("unigram", "bigram", "trigram"):
+            for weighting, side in (
+                ("frequency", "offntee_religious"),
+                ("distinctive", "offntee_religious"),
+                ("distinctive", "offntee_xreligious"),
+            ):
+                stem = (
+                    f"population_wordcloud_{weighting}_{ngram_name}"
+                    f"{label_suffix}_{side}"
+                )
+                for extension in ("png", "pdf", "svg"):
+                    assert (figures_dir / f"{stem}.{extension}").stat().st_size > 0
+    assert not list(figures_dir.glob("*frequency*offntee_xreligious*"))
+
+    religious_svg = (
+        figures_dir / "population_wordcloud_frequency_unigram_offntee_religious.svg"
+    ).read_text(encoding="utf-8")
+    assert "outsider" in religious_svg
+    assert "insider" not in religious_svg
+    assert "unknowncode" not in religious_svg
+    xreligious_svg = (
+        figures_dir / "population_wordcloud_distinctive_unigram_offntee_xreligious.svg"
+    ).read_text(encoding="utf-8")
+    assert "insider" in xreligious_svg
+    assert "unknowncode" not in xreligious_svg
+
+
 def test_silver_with_text_falls_back_to_predictions_full_when_raw_missing(
     tmp_path,
     monkeypatch,
