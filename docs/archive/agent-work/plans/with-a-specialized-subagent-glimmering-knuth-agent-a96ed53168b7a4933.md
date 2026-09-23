@@ -5,7 +5,7 @@ created: 2026-06-10
 # Plan-parity verification: glimmering-knuth (ORIGINAL vs CURRENT)
 
 Read-only check. ORIGINAL = `~/.claude/plans/...-glimmering-knuth.md`;
-CURRENT = `.agents/plans/...-glimmering-knuth.md`. Neither file modified.
+CURRENT = `docs/archive/agent-work/plans/...-glimmering-knuth.md`. Neither file modified.
 
 ## Verdict
 

@@ -1,7 +1,7 @@
 ---
 created: 2026-07-28
 status: design agreed, not implemented
-supersedes: .agents/stubs/names_with_missions_vs_missions-idea.md (partially — see §0)
+supersedes: docs/archive/agent-work/stubs/names_with_missions_vs_missions-idea.md (partially — see §0)
 ---
 
 # Cross-field transfer: scoring the mission-trained encoder on organization names

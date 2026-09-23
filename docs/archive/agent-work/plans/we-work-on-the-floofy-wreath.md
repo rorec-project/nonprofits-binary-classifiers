@@ -8,7 +8,7 @@ created: 2026-06-08
 
 The current pipeline is a pair of flat scripts (`generate_training_data.py`, `split_data.py`) plus notebooks, with documented defects in `docs/audits/old_repo_auditing.md`: no training seed (non-reproducible), class-weight doc/code mismatch, `EIN2` join key dropped from inference output, broken producer/consumer between inference and inspection, `DATA_OF_CHOICE` duplicated across two files, and `bert-base-uncased` (a dominated model) hard-wired. We are rebuilding it from scratch into a reproducible, config-driven `src/` package that generalizes beyond religious classification (pregnancy centers, education, international, …) and runs on UCloud B200 GPUs.
 
-This plan details **point 1 (upstream cleanup + decisions)** and **point 2 (LLM annotation)** of `.agents/stubs/pipeline-roadmap.md`, and stubs points 3–6 so they slot in. Every decision is grounded in the research handoffs in `docs/research/` and in a direct profile of the real input corpus (`missions_cross_section.parquet`, 560,351 rows).
+This plan details **point 1 (upstream cleanup + decisions)** and **point 2 (LLM annotation)** of `docs/archive/agent-work/stubs/pipeline-roadmap.md`, and stubs points 3–6 so they slot in. Every decision is grounded in the research handoffs in `docs/research/` and in a direct profile of the real input corpus (`missions_cross_section.parquet`, 560,351 rows).
 
 The deliverable of points 1–2 is a **versioned, frozen, LLM-labelled train/validation/test dataset of high-quality missions** (keyed by `EIN2`), ready for the fine-tuning phase.
 
@@ -31,7 +31,7 @@ The deliverable of points 1–2 is a **versioned, frozen, LLM-labelled train/val
 
 ## Corpus facts that ground the design (from the data profile)
 
-> The full quantitative + qualitative findings behind this section — corpus profile, NTEE join, the quality rubric `Q`, per-stratum HIGH pools, the verbatim example bank, religious-signal-by-sector contrasts, and boundary-case prevalences — live in the companion annex **`.agents/plans/we-work-on-the-floofy-wreath-annex.md`**. This section is the executive summary.
+> The full quantitative + qualitative findings behind this section — corpus profile, NTEE join, the quality rubric `Q`, per-stratum HIGH pools, the verbatim example bank, religious-signal-by-sector contrasts, and boundary-case prevalences — live in the companion annex **`docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md`**. This section is the executive summary.
 
 - 560,351 missions, one per `EIN2` (unique) — the `COMMON_LEVEL1 == "501C3 CHARITY"` subset of the corpus codebook's **586,718**-EIN2 mission set (the ~4.5% gap is the charity filter; confirm/reconcile at implementation). `LONGEST_MISSION`: 0 empty, 99.2% English, median 22 words.
 - Dominant quality problem is **brevity** (9.3% <5 words, 25% <10 words), not junk (~2–3% boilerplate). 5.8% exact duplicates (dominated by single-word missions). ~0.75% soft-truncated at ~1000 chars.
@@ -81,7 +81,7 @@ config/
 ### Stage 2.1 — Sample construction (`scripts/01_build_sample.py`)
 
 1. Load `missions_cross_section.parquet`; join `EIN2 → bmf_unified_processed.parquet` for NTEE major group (`NTEE_IRS[0]`).
-2. Compute `Q` and tier (`data/quality.py`); drop exact duplicates (keep one); flag truncated rows. _(The `Q` feature weights, tier thresholds, per-NTEE HIGH-pool sizes, and the positive-protective rescue rule are specified in the annex `.agents/plans/we-work-on-the-floofy-wreath-annex.md`.)_
+2. Compute `Q` and tier (`data/quality.py`); drop exact duplicates (keep one); flag truncated rows. _(The `Q` feature weights, tier thresholds, per-NTEE HIGH-pool sizes, and the positive-protective rescue rule are specified in the annex `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md`.)_
 3. **Silver pool (~20k):** sample from **HIGH + MEDIUM** (`Q≥3.0`; pool ≈395k — LOW excluded, it goes to the rule layer), **stratified across all 26 NTEE macro-groups** — proportional with a **floor** for thin strata (V/Y/U) and a **cap** on fat strata (B/P). **Positive-enrich per stratum** to ~30–40% via the religious-lexicon prior. (Including MEDIUM subsumes the earlier HIGH-only "positive-protective rescue" and matches the classifier's HIGH+MEDIUM validated scope.) Over-provisioned so the point-3 learning curve can find the plateau.
 4. **Gold set (~400, ~15/group):** drawn from **HIGH + MEDIUM** (matching the silver scope) but **deliberately retain boundary cases** (saint-named-secular, spiritual-not-religious, generic ministry/mission, faith-heritage). **Persist each gold record's stratum + inclusion probability** for later reweighting to deployment prevalence (point 6).
 5. **Human splits:** carve gold into **prompt-dev (~50)** / **validation** / **frozen test**. Persist an `EIN2` manifest for every split; all sampling seeded.
@@ -133,7 +133,7 @@ The build is executed by an **orchestrator** that spawns **specialized sub-agent
 
 ### Standard briefing (every sub-agent receives this in fresh context)
 
-1. **Read the full plan** `.agents/plans/we-work-on-the-floofy-wreath.md` and the research annex `.agents/plans/we-work-on-the-floofy-wreath-annex.md` before doing anything.
+1. **Read the full plan** `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath.md` and the research annex `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md` before doing anything.
 2. **Follow the conventions** in `docs/agents/conventions/` (uv only; Ruff line-length 88; `pathlib.Path`; imports stdlib→third-party→local; Google/NumPy docstrings explaining intent; section-header comments above blocks, never inline).
 3. **Scope discipline:** create/edit only the files in your package; treat every other path as read-only. Do not guess on ambiguous design — surface it to the orchestrator as a blocker rather than inventing.
 4. **Reproducibility:** read `SEED`, paths, and the entity/field from `config/religious_missions.yaml`; carry `EIN2` through every artifact.
@@ -208,13 +208,13 @@ The GPU stages (annotation across the model slate, and later training) run on a 
 
 ## Sampling & quality research
 
-The empirical basis for the sampling design — the **full mission-quality characterization** from sub-agent `aa42836beb4803b01` — is kept in the companion annex **`.agents/plans/we-work-on-the-floofy-wreath-annex.md`**: the quality rubric `Q` and feature weights, tier counts, the 26-row per-NTEE HIGH-pool table, the verbatim example bank (HIGH/MED/LOW), religious-vs-secular HIGH examples per sector, the five boundary-case patterns with prevalences, and the sampling synthesis. **§2.1 (sample construction) is implemented directly from that annex** — the `Q` rubric, per-stratum HIGH pools, the positive-protective rescue rule, and the concrete high-quality mission examples to sample. The corpus-shape/text-quality distributions and NTEE-join numbers in the [Corpus facts](#corpus-facts-that-ground-the-design-from-the-data-profile) section above come from the companion corpus-profile pass.
+The empirical basis for the sampling design — the **full mission-quality characterization** from sub-agent `aa42836beb4803b01` — is kept in the companion annex **`docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md`**: the quality rubric `Q` and feature weights, tier counts, the 26-row per-NTEE HIGH-pool table, the verbatim example bank (HIGH/MED/LOW), religious-vs-secular HIGH examples per sector, the five boundary-case patterns with prevalences, and the sampling synthesis. **§2.1 (sample construction) is implemented directly from that annex** — the `Q` rubric, per-stratum HIGH pools, the positive-protective rescue rule, and the concrete high-quality mission examples to sample. The corpus-shape/text-quality distributions and NTEE-join numbers in the [Corpus facts](#corpus-facts-that-ground-the-design-from-the-data-profile) section above come from the companion corpus-profile pass.
 
 ## References
 
 ### Internal research handoffs
 
-- **Sampling & quality research (this project's own data):** `.agents/plans/we-work-on-the-floofy-wreath-annex.md` — the full mission-quality characterization (rubric `Q`, per-NTEE HIGH pools, example bank, boundary cases) from sub-agent `aa42836beb4803b01`; the source for the high-quality mission examples to sample in §2.1.
+- **Sampling & quality research (this project's own data):** `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md` — the full mission-quality characterization (rubric `Q`, per-NTEE HIGH pools, example bank, boundary cases) from sub-agent `aa42836beb4803b01`; the source for the high-quality mission examples to sample in §2.1.
 - `20260605-literature-synthesis-map.md` — overall empirical design (weak supervision as strongest design; annotation pipeline; model grid; evaluation bundle).
 - `20260606-tech-synthesis-map.md` — technical takeaways, package shortlist, experiment scaffold, prompt/codebook domains.
 - `20260606-tech-llm-weak-supervision-noisy-labels.md` — LLM-as-LF, label sources to compare, "add noisy-label methods only if they beat LLM-only on human-held-out", three human splits, drift/canary.

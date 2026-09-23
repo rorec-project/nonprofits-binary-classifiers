@@ -12,7 +12,7 @@ created: 2026-07-02
 
 ## §0. Context & Deliverables
 
-First full UCloud run of the pipeline completed; audited in `docs/audits/religious_evaluation_report.md`. An independent review (`.agents/plans/we-have-run-the-purrfect-engelbart-agent-a87b32148d5a6939e.md`) confirmed the load-bearing code claims and found the LOW-tier prevalence bug (§Decision 4). The model passes its gates (F1 0.894, recall 0.987, PR-AUC 0.9014, ECE 0.007). This sprint fixes inconsistencies and adds SOTA methodology + figures + documentation, all implemented and verified **locally**; a controlled frozen-test re-evaluation and the final production run follow on UCloud after the sprint.
+First full UCloud run of the pipeline completed; audited in `docs/audits/religious_evaluation_report.md`. An independent review (`docs/archive/agent-work/plans/we-have-run-the-purrfect-engelbart-agent-a87b32148d5a6939e.md`) confirmed the load-bearing code claims and found the LOW-tier prevalence bug (§Decision 4). The model passes its gates (F1 0.894, recall 0.987, PR-AUC 0.9014, ECE 0.007). This sprint fixes inconsistencies and adds SOTA methodology + figures + documentation, all implemented and verified **locally**; a controlled frozen-test re-evaluation and the final production run follow on UCloud after the sprint.
 
 **Deliverables (code + local verification in the sprint; final artifacts post-sprint):** (a) a released **per-organization** labeled dataset (`predictions_full.parquet`); (b) an aggregate **prevalence** estimate with figures; (c) refreshed **documentation** for any audience.
 

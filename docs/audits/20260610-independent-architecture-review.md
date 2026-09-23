@@ -5,8 +5,8 @@
 **Scope:** The whole repository as it stands after the two implemented sprints —
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
-against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+against (a) the implemented plans in `docs/archive/agent-work/plans/`, (b) the research synthesis
+in `docs/research/`, (c) the roadmap in `docs/archive/agent-work/stubs/pipeline-roadmap.md`, and
 (d) the prior best-practices review (`docs/audits/20260609-pipeline-review-best-practices.md`).
 **Type:** Read-only review. The only artifact produced is this document; no
 source or data was modified. (`skills-lock.json` was already dirty in the working
@@ -232,7 +232,7 @@ then (c) start the modeling half.
    (reuse the QC bundle; add a calibration split + ECE before any prevalence work)
    → wire `apply_rule_label` and `inclusion_prob` into stage 07 → the PPI++/QuaPy
    prevalence estimator the project exists to produce.
-7. **Add a one-line index for `.agents/plans/`** so the obfuscated durable audit
+7. **Add a one-line index for `docs/archive/agent-work/plans/`** so the obfuscated durable audit
    files are navigable (F6).
 
 ---
@@ -257,8 +257,8 @@ classifier and a calibrated population-prevalence estimate over all US nonprofit
 **Scope:** The whole repository as it stands after the two implemented sprints —
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
-against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+against (a) the implemented plans in `docs/archive/agent-work/plans/`, (b) the research synthesis
+in `docs/research/`, (c) the roadmap in `docs/archive/agent-work/stubs/pipeline-roadmap.md`, and
 (d) the prior best-practices review (`docs/audits/20260609-pipeline-review-best-practices.md`).
 </invoke>
 
@@ -269,8 +269,8 @@ in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 **Scope:** The whole repository as it stands after the two implemented sprints —
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
-against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+against (a) the implemented plans in `docs/archive/agent-work/plans/`, (b) the research synthesis
+in `docs/research/`, (c) the roadmap in `docs/archive/agent-work/stubs/pipeline-roadmap.md`, and
 </invoke>
 
 # Independent Architecture Review
@@ -280,6 +280,6 @@ in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
 **Scope:** The whole repository as it stands after the two implemented sprints —
 PR1/PR2 (`let-s-design-a-plan-idempotent-harbor.md`) and the harmonize sprint
 (`with-a-specialized-subagent-glimmering-knuth.md`, commit `7af0ba5`) — read
-against (a) the implemented plans in `.agents/plans/`, (b) the research synthesis
-in `docs/research/`, (c) the roadmap in `.agents/stubs/pipeline-roadmap.md`, and
+against (a) the implemented plans in `docs/archive/agent-work/plans/`, (b) the research synthesis
+in `docs/research/`, (c) the roadmap in `docs/archive/agent-work/stubs/pipeline-roadmap.md`, and
 </invoke>

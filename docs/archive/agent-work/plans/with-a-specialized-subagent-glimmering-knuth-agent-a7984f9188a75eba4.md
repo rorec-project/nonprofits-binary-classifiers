@@ -98,8 +98,8 @@ Verified against the actual code on branch `refactor/harmonize-pipeline`. Baseli
     the NEW `data/processed/gold/production_slate.json`. Plan E lists only README:~83; it should
     reconcile the whole file for consistency.
 
-12. **`.agents/plans/let-s-design-a-plan-idempotent-harbor.md`** repeatedly references `silver_dir`
-    as a config key (lines 37,52,105,106,110,255). Plan correctly scopes dated `.agents/plans/*` as
+12. **`docs/archive/agent-work/plans/let-s-design-a-plan-idempotent-harbor.md`** repeatedly references `silver_dir`
+    as a config key (lines 37,52,105,106,110,255). Plan correctly scopes dated `docs/archive/agent-work/plans/*` as
     historical/leave-alone — fine — but worth confirming the human agrees these stay frozen even
     though they encode a path field that never shipped.
 

@@ -38,7 +38,7 @@ the CSV stages **directly** (headers + row counts).
 **What was cross-checked:** every filename, column name, and row count cited below was
 verified against `generate_training_data.py`, `split_data.py`, the code cells of the 5
 notebooks, the CSV headers (`head -1`) and line counts (`wc -l`), and the upstream
-`output-contracts.md` / `we-want-to-do-wobbly-treehouse.md`.
+`output-contracts.md` / `docs/archive/agent-work/plans/we-want-to-do-wobbly-treehouse.md`.
 
 ---
 
@@ -84,7 +84,7 @@ documents disagree about the contract this repo depends on:
   `data/processed/501c3_charity_geocoded_missions_clean.parquet` and
   `…_activities_clean.parquet`, with keys `EIN2` + `TAX_YEAR`. This matches the names this
   repo hardcodes.
-- **`.agents/plans/we-want-to-do-wobbly-treehouse.md`** (refactor plan) **renames** the
+- **`docs/archive/agent-work/plans/we-want-to-do-wobbly-treehouse.md`** (refactor plan) **renames** the
   cross-sections to **`missions_cross_section.parquet`** / **`activities_cross_section.parquet`**
   (one row per `EIN2`, `COMMON_LEVEL1 == "501C3 CHARITY"`), and explicitly states *"no
   `501c3_*` side-outputs"*. The old `501c3_*_clean.parquet` producers are moved to

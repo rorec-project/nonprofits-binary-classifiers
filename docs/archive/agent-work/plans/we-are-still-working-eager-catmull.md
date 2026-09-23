@@ -207,7 +207,7 @@ shared files (`config.py`, `paths.py`, `run_pipeline.py`, `preflight.py`,
   scores it every inference run into `monitor_scores.json` for run-over-run drift
   diffing (classifier-era analogue of stage-03 canary fingerprinting). Report-only.
 - **Docs superseding notes are deliverables**: PR-2 records the sweep replacement +
-  encoder-grid reduction in `.agents/plans/we-work-on-the-floofy-wreath.md` (memo),
+  encoder-grid reduction in `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath.md` (memo),
   `docs/agents/configuration.md` (roadmap hooks), and `README.md`; PR-6
   records word-clouds → n-gram log-odds bars (statistically interpretable, no new dep).
 - DVC migration stays deferred (configuration.md) — out of scope, do not touch.
@@ -852,7 +852,7 @@ Acceptance: Tier-1 green; smoke run `scripts/06_train.py --config config/smoke.y
 --baselines-only` then `--sweep` completes locally (bert-tiny; `network` once to
 cache).
 
-**T2.8 — docs superseding notes** (owns `.agents/plans/we-work-on-the-floofy-wreath.md`
+**T2.8 — docs superseding notes** (owns `docs/archive/agent-work/plans/we-work-on-the-floofy-wreath.md`
 (append memo), `docs/agents/configuration.md`, `README.md`) [parallel-ok]
 Operations: append a dated "Superseded decisions (June 2026)" memo: sweep
 {0.5k..16k} → full-pool + {25/50/100%} documentation curve (cite arXiv:2504.15432,
@@ -1225,7 +1225,7 @@ In-repo: `docs/research/20260606-tech-short-text-model-alternatives.md` (grids,
 baselines) · `…-imbalanced-text-evaluation.md` (metric bundle) ·
 `…-calibration-quantification-prevalence.md` (calibration/quantification) ·
 `…-llm-weak-supervision-noisy-labels.md` (noisy-label gating) ·
-`.agents/plans/we-work-on-the-floofy-wreath.md` (+ annex; original locked decisions)
+`docs/archive/agent-work/plans/we-work-on-the-floofy-wreath.md` (+ annex; original locked decisions)
 · `docs/agents/{configuration,pipeline}.md` · `docs/RUNNING_ON_UCLOUD.md`.
 
 Literature (key): PPI Science 2023 arXiv:2301.09633 · PPI++ arXiv:2311.01453 ·

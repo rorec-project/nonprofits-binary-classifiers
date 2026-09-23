@@ -46,7 +46,7 @@ per task card**. Tasks are serialized because several touch the same files.
 - **Citations are locked in the References appendix** at the end of this document — use those exact
   identifiers in code comments / docs; do not invent or rely on outside memory.
 - **Supporting evidence (optional, NOT required to implement — cards are self-contained).** For deeper
-  rationale a subagent MAY consult the durable audit findings committed in this repo under `.agents/plans/`:
+  rationale a subagent MAY consult the durable audit findings committed in this repo under `docs/archive/agent-work/plans/`:
   `*-agent-a7984f9188a75eba4.md` (skeptical review), `*-agent-a2383f9b609ae4b96.md` and
   `*-agent-ab65966ce63b3fc30.md` (sampling/prevalence), `*-agent-a9fe574aeb844e218.md` (weak-supervision
   currency), `*-agent-a599b7180c7125ada.md` (modeling currency), `*-agent-a96ed53168b7a4933.md` (drift check);
@@ -72,7 +72,7 @@ The `refactor/harmonize-pipeline` branch renamed the data layout and reshaped co
 only half-landed (docs, `.gitignore`, and the on-disk data dir still reflect the old world), and several
 weak-supervision features are wired but not operational. This sprint was driven by: an audit (3 Explore
 agents), an independent skeptical review, authoritative DVC / label-aggregation research, a sampling-design
-review, and a 2026 literature-currency audit (durable findings in `.agents/plans/*-agent-*.md`). All claims
+review, and a 2026 literature-currency audit (durable findings in `docs/archive/agent-work/plans/*-agent-*.md`). All claims
 were re-verified against the code on this branch (baseline `pytest -q` = 69 passed).
 
 **Blocking pre-existing bug (fixed by T1–T3).** The human-coded **validation set is never LLM-annotated**
@@ -392,7 +392,7 @@ empty). Run `git check-ignore -v data/processed/gold/gold_to_code.csv` (expect *
 
 **Depends on:** run **last** (docs describe the final state of all prior tasks).
 **Files:** `README.md`, `AGENTS.md`, `docs/agents/configuration.md`,
-`docs/agents/conventions/python-standards.md`. (Leave dated `docs/research/*` and `.agents/plans/*` as
+`docs/agents/conventions/python-standards.md`. (Leave dated `docs/research/*` and `docs/archive/agent-work/plans/*` as
 historical records.)
 **Operations:**
 

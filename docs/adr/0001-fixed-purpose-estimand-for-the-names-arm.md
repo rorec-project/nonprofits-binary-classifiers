@@ -21,7 +21,7 @@ sense." It carries a `saint_name_only` domain code whose instruction is to absta
 Names do not carry that evidence. They carry religious **identity or affiliation**:
 denominational tokens, saint names, "Trinity", "Grace". The distinction is not ours —
 it is the Sider & Unruh typology, and the June 2026 stub
-(`.agents/stubs/names_with_missions_vs_missions-idea.md`) reached it independently
+(`docs/archive/agent-work/stubs/names_with_missions_vs_missions-idea.md`) reached it independently
 and listed the estimand as its first open decision.
 
 So the mission construct and the evidence a name supplies are systematically

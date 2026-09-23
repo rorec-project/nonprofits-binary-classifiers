@@ -72,7 +72,7 @@ No source edits, provided the upstream parquet exposes the chosen `field`.
 
 Stages 05–10 are built and wired into the orchestrator; stage 11 is still a
 script-only helper. The decision record is in
-`.agents/plans/we-work-on-the-floofy-wreath.md`, especially the appended
+`docs/archive/agent-work/plans/we-work-on-the-floofy-wreath.md`, especially the appended
 **Superseded decisions (June 2026)** memo, which replaced the old broad
 training-size sweep and RoBERTa/DistilBERT encoder grid with stages 05–11.
 - **Stage 05 — anchor sample:** add a representative anchor sample over the full

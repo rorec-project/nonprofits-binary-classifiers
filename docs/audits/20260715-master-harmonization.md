@@ -135,7 +135,7 @@ Housekeeping changes made while preparing the merge:
 2. **Reconciled stale evaluation docs.** The `pending §7 / TBD` placeholders in [20260702-local-evaluation-refresh.md](20260702-local-evaluation-refresh.md) were replaced with the real finalized frozen-test numbers, so master lands internally consistent.
 3. **Removed the legacy pipeline from the tree.** The `archive/legacy-pipe/` directory (the original flat-script + notebook pipeline) was deleted for a clean public master. It is preserved byte-identically in the `archive/master-2026-06-17` tag and recoverable via `git show archive/master-2026-06-17:<file>`; doc references were updated to point at the tag.
 
-The ~21 `.agents/plans/*.md` agent scratchpads are **kept** as a development-timeline record (to be reprocessed later).
+The ~21 `docs/archive/agent-work/plans/*.md` agent scratchpads are **kept** as a development-timeline record (to be reprocessed later).
 
 ---
 
