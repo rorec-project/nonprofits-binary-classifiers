@@ -18,6 +18,7 @@ mise.*.toml
 .opencode/*
 .agents/*
 .claude/*
+.codex/*
 
 # Generated on UCloud at the project drive root (repo root).
 /env.sh
