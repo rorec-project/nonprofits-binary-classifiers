@@ -67,6 +67,7 @@ from binary_classifier.viz.style import (
     PAPER_RCPARAMS,
     style_context,
 )
+from binary_classifier.viz import wordclouds as wordclouds_module
 from binary_classifier.viz.wordclouds import (
     build_class_wordcloud,
     class_wordcloud,
@@ -303,6 +304,44 @@ def test_save_wordcloud_outputs_emit_selectable_vector_artifacts(tmp_path):
         text=True,
     ).stdout.lower()
     assert "church" in extracted or "worship" in extracted
+
+
+def test_wordcloud_shade_tracks_font_size_without_moving_words():
+    frequencies = {f"term{idx}": float(100 - 3 * idx) for idx in range(30)}
+    base_color = wordclouds_module.OKABE_ITO_BLUE
+
+    # Reference: the pre-shading build path, random ramp colors and all.
+    reference = wordclouds_module._make_wordcloud(
+        None,
+        max_words=30,
+        color_func=wordclouds_module._color_ramp(base_color),
+    )
+    reference.generate_from_frequencies(frequencies)
+    cloud = wordclouds_module._transparent_wordcloud(
+        frequencies,
+        max_words=30,
+        base_color=base_color,
+    )
+
+    assert [item[:4] for item in cloud.layout_] == [
+        item[:4] for item in reference.layout_
+    ]
+    shades = []
+    for _, font_size, _, _, color in cloud.layout_:
+        red, green, blue, alpha = wordclouds_module._parse_rgba(color)
+        assert color.startswith("rgb(")
+        assert alpha == 1.0
+        shades.append((font_size, red + green + blue))
+    shades.sort()
+    lightness = [shade for _, shade in shades]
+    assert all(
+        larger <= smaller
+        for smaller, larger in zip(lightness, lightness[1:], strict=False)
+    )
+    assert lightness[0] > lightness[-1]
+    largest = max(cloud.layout_, key=lambda item: item[1])
+    assert largest[4] == wordclouds_module._tint(base_color, 1.0)
+    assert np.asarray(cloud.to_image()).shape[2] == 4
 
 
 def test_documentation_curve_renders_tmp_png(tmp_path):

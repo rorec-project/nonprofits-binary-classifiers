@@ -252,7 +252,7 @@ def class_wordclouds(
         cloud = _transparent_wordcloud(
             frequencies,
             max_words=max_words,
-            color_func=_color_ramp(color),
+            base_color=color,
         )
         panel_ax.imshow(cloud, interpolation="bilinear")
         panel_ax.axis("off")
@@ -334,7 +334,7 @@ def build_class_wordcloud(
     cloud = _transparent_wordcloud(
         frequencies,
         max_words=max_words,
-        color_func=_color_ramp(color),
+        base_color=color,
     )
     logger.info(
         "Rendered %s class-%d wordcloud for %d-%d-grams",
@@ -570,12 +570,16 @@ def _transparent_wordcloud(
     frequencies: dict[str, float],
     *,
     max_words: int,
-    color_func: Callable[..., str],
+    base_color: str,
 ) -> WordCloud:
+    # Placement runs with the random `_color_ramp`: WordCloud draws each word's
+    # color from the same RNG that places the next word, so keeping those draws
+    # keeps every layout identical. The shade is then reassigned by font size.
+    color_func = _color_ramp(base_color)
     cloud = _make_wordcloud(None, max_words=max_words, color_func=color_func)
     cloud.generate_from_frequencies(frequencies)
     if _has_transparent_background(cloud):
-        return cloud
+        return _shade_by_size(cloud, base_color)
 
     cloud = _make_wordcloud(
         "rgba(255,255,255,0)",
@@ -587,7 +591,7 @@ def _transparent_wordcloud(
         raise RuntimeError(
             "WordCloud rendered an opaque background after RGBA fallback."
         )
-    return cloud
+    return _shade_by_size(cloud, base_color)
 
 
 def _make_wordcloud(
@@ -619,8 +623,6 @@ def _has_transparent_background(cloud: WordCloud) -> bool:
 
 
 def _color_ramp(base_color: str) -> Callable[..., str]:
-    red, green, blue = (int(channel * 255) for channel in to_rgb(base_color))
-
     def color_func(
         word: str,
         font_size: int,
@@ -631,15 +633,42 @@ def _color_ramp(base_color: str) -> Callable[..., str]:
     ) -> str:
         del word, font_size, position, orientation, kwargs
         rng = random_state if random_state is not None else np.random.RandomState(13)
-        blend = float(rng.uniform(0.55, 1.0))
-        ramped = (
-            int(255 - ((255 - red) * blend)),
-            int(255 - ((255 - green) * blend)),
-            int(255 - ((255 - blue) * blend)),
-        )
-        return f"rgb({ramped[0]}, {ramped[1]}, {ramped[2]})"
+        return _tint(base_color, float(rng.uniform(0.55, 1.0)))
 
     return color_func
+
+
+def _shade_by_size(cloud: WordCloud, base_color: str) -> WordCloud:
+    """Recolor a generated cloud so each word's shade tracks its font size.
+
+    The largest word gets the pure base color and the smallest the lightest
+    0.55 tint, linear in font size in between. Only colors change: ``recolor``
+    rewrites ``layout_``, which ``to_image`` and the PDF/SVG writers all read.
+    """
+    sizes = [font_size for _, font_size, _, _, _ in cloud.layout_]
+    if not sizes:
+        return cloud
+    smallest, largest = min(sizes), max(sizes)
+
+    def color_func(word: str, font_size: int, **kwargs: object) -> str:
+        del word, kwargs
+        if largest == smallest:
+            return _tint(base_color, 1.0)
+        share = (font_size - smallest) / (largest - smallest)
+        return _tint(base_color, 0.55 + 0.45 * share)
+
+    return cloud.recolor(color_func=color_func)
+
+
+def _tint(base_color: str, blend: float) -> str:
+    """Blend ``base_color`` toward white; ``blend=1.0`` is the pure base color."""
+    red, green, blue = (int(channel * 255) for channel in to_rgb(base_color))
+    ramped = (
+        int(255 - ((255 - red) * blend)),
+        int(255 - ((255 - green) * blend)),
+        int(255 - ((255 - blue) * blend)),
+    )
+    return f"rgb({ramped[0]}, {ramped[1]}, {ramped[2]})"
 
 
 __all__ = [
