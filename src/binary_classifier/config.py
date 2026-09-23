@@ -321,7 +321,7 @@ class QThresholdsConfig(BaseModel):
     """Quality-score thresholds for the computable rubric Q.
 
     Tiers are defined in the annex
-    (see ``.agents/plans/we-work-on-the-floofy-wreath-annex.md``):
+    (see ``docs/archive/agent-work/plans/we-work-on-the-floofy-wreath-annex.md``):
     HIGH missions are concrete (purpose + beneficiary + activity), MEDIUM are
     decent but thinner on one dimension, and LOW are fragments or bare labels
     that are handled by the rule layer at inference.

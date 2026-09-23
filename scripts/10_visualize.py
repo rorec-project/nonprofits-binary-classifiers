@@ -87,6 +87,9 @@ _POPULATION_NGRAM_RANGES = (
     ("bigram", (2, 2)),
     ("trigram", (3, 3)),
 )
+# Label rules the population wordclouds are rendered under: the operating
+# threshold, and the base-rate rule the manuscript's headline counts use.
+_POPULATION_WORDCLOUD_LABEL_COLUMNS = ("pred_label", "pred_label_baserate")
 
 # Decoding residue. `nbsp` is what is left of an undecoded `&nbsp;` entity in the
 # upstream mission text; it is a defect artifact, not a word. It reaches the
@@ -1233,42 +1236,55 @@ def _maybe_render_population_wordclouds(
     _cfg: BinaryClassifierConfig,
     registry: PathRegistry,
 ) -> bool:
-    """Render full-population predicted-label wordclouds."""
+    """Render full-population predicted-label wordclouds for each label rule."""
     try:
         predictions = _load_population_predictions(registry)
-        frame = _population_language_frame(predictions, label_col="pred_label")
     except (FileNotFoundError, OSError, ValueError) as exc:
         logger.warning("Skipping population wordclouds: %s", exc)
         return False
 
     rendered = False
-    min_df = _population_min_df(frame)
-    for ngram_name, ngram_range in _POPULATION_NGRAM_RANGES:
-        for weighting in ("frequency", "distinctive"):
-            for class_label, class_name in ((1, "religious"), (0, "nonreligious")):
-                try:
-                    cloud = build_class_wordcloud(
-                        frame,
-                        ngram_range=ngram_range,
-                        weighting=weighting,
-                        class_label=class_label,
-                        min_df=min_df,
-                        stopwords=_LANGUAGE_STOPWORDS,
-                    )
-                    _save_wordcloud_outputs(
-                        registry,
-                        f"population_wordcloud_{weighting}_{ngram_name}_class_{class_label}",
-                        cloud,
-                    )
-                    rendered = True
-                except ValueError as exc:
-                    logger.warning(
-                        "Skipping population %s %s %s wordcloud: %s",
-                        weighting,
-                        ngram_name,
-                        class_name,
-                        exc,
-                    )
+    for label_col in _POPULATION_WORDCLOUD_LABEL_COLUMNS:
+        try:
+            frame = _population_language_frame(predictions, label_col=label_col)
+        except ValueError as exc:
+            logger.warning("Skipping population wordclouds for %s: %s", label_col, exc)
+            continue
+        # `pred_label` keeps the historical unsuffixed names the manuscript cites;
+        # every other rule carries its label in the name, as the keyness figures do.
+        label_suffix = "" if label_col == "pred_label" else f"_{label_col}"
+        min_df = _population_min_df(frame)
+        for ngram_name, ngram_range in _POPULATION_NGRAM_RANGES:
+            for weighting in ("frequency", "distinctive"):
+                for class_label, class_name in (
+                    (1, "religious"),
+                    (0, "nonreligious"),
+                ):
+                    try:
+                        cloud = build_class_wordcloud(
+                            frame,
+                            ngram_range=ngram_range,
+                            weighting=weighting,
+                            class_label=class_label,
+                            min_df=min_df,
+                            stopwords=_LANGUAGE_STOPWORDS,
+                        )
+                        _save_wordcloud_outputs(
+                            registry,
+                            f"population_wordcloud_{weighting}_{ngram_name}"
+                            f"{label_suffix}_class_{class_label}",
+                            cloud,
+                        )
+                        rendered = True
+                    except ValueError as exc:
+                        logger.warning(
+                            "Skipping population %s %s %s %s wordcloud: %s",
+                            label_col,
+                            weighting,
+                            ngram_name,
+                            class_name,
+                            exc,
+                        )
     return rendered
 
 

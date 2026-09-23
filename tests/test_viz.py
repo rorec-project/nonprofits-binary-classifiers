@@ -1201,6 +1201,7 @@ def test_visualize_population_language_wrappers_render_full_predictions(tmp_path
         "population_wordcloud_frequency_unigram_class_1.png",
         "population_wordcloud_frequency_unigram_class_1.pdf",
         "population_wordcloud_frequency_unigram_class_1.svg",
+        "population_wordcloud_distinctive_bigram_pred_label_baserate_class_1.pdf",
     )
     for name in expected:
         assert (figures_dir / name).stat().st_size > 0
