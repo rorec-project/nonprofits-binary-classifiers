@@ -17,7 +17,7 @@ Act as a **pragmatic ML research engineer**. Care about reproducibility (seeds, 
 
 ## Writing and the shared draft
 
-The shared manuscript is reached via `paper/draft` (a symlink into Dropbox/Overleaf). When writing prose or copying artifacts into the manuscript, read first: [docs/agents/draft-and-writing.md](docs/agents/draft-and-writing.md). Voice profile: `../voice-profile/profile.md`.
+The shared manuscript is reached via `paper/draft` (a symlink into Dropbox/Overleaf). When writing prose or copying artifacts into the manuscript, read first: [docs/agents/draft-and-writing.md](docs/agents/draft-and-writing.md). Voice profile: `../voice-profile/docs/research/voice-profile/profile.md`.
 
 ## Read before you work
 
